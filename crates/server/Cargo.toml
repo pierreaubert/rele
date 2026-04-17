@@ -1,0 +1,57 @@
+[package]
+name = "rele-server"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+description = "Shared editor core for rele markdown editor"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# First-party
+rele-elisp = { workspace = true }
+
+# Document model
+ropey = { workspace = true }
+regex = { workspace = true }
+
+# Markdown parsing
+comrak = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+parking_lot = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Word (.docx) import/export
+docx = { workspace = true }
+
+# PDF export (optional)
+genpdf = { workspace = true, optional = true }
+
+# File dialogs
+rfd = { workspace = true }
+
+# Home directory
+dirs = { workspace = true }
+
+# Keybindings
+gpui-keybinding = { workspace = true }
+
+[features]
+pdf-export = ["dep:genpdf"]
+
+[dev-dependencies]

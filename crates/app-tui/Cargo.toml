@@ -1,0 +1,37 @@
+[package]
+name = "rele-tui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Terminal UI client for rele markdown editor"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# First-party
+rele-server = { workspace = true }
+rele-elisp = { workspace = true }
+
+# Async and runtime
+tokio = { workspace = true }
+anyhow = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+
+# Logging
+log = { workspace = true }
+env_logger = { workspace = true }
+
+# TUI framework
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+
+# Home directory
+dirs = { workspace = true }
+
+[dev-dependencies]
+
+[[bin]]
+name = "rele-tui"
+path = "src/main.rs"

@@ -1,0 +1,149 @@
+[workspace]
+members = [
+    "crates/app-gpui",
+    "crates/app-tui",
+    "crates/elisp",
+    "crates/server",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.1"
+authors = ["Pierre F. Aubert pierre@spinorama.org"]
+description = "Rust Emacs-Lisp Editor"
+edition = "2024"
+documentation = "https://docs.rs/rele"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/pierreaubert/rele"
+keywords = ["editor", "emacs-lisp"]
+categories = ["multimedia::audio"]
+readme = "README.md"
+
+[workspace.dependencies]
+
+# First-party crates
+rele-elisp = { version = "0.1", path = "crates/elisp" }
+rele-server = { path = "crates/server" }
+
+# Serialization
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Async and runtime
+anyhow = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "macros", "io-util", "process", "signal"] }
+signal-hook = "0.4"
+parking_lot = { version = "0.12", features = ["deadlock_detection"] }
+
+# Networking
+reqwest = "0.11"
+
+# System utilities
+directories = "6"
+dirs = "5"
+env_logger = "0.11"
+log = "0.4"
+thiserror = "2.0.17"
+
+# File dialogs
+rfd = "0.14"
+
+# Document model
+ropey = "1.6"
+regex = "1"
+
+# Markdown
+comrak = "0.36"
+
+# Word (.docx) import/export
+docx = "1.1"
+
+# PDF export (optional)
+genpdf = "0.2"
+
+# Elisp JIT (optional)
+cranelift-codegen = "0.116"
+cranelift-frontend = "0.116"
+cranelift-module = "0.116"
+cranelift-jit = "0.116"
+cranelift-native = "0.116"
+
+# GPUI toolkit (from sotf project)
+gpui-ui-kit = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
+gpui-ui-kit-macros = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
+gpui-builder = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
+gpui-design = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
+gpui-keybinding = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
+gpui-pretext = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
+
+# TUI framework
+ratatui = "0.30"
+ratatui-image = { version = "10", default-features = false, features = ["serde", "crossterm", "image-defaults"] }
+crossterm = "0.29"
+
+# GPUI framework — all packages must use the same git revision
+gpui = { version = "*", git = "https://github.com/zed-industries/zed.git", rev = "ebb451ec7b5bfdd60e7b70cf56f066c8f9a12293" }
+gpui_macos = { version = "*", git = "https://github.com/zed-industries/zed.git", rev = "ebb451ec7b5bfdd60e7b70cf56f066c8f9a12293", features = ["font-kit"] }
+gpui_linux = { version = "*", git = "https://github.com/zed-industries/zed.git", rev = "ebb451ec7b5bfdd60e7b70cf56f066c8f9a12293" }
+gpui_windows = { version = "*", git = "https://github.com/zed-industries/zed.git", rev = "ebb451ec7b5bfdd60e7b70cf56f066c8f9a12293" }
+gpui_wgpu = { version = "*", git = "https://github.com/zed-industries/zed.git", rev = "ebb451ec7b5bfdd60e7b70cf56f066c8f9a12293" }
+
+[workspace.lints.rust]
+ambiguous_negative_literals = "warn"
+missing_debug_implementations = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"
+
+[workspace.lints.clippy]
+cargo = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+# nursery = { level = "warn", priority = -1 }  # optional, might cause more false positives
+
+# These lints are from the `restriction` lint group and prevent specific
+# constructs being used in source code in order to drive up consistency,
+# quality, and brevity
+allow_attributes_without_reason = "warn"
+as_pointer_underscore = "warn"
+assertions_on_result_states = "warn"
+clone_on_ref_ptr = "warn"
+deref_by_slicing = "warn"
+disallowed_script_idents = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+fn_to_numeric_cast_any = "warn"
+if_then_some_else_none = "warn"
+map_err_ignore = "warn"
+redundant_type_annotations = "warn"
+renamed_function_params = "warn"
+semicolon_outside_block = "warn"
+string_to_string = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unneeded_field_pattern = "warn"
+unused_result_ok = "warn"
+
+# May cause issues with structured logging otherwise.
+literal_string_with_formatting_args = "allow"
+
+[profile.dev]
+opt-level = 1
+split-debuginfo = "packed"
+debug = 1
+codegen-units = 14
+
+[profile.release]
+lto = "thin"
+codegen-units = 14

@@ -1,0 +1,70 @@
+[package]
+name = "rele-gpui"
+version = "0.1.2"
+authors.workspace = true
+edition.workspace = true
+description = "Emacs clone in Rust"
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+pdf-export = ["dep:genpdf"]
+google-docs = ["dep:reqwest"]
+
+[dependencies]
+# First-party
+rele-server = { workspace = true }
+rele-elisp = { workspace = true }
+
+# GPUI framework
+gpui = { workspace = true }
+
+# GPUI toolkit
+gpui-builder = { workspace = true }
+gpui-design = { workspace = true, features = ["gpui"] }
+gpui-keybinding = { workspace = true }
+gpui-pretext = { workspace = true }
+gpui-ui-kit = { workspace = true }
+
+# Document model
+ropey = { workspace = true }
+
+# Markdown
+comrak = { workspace = true }
+
+# Word (.docx) import/export
+docx = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# File dialogs
+rfd = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Home directory
+dirs = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+# PDF export (optional)
+genpdf = { workspace = true, optional = true }
+
+# Google Docs (optional)
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[lib]
+name = "gpui_md"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rele-gpui"
+path = "src/bin/rele.rs"
