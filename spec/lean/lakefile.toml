@@ -1,0 +1,10 @@
+name = "elisp-oracle"
+version = "0.1.0"
+defaultTargets = ["Elisp", "elisp-oracle"]
+
+[[lean_lib]]
+name = "Elisp"
+
+[[lean_exe]]
+name = "elisp-oracle"
+root = "Elisp.Oracle"
