@@ -193,6 +193,23 @@ pub fn get_flags(sym: SymbolId) -> SymbolFlags {
     *GLOBAL_OBARRAY.read().flags(sym)
 }
 
+/// Replace a symbol's entire plist from a Lisp cons list (prop val prop val ...).
+pub fn replace_plist(sym: SymbolId, plist: LispObject) {
+    let mut ob = GLOBAL_OBARRAY.write();
+    ob.symbols[sym.0 as usize].plist.clear();
+    let mut cur = plist;
+    while let Some((prop, rest)) = cur.destructure_cons() {
+        if let Some((val, rest2)) = rest.destructure_cons() {
+            if let LispObject::Symbol(prop_id) = &prop {
+                ob.symbols[sym.0 as usize].plist.push((*prop_id, val));
+            }
+            cur = rest2;
+        } else {
+            break;
+        }
+    }
+}
+
 /// Mark a symbol as special (dynamically bound).
 pub fn mark_special(sym: SymbolId) {
     GLOBAL_OBARRAY.write().flags_mut(sym).special = true;

@@ -3,6 +3,7 @@ members = [
     "crates/app-gpui",
     "crates/app-tui",
     "crates/elisp",
+    "crates/elisp-spec-tests",
     "crates/server",
 ]
 resolver = "3"

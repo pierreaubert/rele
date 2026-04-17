@@ -482,7 +482,19 @@ impl Interpreter {
         let _scope = crate::value::HeapScope::enter(self.state.heap.clone());
         let val = obj_to_value(expr);
         let result = eval(val, &self.env, &self.editor, &self.macros, &self.state)?;
-        Ok(value_to_obj(result))
+        let obj_result = value_to_obj(result);
+        // Boundary-level GC: at this point all live data is in LispObject
+        // form (Arc-refcounted), so the heap's root stack is empty and
+        // every heap object is unreachable. Collect when the heap has
+        // grown past its threshold to prevent unbounded accumulation
+        // (the heap runs in Manual mode, so maybe_gc() never fires).
+        {
+            let mut heap = self.state.heap.lock();
+            if heap.should_gc() {
+                heap.collect();
+            }
+        }
+        Ok(obj_result)
     }
 
     pub fn define(&self, name: &str, value: LispObject) {
@@ -2266,6 +2278,18 @@ fn eval_inner(
                     Ok(obj_to_value(LispObject::integer(32))) // ?\s = space
                 }
                 // -- Coding system stubs (P4 i18n) --
+                "define-coding-system" | "set-language-info-alist" => {
+                    // Short-circuit the expensive Lisp versions (350+ lines
+                    // each). We don't implement coding systems or language
+                    // environments; just eval the name arg and return nil.
+                    // This saves ~500K eval-ops per call (language files
+                    // invoke define-coding-system up to 89 times and
+                    // set-language-info-alist up to 95 times).
+                    if let Some(name_expr) = cdr.first() {
+                        let _ = eval(obj_to_value(name_expr), env, editor, macros, state)?;
+                    }
+                    Ok(Value::nil())
+                }
                 "define-coding-system-alias" => {
                     // (define-coding-system-alias ALIAS CODING-SYSTEM) → no-op
                     let mut cur = cdr.clone();

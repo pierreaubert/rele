@@ -93,3 +93,10 @@ CTAGS
 .worktrees
 
 .tokensave
+
+# Lean 4
+spec/lean/.lake/
+spec/lean/build/
+
+# Quint traces (generated)
+spec/quint/traces/

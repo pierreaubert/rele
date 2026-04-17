@@ -17,7 +17,7 @@ pub type SharedVec = Arc<Mutex<Vec<LispObject>>>;
 pub type SharedHashTable = Arc<Mutex<LispHashTable>>;
 
 /// Hash table test function type.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HashTableTest {
     Eq,
     Eql,

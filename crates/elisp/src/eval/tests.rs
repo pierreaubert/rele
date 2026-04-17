@@ -802,39 +802,25 @@ fn make_stdlib_interp() -> Interpreter {
     interp.define("delayed-warnings-list", LispObject::nil());
 
     // subr.el stubs — keymap and editor primitives
-    interp.define("make-keymap", LispObject::primitive("list"));
-    interp.define("make-sparse-keymap", LispObject::primitive("ignore"));
+    // Note: make-keymap, make-sparse-keymap, define-key, keymapp, fset,
+    // upcase, downcase, string-replace, string-prefix-p, string-suffix-p,
+    // string-search, string-equal, string-lessp, compare-strings are
+    // registered by add_primitives — do NOT re-define them here.
     interp.define("purecopy", LispObject::primitive("identity"));
-    interp.define("fset", LispObject::primitive("identity")); // TODO: proper Lisp-2
-    interp.define("define-key", LispObject::primitive("ignore"));
     interp.define("set-keymap-parent", LispObject::primitive("ignore"));
     interp.define("current-global-map", LispObject::primitive("ignore"));
     interp.define("use-global-map", LispObject::primitive("ignore"));
     interp.define("intern-soft", LispObject::primitive("identity"));
     interp.define("make-byte-code", LispObject::primitive("ignore"));
-    interp.define("set-char-table-range", LispObject::primitive("ignore"));
-    interp.define("set-char-table-extra-slot", LispObject::primitive("ignore"));
-    interp.define("make-char-table", LispObject::primitive("ignore"));
-    interp.define("char-table-extra-slot", LispObject::primitive("ignore"));
     interp.define("set-standard-case-table", LispObject::primitive("ignore"));
-    interp.define("standard-case-table", LispObject::primitive("ignore"));
     interp.define("downcase-region", LispObject::primitive("ignore"));
     interp.define("upcase-region", LispObject::primitive("ignore"));
     interp.define("capitalize-region", LispObject::primitive("ignore"));
-    interp.define("upcase", LispObject::primitive("identity"));
-    interp.define("downcase", LispObject::primitive("identity"));
-    interp.define("string-replace", LispObject::primitive("identity"));
     interp.define(
         "replace-regexp-in-string",
         LispObject::primitive("identity"),
     );
-    interp.define("string-search", LispObject::primitive("ignore"));
-    interp.define("string-prefix-p", LispObject::primitive("ignore"));
-    interp.define("string-suffix-p", LispObject::primitive("ignore"));
-    interp.define("string-lessp", LispObject::primitive("ignore"));
-    interp.define("compare-strings", LispObject::primitive("ignore"));
     interp.define("string-collate-lessp", LispObject::primitive("ignore"));
-    interp.define("string-equal", LispObject::primitive("ignore"));
     interp.define("mapconcat", LispObject::primitive("ignore"));
     interp.define("process-attributes", LispObject::primitive("ignore"));
     interp.define("set-process-sentinel", LispObject::primitive("ignore"));
@@ -919,8 +905,7 @@ fn make_stdlib_interp() -> Interpreter {
     interp.define("self-insert-command", LispObject::nil());
     interp.define("undefined", LispObject::nil());
     interp.define("minibuffer-recenter-top-bottom", LispObject::nil());
-    interp.define("split-string", LispObject::primitive("ignore"));
-    interp.define("string-search", LispObject::primitive("ignore"));
+    // split-string and string-search are registered by add_primitives
     interp.define("symbol-value", LispObject::primitive("identity"));
     interp.define("default-value", LispObject::primitive("ignore"));
     interp.define("recenter-top-bottom", LispObject::nil());
@@ -976,7 +961,7 @@ fn make_stdlib_interp() -> Interpreter {
 
     // Bootstrap chain stubs: functions and variables needed by loadup.el files
     // keymap.el
-    interp.define("keymapp", LispObject::primitive("ignore"));
+    interp.define("keymapp", LispObject::primitive("keymapp"));
     interp.define("copy-keymap", LispObject::primitive("identity"));
     interp.define("key-binding", LispObject::primitive("ignore"));
     interp.define("lookup-key", LispObject::primitive("ignore"));
@@ -1011,7 +996,7 @@ fn make_stdlib_interp() -> Interpreter {
     interp.define("charset-plist", LispObject::primitive("ignore"));
     interp.define("define-charset-internal", LispObject::primitive("ignore"));
     interp.define("char-width", LispObject::primitive("ignore"));
-    interp.define("aref", LispObject::primitive("ignore"));
+    // aref is registered by add_primitives — do NOT re-define
     interp.define("charset-dimension", LispObject::primitive("ignore"));
     interp.define("define-coding-system", LispObject::primitive("ignore"));
     interp.define(
@@ -1384,6 +1369,61 @@ fn make_stdlib_interp() -> Interpreter {
         }
         interp.define("load-path", path);
     }
+
+    // composite.el / language files — variables and functions
+    interp.define("composition-function-table", LispObject::nil());
+    interp.define(
+        "compose-chars-after-function",
+        LispObject::primitive("ignore"),
+    );
+    interp.define("define-key-after", LispObject::primitive("ignore"));
+    interp.define(
+        "define-prefix-command",
+        LispObject::primitive("make-sparse-keymap"),
+    );
+    interp.define("set-language-info", LispObject::primitive("ignore"));
+    interp.define("register-input-method", LispObject::primitive("ignore"));
+    interp.define("define-translation-table", LispObject::primitive("ignore"));
+    interp.define(
+        "make-translation-table-from-alist",
+        LispObject::primitive("ignore"),
+    );
+    interp.define("define-ccl-program", LispObject::primitive("ignore"));
+    interp.define("global-set-key", LispObject::primitive("ignore"));
+    interp.define("set-nested-alist", LispObject::primitive("ignore"));
+    interp.define("lookup-nested-alist", LispObject::primitive("ignore"));
+    interp.define("use-cjk-char-width-table", LispObject::primitive("ignore"));
+    interp.define("display-multi-font-p", LispObject::primitive("ignore"));
+    interp.define("char-charset", LispObject::primitive("ignore"));
+    interp.define(
+        "w32-add-charset-info",
+        LispObject::primitive("ignore"),
+    );
+    interp.define("regexp-opt", LispObject::primitive("ignore"));
+    interp.define("compose-region-internal", LispObject::primitive("ignore"));
+    interp.define("compose-string-internal", LispObject::primitive("ignore"));
+    interp.define("find-composition-internal", LispObject::primitive("ignore"));
+    interp.define("clear-composition-cache", LispObject::primitive("ignore"));
+    interp.define("font-shape-gstring", LispObject::primitive("ignore"));
+    interp.define("font-get", LispObject::primitive("ignore"));
+    interp.define("font-at", LispObject::primitive("ignore"));
+    interp.define("fontp", LispObject::primitive("ignore"));
+    interp.define("font-get-glyphs", LispObject::primitive("ignore"));
+    interp.define("font-variation-glyphs", LispObject::primitive("ignore"));
+    interp.define("font-put", LispObject::primitive("ignore"));
+    interp.define("font-object-p", LispObject::primitive("ignore"));
+    interp.define("get-char-code-property", LispObject::primitive("ignore"));
+    interp.define(
+        "ctext-non-standard-encodings",
+        LispObject::nil(),
+    );
+    interp.define(
+        "nonascii-translation-table",
+        LispObject::nil(),
+    );
+    interp.define("restore-buffer-modified-p", LispObject::primitive("ignore"));
+    interp.define("save-buffer", LispObject::primitive("ignore"));
+    interp.define("match-data--translate", LispObject::primitive("ignore"));
 
     interp
 }
@@ -1784,6 +1824,7 @@ fn test_intern_soft_returns_nil_for_unknown() {
 /// Returns false if Emacs lisp directory is not available (skip tests).
 /// All files in loadup.el order that ensure_stdlib_files will decompress.
 const BOOTSTRAP_FILES: &[&str] = &[
+    // --- Phase 1: core (30 files from loadup.el) ---
     "emacs-lisp/debug-early",
     "emacs-lisp/byte-run",
     "emacs-lisp/backquote",
@@ -1814,7 +1855,31 @@ const BOOTSTRAP_FILES: &[&str] = &[
     "international/mule-cmds",
     "case-table",
     "international/characters",
-    // Extra files needed for individual tests
+    // --- Phase 2: composite + language files ---
+    "composite",
+    "language/chinese",
+    "language/cyrillic",
+    "language/indian",
+    "language/sinhala",
+    "language/english",
+    "language/ethiopic",
+    "language/european",
+    "language/czech",
+    "language/slovak",
+    "language/romanian",
+    "language/greek",
+    "language/hebrew",
+    "language/japanese",
+    "language/korean",
+    "language/lao",
+    "language/tai-viet",
+    "language/thai",
+    "language/tibetan",
+    "language/vietnamese",
+    "language/misc-lang",
+    "language/utf-8-lang",
+    "language/georgian",
+    // --- Extra files needed for individual tests ---
     "emacs-lisp/cconv",
     "simple",
 ];
@@ -2868,8 +2933,9 @@ fn test_full_bootstrap_chain() {
     }
     let interp = make_stdlib_interp();
 
-    // The first 30 files from loadup.el, in order
-    let files: &[&str] = &BOOTSTRAP_FILES[..30];
+    // All loadup.el files (excluding cconv/simple which are test-only extras)
+    let file_count = BOOTSTRAP_FILES.len() - 2; // exclude trailing extras
+    let files: &[&str] = &BOOTSTRAP_FILES[..file_count];
 
     let mut loaded = 0;
     let mut partial = 0;
@@ -2883,9 +2949,16 @@ fn test_full_bootstrap_chain() {
         let source = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(_) => {
-                eprintln!("  [{}] SKIPPED (not found at {})", f, path);
-                skipped += 1;
-                continue;
+                // Some Emacs .el files are Latin-1 encoded; try reading
+                // raw bytes and mapping each byte to a char.
+                match std::fs::read(&path) {
+                    Ok(bytes) => bytes.iter().map(|&b| char::from(b)).collect(),
+                    Err(_) => {
+                        eprintln!("  [{}] SKIPPED (not found at {})", f, path);
+                        skipped += 1;
+                        continue;
+                    }
+                }
             }
         };
 
@@ -2950,12 +3023,8 @@ fn test_full_bootstrap_chain() {
     // Expect at least 25 files to load fully (currently 27).
     // The 3 partial files (cl-preloaded, oclosure, mule-cmds) require
     // CL struct infrastructure or native key-parse — tracked separately.
-    let ok = loaded >= 25;
-    // Leak the interpreter to avoid GC destructor crash (SIGILL) on exit.
-    // The GC has unsafe code that can corrupt memory after heavy use.
-    std::mem::forget(interp);
     assert!(
-        ok,
+        loaded >= 25,
         "Expected at least 25 files to load fully, got {}",
         loaded
     );
