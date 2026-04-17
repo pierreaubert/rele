@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4138786e9d5e294f37336be0b01723fbbb1366ae4b02f442a89f1c9d32e53d7c # shrinks to expr = T
+cc 1416b0e1d9f2908e631379726bf467fdf1ddce8ca35b20bcc46bb6ac75909b6a # shrinks to expr = Cons { cons: (Sym { sym: "+" }, Cons { cons: (Int { int: 0 }, Cons { cons: (Int { int: 0 }, Nil) }) }) }
