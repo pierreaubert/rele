@@ -9,6 +9,7 @@
 
 pub mod commands;
 pub mod document;
+pub mod emacs;
 pub mod error;
 pub mod export;
 pub mod import;
