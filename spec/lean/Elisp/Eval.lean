@@ -29,6 +29,82 @@ def toList : Val → List Val
   | .nil      => []
   | v         => [v]
 
+/-- Coerce a list of Vals into integers, erroring on non-integers.
+    Arithmetic primitives are integer-only in the oracle subset. -/
+def asInts : List Val → Except EvalError (List Int)
+  | []              => .ok []
+  | .int n :: rest  => do let ns ← asInts rest; .ok (n :: ns)
+  | _ :: _          => .error (.wrongTypeArgument "number")
+
+/-- Variadic addition: (+) = 0, folds with (·+·). -/
+def primAdd (vs : List Val) : Except EvalError Val := do
+  let ns ← asInts vs
+  .ok (.int (ns.foldl (· + ·) 0))
+
+/-- Variadic subtraction. (- n) = -n; (- a b c) = a - b - c. Errors on 0 args. -/
+def primSub (vs : List Val) : Except EvalError Val := do
+  let ns ← asInts vs
+  match ns with
+  | []             => .error (.wrongNumberOfArgs 1 0)
+  | [n]            => .ok (.int (-n))
+  | first :: rest  => .ok (.int (rest.foldl (· - ·) first))
+
+/-- Variadic multiplication: (*) = 1. -/
+def primMul (vs : List Val) : Except EvalError Val := do
+  let ns ← asInts vs
+  .ok (.int (ns.foldl (· * ·) 1))
+
+/-- Variadic division. (/ n) = 1/n. Any zero divisor signals an error.
+
+    Uses `Int.tdiv` (truncation toward zero) to match Rust's `i64 / i64`
+    and Emacs's `/`. The default `/` on `Int` in Lean 4 is Euclidean,
+    which disagrees on negative divisors (e.g. (-1) / (-2) = 1 vs. 0). -/
+def primDiv (vs : List Val) : Except EvalError Val := do
+  let ns ← asInts vs
+  match ns with
+  | []            => .error (.wrongNumberOfArgs 1 0)
+  | [n]           =>
+    if n == 0 then .error (.wrongTypeArgument "division by zero")
+    else .ok (.int (Int.tdiv 1 n))
+  | first :: rest =>
+    if rest.any (· == 0) then .error (.wrongTypeArgument "division by zero")
+    else .ok (.int (rest.foldl Int.tdiv first))
+
+/-- Numeric equality: t iff all args are equal. Matches Emacs Lisp
+    semantics — 0 or 1 arg is vacuously t. -/
+def primNumEq (vs : List Val) : Except EvalError Val := do
+  let ns ← asInts vs
+  match ns with
+  | []           => .ok .t
+  | n :: rest    => .ok (if rest.all (· == n) then .t else .nil)
+
+/-- Pairwise chain comparison helper for ordering primitives. Matches
+    Emacs semantics — 0 or 1 arg is vacuously t (no adjacent pair violates
+    the order), mirroring the Rust fixnum fast path in primitives_value.rs. -/
+def chainCmp (cmp : Int → Int → Bool) (vs : List Val)
+    : Except EvalError Val := do
+  let ns ← asInts vs
+  if ns.length < 2 then .ok .t
+  else
+    let pairs := ns.zip ns.tail
+    .ok (if pairs.all (fun p => cmp p.1 p.2) then .t else .nil)
+
+def primLt (vs : List Val) : Except EvalError Val :=
+  chainCmp (fun a b => decide (a < b)) vs
+def primGt (vs : List Val) : Except EvalError Val :=
+  chainCmp (fun a b => decide (a > b)) vs
+def primLe (vs : List Val) : Except EvalError Val :=
+  chainCmp (fun a b => decide (a ≤ b)) vs
+def primGe (vs : List Val) : Except EvalError Val :=
+  chainCmp (fun a b => decide (a ≥ b)) vs
+
+/-- Emacs `/=`: t iff every adjacent pair differs. 0 or 1 arg is
+    vacuously t (matches the Rust fixnum fast path). -/
+def primNe (vs : List Val) : Except EvalError Val := do
+  let ns ← asInts vs
+  let pairs := ns.zip ns.tail
+  .ok (if pairs.all (fun p => p.1 != p.2) then .t else .nil)
+
 /-- Parse binding forms: ((x 1) (y 2)) → [(x, valExpr)] -/
 def parseBindings : List Val → List (Sym × Val)
   | [] => []
@@ -86,6 +162,18 @@ partial def eval (env : Env) (expr : Val) : EvalResult :=
     | .sym "catch"           => evalCatch env args
     | .sym "throw"           => evalThrow env args
     | .sym "unwind-protect"  => evalUnwindProtect env args
+    | .sym "+"               => evalPrim env args primAdd
+    | .sym "-"               => evalPrim env args primSub
+    | .sym "*"               => evalPrim env args primMul
+    | .sym "/"               => evalPrim env args primDiv
+    | .sym "="               => evalPrim env args primNumEq
+    | .sym "<"               => evalPrim env args primLt
+    | .sym ">"               => evalPrim env args primGt
+    | .sym "<="              => evalPrim env args primLe
+    | .sym ">="              => evalPrim env args primGe
+    | .sym "/="              => evalPrim env args primNe
+    | .sym "list"            => evalList env args
+    | .sym "mapcar"          => evalMapcar env args
     | _                      => evalCall env car args
 where
   evalIf (env : Env) (args : List Val) : EvalResult :=
@@ -220,10 +308,29 @@ where
         .error e
     | _ => .error (.wrongNumberOfArgs 1 args.length)
 
+  evalPrim (env : Env) (args : List Val)
+      (f : List Val → Except EvalError Val) : EvalResult := do
+    let (env', vs) ← evalCallArgs env args []
+    match f vs with
+    | .ok v    => .ok (env', v)
+    | .error e => .error e
+
+  /-- Dispatch a call. Emacs Lisp is a Lisp-2: a symbol head is looked up
+      in the function slot (populated by `defun`), not the variable slot.
+      We fall back to the variable slot so that a symbol bound via `let` to
+      a lambda still works (mimicking `funcall`), and to the dispatch already
+      in `applyFn` for unresolved symbols. -/
   evalCall (env : Env) (fnExpr : Val) (args : List Val) : EvalResult := do
-    let (env', fnVal) ← eval env fnExpr
-    let (env'', evaledArgs) ← evalCallArgs env' args []
-    applyFn env'' fnVal evaledArgs
+    match fnExpr with
+    | .sym s =>
+      let (env', evaledArgs) ← evalCallArgs env args []
+      match (env'.lookupFn s).orElse fun _ => env'.lookup s with
+      | some fnVal => applyFn env' fnVal evaledArgs
+      | none       => .error (.unboundFunction s)
+    | _ => do
+      let (env',  fnVal)      ← eval env fnExpr
+      let (env'', evaledArgs) ← evalCallArgs env' args []
+      applyFn env'' fnVal evaledArgs
 
   evalCallArgs (env : Env) (remaining : List Val) (acc : List Val)
       : Except EvalError (Env × List Val) :=
@@ -252,5 +359,34 @@ where
       | some fnVal => applyFn env fnVal args
       | none => .error (.unboundFunction s)
     | _ => .error (.wrongTypeArgument s!"not a function: {repr fn}")
+
+  /-- `list` primitive: evaluate all args, return a proper cons-list terminated
+      by nil. -/
+  evalList (env : Env) (args : List Val) : EvalResult := do
+    let (env', vs) ← evalCallArgs env args []
+    let result := vs.foldr (fun v acc => Val.cons v acc) .nil
+    .ok (env', result)
+
+  /-- `mapcar FN LIST`: apply FN to each element of LIST and collect results
+      into a new list. The function value can be any callable — a symbol
+      (looked up in function slot), a `lambda`/`closure` value, or similar. -/
+  evalMapcar (env : Env) (args : List Val) : EvalResult :=
+    match args with
+    | [fnExpr, listExpr] => do
+      let (env',  fnVal)   ← eval env fnExpr
+      let (env'', listVal) ← eval env' listExpr
+      let items := toList listVal
+      mapcarGo env'' fnVal items []
+    | _ => .error (.wrongNumberOfArgs 2 args.length)
+
+  mapcarGo (env : Env) (fnVal : Val) (items : List Val) (acc : List Val)
+      : EvalResult :=
+    match items with
+    | [] =>
+      let result := acc.reverse.foldr (fun v a => Val.cons v a) .nil
+      .ok (env, result)
+    | item :: rest => do
+      let (env', r) ← applyFn env fnVal [item]
+      mapcarGo env' fnVal rest (r :: acc)
 
 end Elisp

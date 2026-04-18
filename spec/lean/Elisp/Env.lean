@@ -76,12 +76,29 @@ def lookup (env : Env) (s : Sym) : Option Val :=
 def lookupFn (env : Env) (s : Sym) : Option Val :=
   (env.functions.find? fun (name, _) => name == s).map Prod.snd
 
-/-- Set a variable. Dynamic-declared vars go to dynEnv;
-    others mutate the innermost lexical frame (or fall back to dynamic). -/
+/-- Replace the binding for `s` in the first lexical frame that contains it.
+    Returns `none` if no frame contains `s`. This mirrors the Rust
+    interpreter's behaviour where `setq` writes back into the existing
+    binding rather than creating a new shadowing one. -/
+def updateLexFrame (s : Sym) (v : Val) : List Frame → Option (List Frame)
+  | []         => none
+  | f :: rest  =>
+    if f.any (fun (n, _) => n == s) then
+      let f' := f.map fun (n, old) => if n == s then (n, v) else (n, old)
+      some (f' :: rest)
+    else
+      (updateLexFrame s v rest).map (f :: ·)
+
+/-- Set a variable. Dynamic-declared vars go to dynEnv; otherwise we mutate
+    the innermost lexical frame that already binds `s`, falling back to
+    creating a new dynamic binding if no lexical frame owns `s`. -/
 def setVar (env : Env) (s : Sym) (v : Val) : Env :=
-  -- Simplified: push onto dynamic for both cases.
-  -- A full implementation would mutate the lexical frame in-place.
-  { env with dyn := { bindings := (s, v) :: env.dyn.bindings } }
+  if env.dynVars.contains s then
+    { env with dyn := env.dyn.push [(s, v)] }
+  else
+    match updateLexFrame s v env.lex.frames with
+    | some newFrames => { env with lex := { frames := newFrames } }
+    | none           => { env with dyn := env.dyn.push [(s, v)] }
 
 end Env
 

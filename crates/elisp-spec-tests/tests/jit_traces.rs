@@ -7,6 +7,7 @@
 //! Each trace is a sequence of steps: { "action": "call"|"redefine"|"deopt", "func": "f" }
 
 use rele_elisp_spec_tests::replay::{self, JitState, TraceStep};
+use std::path::{Path, PathBuf};
 
 /// Verify the Rust state machine model satisfies invariants on a hand-written trace.
 #[test]
@@ -144,6 +145,86 @@ fn multiple_functions_independent() {
 
     let result = replay::replay_trace(&steps, 3);
     assert!(result.is_none(), "invariant violation: {result:?}");
+}
+
+/// Path to a committed ITF trace relative to the crate root.
+fn trace_path(name: &str) -> PathBuf {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    Path::new(manifest).join("../../spec/quint/traces").join(name)
+}
+
+/// Replay every transition in an ITF trace and assert each one corresponds
+/// to a valid Rust-side action (call/redefine/deopt). Any state that can't
+/// be reached by applying exactly one action from the previous state would
+/// indicate divergence between the Quint model and the Rust mirror.
+/// Returns the recovered action list (one entry per transition).
+fn replay_itf(name: &str) -> Option<Vec<String>> {
+    let path = trace_path(name);
+    if !path.exists() {
+        eprintln!("skipping {name}: not found (run `just quint-trace`)");
+        return None;
+    }
+
+    let states = replay::parse_itf(path.to_str().unwrap());
+    assert!(
+        states.len() >= 2,
+        "trace must contain at least an initial state + one step"
+    );
+
+    // Sanity: initial state matches the Quint Init predicate.
+    let init = &states[0];
+    assert!(init.check_safe_execution(), "init violates safeExecution");
+    assert!(
+        init.check_no_stale_keeps_running(),
+        "init violates noStaleKeepsRunning"
+    );
+
+    let mut actions = Vec::with_capacity(states.len() - 1);
+    for i in 1..states.len() {
+        let prev = &states[i - 1];
+        let next = &states[i];
+
+        let action = replay::verify_transition(prev, next).unwrap_or_else(|| {
+            panic!(
+                "{name}: no Rust action reproduces transition {} -> {}\nprev={prev:?}\nnext={next:?}",
+                i - 1,
+                i,
+            )
+        });
+
+        assert!(
+            next.check_safe_execution(),
+            "{name}: safeExecution violated after {action} at step {i}"
+        );
+        assert!(
+            next.check_no_stale_keeps_running(),
+            "{name}: noStaleKeepsRunning violated after {action} at step {i}"
+        );
+
+        actions.push(action);
+    }
+    Some(actions)
+}
+
+/// Replay the committed `safe_run` ITF trace.
+#[test]
+fn itf_replay_safe_run() {
+    replay_itf("safe_run.itf.json");
+}
+
+/// Replay the `deopt_cycle` trace and assert it actually exercises a deopt —
+/// otherwise regenerating the trace with a different seed could silently lose
+/// the coverage the test is named for.
+#[test]
+fn itf_replay_deopt_cycle() {
+    let Some(actions) = replay_itf("deopt_cycle.itf.json") else {
+        return;
+    };
+    let deopts = actions.iter().filter(|a| a.starts_with("deopt")).count();
+    assert!(
+        deopts > 0,
+        "deopt_cycle.itf.json contains no deopt transitions — regenerate with a seed that reaches the Compiled tier and deopts"
+    );
 }
 
 /// Verify invariant accessors directly on the Rust model.
