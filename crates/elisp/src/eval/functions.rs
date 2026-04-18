@@ -72,6 +72,10 @@ pub(crate) fn call_stateful_primitive(
             if let Some(r) = crate::primitives_file::call_file_primitive(name, args) {
                 return Some(r);
             }
+            // EIEIO / advice / widgets.
+            if let Some(r) = crate::primitives_eieio::call_eieio_primitive(name, args) {
+                return Some(r);
+            }
             None
         }
     }

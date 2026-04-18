@@ -789,6 +789,32 @@ pub fn make_stdlib_interp() -> Interpreter {
         "load-file-rep-suffixes",
         LispObject::cons(LispObject::string(""), LispObject::nil()),
     );
+
+    // `process-environment` is an Emacs-conventional list of
+    // "VAR=VALUE" strings shadowing the actual environment. Build it
+    // from the real process environment so `(getenv-internal ...)`
+    // can observe it.
+    let mut env_list = LispObject::nil();
+    for (k, v) in std::env::vars() {
+        env_list = LispObject::cons(LispObject::string(&format!("{k}={v}")), env_list);
+    }
+    interp.define("process-environment", env_list);
+    interp.define("exec-path", LispObject::nil());
+    interp.define(
+        "exec-suffixes",
+        LispObject::cons(LispObject::string(""), LispObject::nil()),
+    );
+    // Default emacs-path-related variables.
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    interp.define("user-emacs-directory", LispObject::string(&format!("{home}/.emacs.d/")));
+    interp.define("user-full-name", LispObject::string(""));
+    interp.define("user-login-name", LispObject::string(""));
+    interp.define("user-real-login-name", LispObject::string(""));
+    interp.define("user-mail-address", LispObject::nil());
+    interp.define("temporary-file-directory", LispObject::string("/tmp/"));
+    interp.define("small-temporary-file-directory", LispObject::nil());
+    interp.define("invocation-directory", LispObject::string("/"));
+    interp.define("invocation-name", LispObject::string("emacs"));
     // Emacs 30 symbol-with-position stubs (we don't implement positioned symbols)
     interp.define("bare-symbol", LispObject::primitive("identity")); // bare-symbol just returns the symbol
     interp.define("symbol-with-pos-p", LispObject::primitive("ignore")); // always nil
@@ -807,9 +833,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     // string-search, string-equal, string-lessp, compare-strings are
     // registered by add_primitives — do NOT re-define them here.
     interp.define("purecopy", LispObject::primitive("identity"));
-    interp.define("set-keymap-parent", LispObject::primitive("ignore"));
-    interp.define("current-global-map", LispObject::primitive("ignore"));
-    interp.define("use-global-map", LispObject::primitive("ignore"));
     interp.define("intern-soft", LispObject::primitive("identity"));
     interp.define("make-byte-code", LispObject::primitive("ignore"));
     interp.define("set-standard-case-table", LispObject::primitive("ignore"));
@@ -824,7 +847,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("mapconcat", LispObject::primitive("ignore"));
     interp.define("process-attributes", LispObject::primitive("ignore"));
     interp.define("set-process-sentinel", LispObject::primitive("ignore"));
-    interp.define("where-is-internal", LispObject::primitive("ignore"));
     interp.define("event-modifiers", LispObject::primitive("ignore"));
     interp.define("event-basic-type", LispObject::primitive("ignore"));
     interp.define("read-event", LispObject::primitive("ignore"));
@@ -962,9 +984,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     // Bootstrap chain stubs: functions and variables needed by loadup.el files
     // keymap.el
     interp.define("keymapp", LispObject::primitive("keymapp"));
-    interp.define("copy-keymap", LispObject::primitive("identity"));
-    interp.define("key-binding", LispObject::primitive("ignore"));
-    interp.define("lookup-key", LispObject::primitive("ignore"));
     interp.define("map-keymap", LispObject::primitive("ignore"));
     interp.define("key-parse", LispObject::primitive("identity"));
     interp.define("keymap--check", LispObject::primitive("ignore"));
@@ -1080,7 +1099,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("selective-display", LispObject::nil());
     interp.define("selective-display-ellipses", LispObject::t());
     interp.define("inhibit-modification-hooks", LispObject::nil());
-    interp.define("window-system", LispObject::nil());
     interp.define("initial-window-system", LispObject::nil());
     interp.define("frame-initial-frame", LispObject::nil());
     interp.define("tool-bar-mode", LispObject::nil());
@@ -1128,10 +1146,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("color-defined-p", LispObject::primitive("ignore"));
     interp.define("color-values", LispObject::primitive("ignore"));
     interp.define("tty-color-define", LispObject::primitive("ignore"));
-    interp.define("frame-parameter", LispObject::primitive("ignore"));
-    interp.define("frame-parameters", LispObject::primitive("ignore"));
-    interp.define("selected-frame", LispObject::primitive("ignore"));
-    interp.define("frame-list", LispObject::primitive("ignore"));
     interp.define("x-get-resource", LispObject::primitive("ignore"));
     interp.define("x-list-fonts", LispObject::primitive("ignore"));
     interp.define(
@@ -1187,20 +1201,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("default-directory", LispObject::string("/"));
     interp.define("file-name-coding-system", LispObject::nil());
     interp.define("default-file-name-coding-system", LispObject::nil());
-    interp.define("file-truename", LispObject::primitive("identity"));
-    interp.define("file-readable-p", LispObject::primitive("ignore"));
-    interp.define("file-writable-p", LispObject::primitive("ignore"));
-    interp.define("file-executable-p", LispObject::primitive("ignore"));
-    interp.define("file-modes", LispObject::primitive("ignore"));
     interp.define("file-newer-than-file-p", LispObject::primitive("ignore"));
-    interp.define("file-attributes", LispObject::primitive("ignore"));
-    interp.define("rename-file", LispObject::primitive("ignore"));
-    interp.define("copy-file", LispObject::primitive("ignore"));
-    interp.define("delete-file", LispObject::primitive("ignore"));
-    interp.define("make-directory", LispObject::primitive("ignore"));
-    interp.define("delete-directory", LispObject::primitive("ignore"));
-    interp.define("insert-file-contents", LispObject::primitive("ignore"));
-    interp.define("write-region", LispObject::primitive("ignore"));
     interp.define(
         "verify-visited-file-modtime",
         LispObject::primitive("ignore"),
@@ -1208,18 +1209,12 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("set-visited-file-modtime", LispObject::primitive("ignore"));
     interp.define("set-file-modes", LispObject::primitive("ignore"));
     interp.define("set-file-times", LispObject::primitive("ignore"));
-    interp.define("abbreviate-file-name", LispObject::primitive("identity"));
-    interp.define("kill-buffer", LispObject::primitive("ignore"));
     interp.define("find-buffer-visiting", LispObject::primitive("ignore"));
-    interp.define("buffer-modified-p", LispObject::primitive("ignore"));
-    interp.define("set-buffer-modified-p", LispObject::primitive("ignore"));
     interp.define("backup-buffer", LispObject::primitive("ignore"));
     interp.define("ask-user-about-lock", LispObject::primitive("ignore"));
     interp.define("lock-buffer", LispObject::primitive("ignore"));
     interp.define("unlock-buffer", LispObject::primitive("ignore"));
     interp.define("file-locked-p", LispObject::primitive("ignore"));
-    interp.define("file-symlink-p", LispObject::primitive("ignore"));
-    interp.define("make-temp-file", LispObject::primitive("ignore"));
     interp.define("yes-or-no-p", LispObject::primitive("ignore"));
     interp.define("y-or-n-p", LispObject::primitive("ignore"));
     interp.define("read-file-name", LispObject::primitive("ignore"));
@@ -1253,9 +1248,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("locate-user-emacs-file", LispObject::primitive("identity"));
 
     // help.el
-    interp.define("make-marker", LispObject::primitive("ignore"));
-    interp.define("set-marker", LispObject::primitive("ignore"));
-    interp.define("marker-position", LispObject::primitive("ignore"));
     interp.define("describe-function", LispObject::primitive("ignore"));
     interp.define("describe-variable", LispObject::primitive("ignore"));
     interp.define("describe-key", LispObject::primitive("ignore"));
@@ -1269,7 +1261,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     // international/mule-cmds.el
     interp.define("format-message", LispObject::primitive("ignore"));
     interp.define("system-name", LispObject::primitive("ignore"));
-    interp.define("current-time", LispObject::primitive("ignore"));
 
     // international/characters.el
     interp.define("define-category", LispObject::primitive("ignore"));
@@ -1287,8 +1278,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     // More C-level stubs
     interp.define("locate-file-internal", LispObject::primitive("ignore"));
     interp.define("system-name", LispObject::primitive("ignore"));
-    interp.define("current-time", LispObject::primitive("ignore"));
-    interp.define("getenv-internal", LispObject::primitive("ignore"));
     interp.define("setenv-internal", LispObject::primitive("ignore"));
     interp.define("set-buffer-major-mode", LispObject::primitive("ignore"));
     interp.define("text-properties-at", LispObject::primitive("ignore"));
@@ -1308,33 +1297,18 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("text-property-any", LispObject::primitive("ignore"));
     interp.define("compare-buffer-substrings", LispObject::primitive("ignore"));
     interp.define("subst-char-in-region", LispObject::primitive("ignore"));
-    interp.define("widen", LispObject::primitive("ignore"));
-    interp.define("narrow-to-region", LispObject::primitive("ignore"));
-    interp.define("point-min", LispObject::primitive("ignore"));
-    interp.define("point-max", LispObject::primitive("ignore"));
     interp.define("bolp", LispObject::primitive("ignore"));
     interp.define("eolp", LispObject::primitive("ignore"));
     interp.define("bobp", LispObject::primitive("ignore"));
     interp.define("eobp", LispObject::primitive("ignore"));
-    interp.define("line-beginning-position", LispObject::primitive("ignore"));
-    interp.define("line-end-position", LispObject::primitive("ignore"));
-    interp.define("char-after", LispObject::primitive("ignore"));
-    interp.define("char-before", LispObject::primitive("ignore"));
     interp.define("following-char", LispObject::primitive("ignore"));
     interp.define("preceding-char", LispObject::primitive("ignore"));
-    interp.define("skip-chars-forward", LispObject::primitive("ignore"));
-    interp.define("skip-chars-backward", LispObject::primitive("ignore"));
-    interp.define("forward-line", LispObject::primitive("ignore"));
-    interp.define("beginning-of-line", LispObject::primitive("ignore"));
-    interp.define("end-of-line", LispObject::primitive("ignore"));
     interp.define("delete-region", LispObject::primitive("ignore"));
     interp.define("buffer-substring", LispObject::primitive("ignore"));
     interp.define(
         "buffer-substring-no-properties",
         LispObject::primitive("ignore"),
     );
-    interp.define("current-column", LispObject::primitive("ignore"));
-    interp.define("move-to-column", LispObject::primitive("ignore"));
     interp.define("indent-to", LispObject::primitive("ignore"));
 
     // Set load-path pointing to Emacs lisp directory so `require` can find files
@@ -1389,7 +1363,6 @@ pub fn make_stdlib_interp() -> Interpreter {
         LispObject::primitive("ignore"),
     );
     interp.define("define-ccl-program", LispObject::primitive("ignore"));
-    interp.define("global-set-key", LispObject::primitive("ignore"));
     interp.define("set-nested-alist", LispObject::primitive("ignore"));
     interp.define("lookup-nested-alist", LispObject::primitive("ignore"));
     interp.define("use-cjk-char-width-table", LispObject::primitive("ignore"));
@@ -1421,7 +1394,6 @@ pub fn make_stdlib_interp() -> Interpreter {
         "nonascii-translation-table",
         LispObject::nil(),
     );
-    interp.define("restore-buffer-modified-p", LispObject::primitive("ignore"));
     interp.define("save-buffer", LispObject::primitive("ignore"));
     interp.define("match-data--translate", LispObject::primitive("ignore"));
 
@@ -1438,15 +1410,6 @@ pub fn make_stdlib_interp() -> Interpreter {
         "internal-make-var-non-special",
         LispObject::primitive("ignore"),
     );
-    interp.define("current-buffer", LispObject::primitive("ignore"));
-    interp.define("set-buffer", LispObject::primitive("ignore"));
-    interp.define("buffer-name", LispObject::primitive("ignore"));
-    interp.define("buffer-list", LispObject::primitive("ignore"));
-    interp.define("get-buffer", LispObject::primitive("ignore"));
-    interp.define("get-buffer-create", LispObject::primitive("ignore"));
-    interp.define("selected-window", LispObject::primitive("ignore"));
-    interp.define("window-buffer", LispObject::primitive("ignore"));
-    interp.define("set-window-buffer", LispObject::primitive("ignore"));
     interp.define("minibufferp", LispObject::primitive("ignore"));
     interp.define("minibuffer-window", LispObject::primitive("ignore"));
     interp.define("active-minibuffer-window", LispObject::primitive("ignore"));
@@ -1456,14 +1419,9 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("all-completions", LispObject::primitive("ignore"));
     interp.define("test-completion", LispObject::primitive("ignore"));
     interp.define("internal-complete-buffer", LispObject::primitive("ignore"));
-    interp.define("display-buffer", LispObject::primitive("ignore"));
-    interp.define("window-end", LispObject::primitive("ignore"));
-    interp.define("window-start", LispObject::primitive("ignore"));
     interp.define("set-window-start", LispObject::primitive("ignore"));
     interp.define("window-dedicated-p", LispObject::primitive("ignore"));
     interp.define("pos-visible-in-window-p", LispObject::primitive("ignore"));
-    interp.define("window-height", LispObject::primitive("ignore"));
-    interp.define("window-width", LispObject::primitive("ignore"));
     interp.define("frame-width", LispObject::primitive("ignore"));
     interp.define("frame-height", LispObject::primitive("ignore"));
     interp.define("redisplay", LispObject::primitive("ignore"));
@@ -1483,10 +1441,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("overlay-buffer", LispObject::primitive("ignore"));
     interp.define("overlayp", LispObject::primitive("ignore"));
     // Frames: we never have any.
-    interp.define("framep", LispObject::primitive("ignore"));
-    interp.define("frame-live-p", LispObject::primitive("ignore"));
-    interp.define("frame-visible-p", LispObject::primitive("ignore"));
-    interp.define("window-system", LispObject::primitive("ignore"));
     interp.define("current-message", LispObject::primitive("ignore"));
     interp.define("message-log-max", LispObject::nil());
     interp.define("kill-all-local-variables", LispObject::primitive("ignore"));
@@ -1498,8 +1452,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("treesit-parser-create", LispObject::primitive("ignore"));
     interp.define("indent-line-to", LispObject::primitive("ignore"));
     interp.define("current-indentation", LispObject::primitive("ignore"));
-    interp.define("current-column", LispObject::primitive("ignore"));
-    interp.define("move-to-column", LispObject::primitive("ignore"));
     interp.define("indent-to", LispObject::primitive("ignore"));
 
     // Phase 5 stubs — display, timer, font-lock, syntax, mouse, isearch
@@ -1540,10 +1492,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("terminal-list", LispObject::primitive("ignore"));
     interp.define("set-terminal-parameter", LispObject::primitive("ignore"));
     interp.define("terminal-parameter", LispObject::primitive("ignore"));
-    interp.define("terminal-name", LispObject::primitive("ignore"));
     interp.define("terminal-live-p", LispObject::primitive("ignore"));
-    interp.define("frame-live-p", LispObject::primitive("ignore"));
-    interp.define("frame-visible-p", LispObject::primitive("ignore"));
     interp.define("frame-terminal", LispObject::primitive("ignore"));
     interp.define("modify-frame-parameters", LispObject::primitive("ignore"));
     interp.define("x-parse-geometry", LispObject::primitive("ignore"));
@@ -1554,7 +1503,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("lower-frame", LispObject::primitive("ignore"));
     interp.define("handle-switch-frame", LispObject::primitive("ignore"));
     interp.define("select-frame", LispObject::primitive("ignore"));
-    interp.define("delete-frame", LispObject::primitive("ignore"));
     interp.define("mouse-position", LispObject::primitive("ignore"));
     interp.define("set-mouse-position", LispObject::primitive("ignore"));
     interp.define("track-mouse", LispObject::primitive("ignore"));
@@ -1583,7 +1531,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("display-multi-frame-p", LispObject::primitive("ignore"));
     interp.define("display-popup-menus-p", LispObject::primitive("ignore"));
     interp.define("display-mouse-p", LispObject::primitive("ignore"));
-    interp.define("executable-find", LispObject::primitive("ignore"));
     interp.define("pdumper-stats", LispObject::primitive("ignore"));
     interp.define(
         "native-comp-available-p",
@@ -1601,7 +1548,6 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("setq-local", LispObject::primitive("ignore"));
     interp.define("fixnump", LispObject::primitive("integerp"));
     interp.define("bignump", LispObject::primitive("ignore"));
-    interp.define("cl-typep", LispObject::primitive("ignore"));
     interp.define("cl-progv", LispObject::primitive("ignore"));
 
     // cl--find-class is implemented in the eval dispatch (mod.rs)

@@ -1784,6 +1784,75 @@ fn eval_inner(
                 }
                 "define-globalized-minor-mode"
                 | "define-abbrev-table" => Ok(Value::nil()),
+                "defclass" => {
+                    // (defclass NAME (PARENT...) (SLOTS...) [OPTIONS...])
+                    // Parse slot specs and register the class. Slots
+                    // are of the form (SLOT-NAME [:initform VAL] [:initarg :N] ...)
+                    // We only capture name + :initform for now.
+                    let name = match cdr.first().and_then(|o| o.as_symbol()) {
+                        Some(n) => n,
+                        None => return Ok(Value::nil()),
+                    };
+                    let parents = cdr.nth(1).unwrap_or(LispObject::nil());
+                    let parent_name: Option<String> = parents
+                        .destructure_cons()
+                        .and_then(|(car, _)| car.as_symbol());
+                    let slot_list = cdr.nth(2).unwrap_or(LispObject::nil());
+                    let mut slots: Vec<crate::primitives_eieio::Slot> = Vec::new();
+                    let mut cur = slot_list;
+                    while let Some((slot_spec, rest)) = cur.destructure_cons() {
+                        let (slot_name_obj, spec_rest) = match slot_spec.destructure_cons() {
+                            Some(p) => p,
+                            None => break,
+                        };
+                        if let Some(slot_name) = slot_name_obj.as_symbol() {
+                            // Look for :initform in the rest.
+                            let mut initform = LispObject::nil();
+                            let mut walk = spec_rest;
+                            while let Some((k, vs)) = walk.destructure_cons() {
+                                if k.as_symbol().as_deref() == Some(":initform") {
+                                    if let Some((v, rest2)) = vs.destructure_cons() {
+                                        // Evaluate the initform now — in
+                                        // real Emacs this is re-evaluated
+                                        // per make-instance, but for tests
+                                        // that mostly use literals it's
+                                        // fine to freeze.
+                                        if let Ok(evaled) = eval(
+                                            obj_to_value(v),
+                                            env,
+                                            editor,
+                                            macros,
+                                            state,
+                                        ) {
+                                            initform = value_to_obj(evaled);
+                                        }
+                                        walk = rest2;
+                                        continue;
+                                    }
+                                }
+                                // Skip unknown key + value pair.
+                                if let Some((_, rest2)) = vs.destructure_cons() {
+                                    walk = rest2;
+                                } else {
+                                    break;
+                                }
+                            }
+                            slots.push(crate::primitives_eieio::Slot {
+                                name: slot_name,
+                                default: initform,
+                            });
+                        }
+                        cur = rest;
+                    }
+                    crate::primitives_eieio::register_class(
+                        crate::primitives_eieio::Class {
+                            name: name.clone(),
+                            parent: parent_name,
+                            slots,
+                        },
+                    );
+                    Ok(obj_to_value(LispObject::symbol(&name)))
+                }
                 // (setf PLACE VALUE [PLACE VALUE]...) — walk pairs and
                 // expand each based on the place form. Supports:
                 // - bare symbol → setq

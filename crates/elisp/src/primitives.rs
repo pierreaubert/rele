@@ -150,6 +150,10 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     for &n in crate::primitives_file::FILE_PRIMITIVE_NAMES {
         interp.define(n, LispObject::primitive(n));
     }
+    // EIEIO classes/instances, widgets, advice — see primitives_eieio.rs.
+    for &n in crate::primitives_eieio::EIEIO_PRIMITIVE_NAMES {
+        interp.define(n, LispObject::primitive(n));
+    }
 
     // New primitives — string
     interp.define(

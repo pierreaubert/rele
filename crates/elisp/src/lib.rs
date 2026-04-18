@@ -8,6 +8,7 @@ pub mod obarray;
 mod object;
 mod primitives;
 mod primitives_buffer;
+mod primitives_eieio;
 mod primitives_file;
 mod primitives_value;
 mod primitives_window;
@@ -20,6 +21,27 @@ pub use eval::Interpreter;
 pub use object::{global_cons_count, BytecodeFunction, LispObject};
 pub use primitives::add_primitives;
 pub use reader::{detect_lexical_binding, read, read_all};
+
+/// Does `name` resolve to a user-authored callable (defun / defmacro
+/// / bytecode) rather than a built-in primitive?
+///
+/// Clients use this to decide whether to dispatch a command through
+/// the elisp interpreter or fall back to their Rust registry.
+/// `add_primitives` registers every built-in primitive (e.g.
+/// `forward-char`, `point`, `buffer-string`) in the obarray as
+/// `LispObject::Primitive(name)` — a function cell being populated
+/// is therefore not enough to decide that user code owns the command.
+/// A `Primitive` value always means "the Rust handler should run";
+/// anything else (a lambda produced by `(defun ...)`, a bytecode
+/// closure, a macro) is user-authored.
+#[must_use]
+pub fn is_user_defined_elisp_function(name: &str) -> bool {
+    let sym = obarray::intern(name);
+    matches!(
+        obarray::get_function_cell(sym),
+        Some(cell) if !matches!(cell, LispObject::Primitive(_))
+    )
+}
 
 /// Bridge between the elisp interpreter and whatever client owns the
 /// buffer/cursor (the TUI's `TuiAppState`, the GPUI client's
