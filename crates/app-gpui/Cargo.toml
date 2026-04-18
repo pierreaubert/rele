@@ -52,6 +52,12 @@ dirs = { workspace = true }
 # Logging
 log = { workspace = true }
 
+# LSP types (for completion items, diagnostics, etc.)
+lsp-types = { workspace = true }
+
+# Async runtime (for LSP event bridge)
+tokio = { workspace = true }
+
 # PDF export (optional)
 genpdf = { workspace = true, optional = true }
 

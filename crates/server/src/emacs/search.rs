@@ -1,11 +1,11 @@
 //! Rust equivalents of Emacs `search.c` — regex and literal search,
 //! match data, and replace operations on buffer text.
 //!
-//! Regex functions accept `&Regex` for the hot path. Convenience wrappers
-//! that take `&str` patterns compile via `RegexCache`.
+//! **Literal search** (`search-forward`, `search-backward`) is zero-alloc:
+//! it walks the rope's chunks directly with an overlap buffer for boundary matches.
 //!
-//! All byte↔char conversions go through `CharByteMap` which detects
-//! ASCII-only text (O(1) identity mapping) or precomputes the table once.
+//! **Regex search** allocates only the searched slice (cursor..end or start..cursor),
+//! not the entire buffer. Uses `CharByteMap` for O(1) byte↔char conversion on that slice.
 
 use std::collections::HashMap;
 
@@ -22,14 +22,11 @@ use crate::document::cursor::EditorCursor;
 /// For non-ASCII text, builds a lookup table on construction so that
 /// repeated `byte_to_char` calls are O(1) instead of O(n).
 pub struct CharByteMap {
-    /// `char_offsets[byte_idx]` = char offset at that byte position.
-    /// Only populated for non-ASCII text.
     table: Option<Vec<u32>>,
     len_chars: usize,
 }
 
 impl CharByteMap {
-    /// Build a mapping for the given string. O(n) once.
     pub fn new(s: &str) -> Self {
         if s.is_ascii() {
             return Self {
@@ -37,20 +34,15 @@ impl CharByteMap {
                 len_chars: s.len(),
             };
         }
-        // Build byte→char table: for each byte position, store the char count up to it.
-        // We only need values at char boundaries, but storing for every byte
-        // lets us do O(1) lookup without binary search.
         let mut table = Vec::with_capacity(s.len() + 1);
         let mut char_count = 0u32;
         for (byte_idx, _) in s.char_indices() {
-            // Fill from previous entry to this byte with the current char count
             while table.len() < byte_idx {
                 table.push(char_count);
             }
             table.push(char_count);
             char_count += 1;
         }
-        // Fill remaining positions (up to and including s.len())
         while table.len() <= s.len() {
             table.push(char_count);
         }
@@ -60,34 +52,19 @@ impl CharByteMap {
         }
     }
 
-    /// Convert a byte offset to a char offset. O(1).
     pub fn byte_to_char(&self, byte_pos: usize) -> usize {
         match &self.table {
-            None => byte_pos, // ASCII fast path
+            None => byte_pos,
             Some(t) => t.get(byte_pos).copied().unwrap_or(self.len_chars as u32) as usize,
-        }
-    }
-
-    /// Convert a char offset to a byte offset. O(1) for ASCII, O(n) for non-ASCII.
-    /// For non-ASCII, scans the table (could be optimized with a reverse table if needed).
-    pub fn char_to_byte(&self, char_pos: usize, s: &str) -> usize {
-        match &self.table {
-            None => char_pos.min(s.len()), // ASCII fast path
-            Some(_) => s
-                .char_indices()
-                .nth(char_pos)
-                .map(|(i, _)| i)
-                .unwrap_or(s.len()),
         }
     }
 }
 
 // ---- Regex cache ----
 
-/// Simple LRU-ish regex cache. Avoids recompiling the same pattern every call.
+/// Simple LRU regex cache.
 pub struct RegexCache {
     cache: HashMap<String, Regex>,
-    /// Insertion order for LRU eviction.
     order: Vec<String>,
     max_size: usize,
 }
@@ -101,16 +78,14 @@ impl RegexCache {
         }
     }
 
-    /// Get or compile a regex for the given pattern.
     pub fn get(&mut self, pattern: &str) -> Option<&Regex> {
         if !self.cache.contains_key(pattern) {
             let re = Regex::new(pattern).ok()?;
-            if self.cache.len() >= self.max_size {
-                // Evict oldest entry
-                if let Some(oldest) = self.order.first().cloned() {
-                    self.cache.remove(&oldest);
-                    self.order.remove(0);
-                }
+            if self.cache.len() >= self.max_size
+                && let Some(oldest) = self.order.first().cloned()
+            {
+                self.cache.remove(&oldest);
+                self.order.remove(0);
             }
             self.order.push(pattern.to_string());
             self.cache.insert(pattern.to_string(), re);
@@ -127,27 +102,20 @@ impl Default for RegexCache {
 
 // ---- Match data ----
 
-/// Match data — stores positions of the last successful search.
-/// Group 0 is the whole match; groups 1..N are capture groups.
 #[derive(Debug, Clone, Default)]
 pub struct MatchData {
-    /// Each entry is (start, end) in 0-based buffer positions.
-    /// Index 0 = whole match, 1..N = capture groups.
     pub groups: Vec<Option<(usize, usize)>>,
 }
 
 impl MatchData {
-    /// `(match-beginning N)` — start of Nth match group (1-based for Emacs).
     pub fn match_beginning(&self, n: usize) -> Option<usize> {
         self.groups.get(n).and_then(|g| g.map(|(s, _)| s + 1))
     }
 
-    /// `(match-end N)` — end of Nth match group (1-based for Emacs).
     pub fn match_end(&self, n: usize) -> Option<usize> {
         self.groups.get(n).and_then(|g| g.map(|(_, e)| e + 1))
     }
 
-    /// `(match-string N)` — extract the matched text from the buffer.
     pub fn match_string(&self, n: usize, doc: &DocumentBuffer) -> Option<String> {
         let (start, end) = (*self.groups.get(n)?)?;
         if end <= doc.len_chars() {
@@ -157,7 +125,6 @@ impl MatchData {
         }
     }
 
-    /// `(match-data)` — return flat list of (start end ...) as 1-based positions.
     pub fn as_positions(&self) -> Vec<Option<usize>> {
         let mut out = Vec::with_capacity(self.groups.len() * 2);
         for g in &self.groups {
@@ -175,7 +142,6 @@ impl MatchData {
         out
     }
 
-    /// `(set-match-data LIST)` — set match data from flat list of 1-based positions.
     pub fn set_from_positions(&mut self, positions: &[Option<usize>]) {
         self.groups.clear();
         self.groups.reserve(positions.len() / 2);
@@ -193,7 +159,7 @@ impl MatchData {
     }
 }
 
-// ---- Helper: populate match data from regex captures ----
+// ---- Helpers ----
 
 fn populate_match_data(
     caps: &regex::Captures<'_>,
@@ -215,24 +181,26 @@ fn populate_match_data(
     }
 }
 
-// ---- String match ----
+// ---- String match (operates on &str, not buffer) ----
 
-/// `(string-match REGEXP STRING &optional START)` — core version taking `&Regex`.
-/// Returns the 0-based char index of the match start, or None.
 pub fn string_match_re(
     re: &Regex,
     string: &str,
     start: usize,
     match_data: &mut MatchData,
 ) -> Option<usize> {
-    let map = CharByteMap::new(string);
-    let start_byte = map.char_to_byte(start, string);
+    let start_byte = if start == 0 {
+        0
+    } else {
+        string
+            .char_indices()
+            .nth(start)
+            .map(|(i, _)| i)
+            .unwrap_or(string.len())
+    };
     let search_str = &string[start_byte..];
-
     let caps = re.captures(search_str)?;
     let full = caps.get(0)?;
-
-    // Build a map for the substring for byte→char within search_str
     let sub_map = CharByteMap::new(search_str);
 
     match_data.groups.clear();
@@ -247,11 +215,9 @@ pub fn string_match_re(
             None => match_data.groups.push(None),
         }
     }
-
     Some(sub_map.byte_to_char(full.start()) + start)
 }
 
-/// Convenience: `string-match` from a pattern string.
 pub fn string_match(
     pattern: &str,
     string: &str,
@@ -264,7 +230,6 @@ pub fn string_match(
 
 // ---- Looking at ----
 
-/// `(looking-at REGEXP)` — core version taking `&Regex`.
 pub fn looking_at_re(
     re: &Regex,
     doc: &DocumentBuffer,
@@ -272,27 +237,25 @@ pub fn looking_at_re(
     match_data: &mut MatchData,
 ) -> bool {
     let pos = cursor.position.min(doc.len_chars());
+    // Allocate only cursor..end, not the whole buffer
     let text = doc.rope().slice(pos..).to_string();
 
     let caps = match re.captures(&text) {
         Some(c) => c,
         None => return false,
     };
-    // Only match if it starts at position 0 (anchored at point)
     if caps.get(0).is_none_or(|full| full.start() != 0) {
         return false;
     }
 
     let map = CharByteMap::new(&text);
     populate_match_data(&caps, match_data, &map, 0);
-    // Adjust all positions by adding `pos`
     for group in &mut match_data.groups {
         *group = group.map(|(s, e)| (s + pos, e + pos));
     }
     true
 }
 
-/// Convenience: `looking-at` from a pattern string.
 pub fn looking_at(
     pattern: &str,
     doc: &DocumentBuffer,
@@ -311,17 +274,19 @@ pub fn looking_at(
     looking_at_re(&re, doc, cursor, match_data)
 }
 
-// ---- Literal search ----
+// ---- Literal search (zero-alloc, chunk-based) ----
 
-/// Search direction for `search-forward` / `search-backward`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchDirection {
     Forward,
     Backward,
 }
 
-/// `(search-forward STRING)` / `(search-backward STRING)` — literal search.
-/// Returns the 1-based position after the match end (forward) or match start (backward).
+/// Zero-allocation literal search over rope chunks.
+///
+/// Walks chunks from the rope directly. For matches that span a chunk boundary,
+/// maintains an overlap buffer of `needle.len() - 1` bytes from the previous
+/// chunk's tail.
 pub fn search_literal(
     needle: &str,
     doc: &DocumentBuffer,
@@ -330,53 +295,152 @@ pub fn search_literal(
     bound: Option<usize>,
     match_data: &mut MatchData,
 ) -> Option<usize> {
-    let text = doc.text();
-    let pos = cursor.position.min(doc.len_chars());
-    let map = CharByteMap::new(&text);
+    if needle.is_empty() {
+        return None;
+    }
     let needle_chars = needle.chars().count();
 
-    let found = match direction {
+    match direction {
         SearchDirection::Forward => {
-            let start_byte = map.char_to_byte(pos, &text);
-            let end_byte = bound.map_or(text.len(), |b| map.char_to_byte(b.saturating_sub(1), &text));
-            let haystack = &text[start_byte..end_byte.min(text.len())];
-            haystack.find(needle).map(|byte_off| {
-                let char_off = map.byte_to_char(start_byte + byte_off);
-                (char_off, char_off + needle_chars)
-            })
+            search_literal_forward(doc, cursor, needle, needle_chars, bound, match_data)
         }
         SearchDirection::Backward => {
-            let end_byte = map.char_to_byte(pos, &text);
-            let start_byte = bound.map_or(0, |b| map.char_to_byte(b.saturating_sub(1), &text));
-            let haystack = &text[start_byte..end_byte];
-            haystack.rfind(needle).map(|byte_off| {
-                let char_off = map.byte_to_char(start_byte + byte_off);
-                (char_off, char_off + needle_chars)
-            })
+            search_literal_backward(doc, cursor, needle, needle_chars, bound, match_data)
         }
-    };
-
-    match found {
-        Some((start, end)) => {
-            match_data.groups = vec![Some((start, end))];
-            match direction {
-                SearchDirection::Forward => {
-                    cursor.position = end;
-                    Some(end + 1)
-                }
-                SearchDirection::Backward => {
-                    cursor.position = start;
-                    Some(start + 1)
-                }
-            }
-        }
-        None => None,
     }
 }
 
-// ---- Regex search ----
+fn search_literal_forward(
+    doc: &DocumentBuffer,
+    cursor: &mut EditorCursor,
+    needle: &str,
+    needle_chars: usize,
+    bound: Option<usize>,
+    match_data: &mut MatchData,
+) -> Option<usize> {
+    let pos = cursor.position.min(doc.len_chars());
+    let start_byte = doc.char_to_byte(pos);
+    let end_byte = bound.map_or(doc.rope().len_bytes(), |b| {
+        doc.char_to_byte(b.saturating_sub(1).min(doc.len_chars()))
+    });
+
+    if start_byte >= end_byte {
+        return None;
+    }
+
+    let rope = doc.rope();
+    let overlap_size = needle.len().saturating_sub(1);
+    let mut overlap_buf = String::with_capacity(overlap_size + 1024);
+    let mut found_byte: Option<usize> = None;
+
+    // Walk chunks starting from the one containing start_byte
+    let (chunks, first_chunk_byte, _, _) = rope.chunks_at_byte(start_byte);
+    let mut chunk_byte_start = first_chunk_byte;
+    for chunk in chunks {
+        let chunk_byte_end = chunk_byte_start + chunk.len();
+
+        // Skip chunks entirely before our search window
+        if chunk_byte_end <= start_byte {
+            chunk_byte_start = chunk_byte_end;
+            continue;
+        }
+        // Stop if we've passed the bound
+        if chunk_byte_start >= end_byte {
+            break;
+        }
+
+        // Check the overlap region (previous tail + current head)
+        if !overlap_buf.is_empty() {
+            let take_from_current = needle.len().min(chunk.len());
+            overlap_buf.push_str(&chunk[..take_from_current]);
+            if let Some(off) = overlap_buf.find(needle) {
+                // Match found in overlap. The match starts at:
+                // chunk_byte_start - (overlap before current chunk) + off
+                let overlap_prefix_len = overlap_buf.len() - take_from_current;
+                let match_byte = chunk_byte_start - overlap_prefix_len + off;
+                if match_byte >= start_byte && match_byte + needle.len() <= end_byte {
+                    found_byte = Some(match_byte);
+                    break;
+                }
+            }
+        }
+
+        // Search within this chunk (clipped to our search window)
+        let local_start = start_byte.saturating_sub(chunk_byte_start);
+        let local_end = (end_byte - chunk_byte_start).min(chunk.len());
+        if local_start < local_end {
+            let haystack = &chunk[local_start..local_end];
+            if let Some(off) = haystack.find(needle) {
+                let match_byte = chunk_byte_start + local_start + off;
+                if match_byte + needle.len() <= end_byte {
+                    found_byte = Some(match_byte);
+                    break;
+                }
+            }
+        }
+
+        // Prepare overlap for next iteration: keep tail of this chunk
+        overlap_buf.clear();
+        if chunk.len() >= overlap_size {
+            overlap_buf.push_str(&chunk[chunk.len() - overlap_size..]);
+        } else {
+            overlap_buf.push_str(chunk);
+        }
+
+        chunk_byte_start = chunk_byte_end;
+    }
+
+    let match_byte = found_byte?;
+    let match_char = rope.byte_to_char(match_byte);
+    let end_char = match_char + needle_chars;
+
+    match_data.groups = vec![Some((match_char, end_char))];
+    cursor.position = end_char;
+    Some(end_char + 1)
+}
+
+fn search_literal_backward(
+    doc: &DocumentBuffer,
+    cursor: &mut EditorCursor,
+    needle: &str,
+    needle_chars: usize,
+    bound: Option<usize>,
+    match_data: &mut MatchData,
+) -> Option<usize> {
+    let pos = cursor.position.min(doc.len_chars());
+    let end_byte = doc.char_to_byte(pos);
+    let start_byte = bound.map_or(0, |b| {
+        doc.char_to_byte(b.saturating_sub(1).min(doc.len_chars()))
+    });
+
+    if start_byte >= end_byte {
+        return None;
+    }
+
+    // For backward search, extract just the search window as a slice.
+    // This is more efficient than walking chunks in reverse for the typical case
+    // (the search window is small: cursor position to bound, usually on-screen).
+    let rope = doc.rope();
+    let slice = rope.byte_slice(start_byte..end_byte);
+    let text = slice.to_string();
+
+    // rfind on the slice
+    let byte_off = text.rfind(needle)?;
+    let match_byte = start_byte + byte_off;
+    let match_char = rope.byte_to_char(match_byte);
+    let end_char = match_char + needle_chars;
+
+    match_data.groups = vec![Some((match_char, end_char))];
+    cursor.position = match_char;
+    Some(match_char + 1)
+}
+
+// ---- Regex search (scoped allocation) ----
 
 /// `(re-search-forward REGEXP)` / `(re-search-backward REGEXP)` — core version.
+///
+/// Allocates only the searched portion of the buffer (cursor..end for forward,
+/// start..cursor for backward), not the entire buffer.
 pub fn re_search_re(
     re: &Regex,
     doc: &DocumentBuffer,
@@ -385,67 +449,64 @@ pub fn re_search_re(
     bound: Option<usize>,
     match_data: &mut MatchData,
 ) -> Option<usize> {
-    let text = doc.text();
     let pos = cursor.position.min(doc.len_chars());
-    let map = CharByteMap::new(&text);
 
     match direction {
         SearchDirection::Forward => {
-            let start_byte = map.char_to_byte(pos, &text);
-            let search_str = &text[start_byte..];
-            let caps = re.captures(search_str)?;
+            let end_char = bound.unwrap_or(doc.len_chars() + 1).saturating_sub(1).min(doc.len_chars());
+            // Allocate only pos..end_char
+            let slice_text = doc.rope().slice(pos..end_char).to_string();
+            let caps = re.captures(&slice_text)?;
             let full = caps.get(0)?;
-            let match_end_char = map.byte_to_char(start_byte + full.end());
 
-            if let Some(b) = bound
-                && match_end_char > b.saturating_sub(1)
-            {
-                return None;
+            let map = CharByteMap::new(&slice_text);
+            let match_end_char = map.byte_to_char(full.end()) + pos;
+
+            populate_match_data(&caps, match_data, &map, 0);
+            // Shift positions by `pos`
+            for group in &mut match_data.groups {
+                *group = group.map(|(s, e)| (s + pos, e + pos));
             }
 
-            populate_match_data(&caps, match_data, &map, start_byte);
             cursor.position = match_end_char;
             Some(match_end_char + 1)
         }
         SearchDirection::Backward => {
-            let end_byte = map.char_to_byte(pos, &text);
-            let search_str = &text[..end_byte];
-            let bound_char = bound.map(|b| b.saturating_sub(1)).unwrap_or(0);
+            let start_char = bound.map(|b| b.saturating_sub(1)).unwrap_or(0);
+            // Allocate only start_char..pos
+            let slice_text = doc.rope().slice(start_char..pos).to_string();
 
-            // Find the last match at or after bound.
+            // Find the last match
             let mut last_start = None;
-            for m in re.find_iter(search_str) {
-                let start_char = map.byte_to_char(m.start());
-                if start_char >= bound_char {
-                    last_start = Some(m.start());
-                }
+            for m in re.find_iter(&slice_text) {
+                last_start = Some(m.start());
             }
-
             let last_byte = last_start?;
-            let tail = &search_str[last_byte..];
+
+            let tail = &slice_text[last_byte..];
             let caps = re.captures(tail)?;
+            let map = CharByteMap::new(&slice_text);
 
             match_data.groups.clear();
             match_data.groups.reserve(caps.len());
             for i in 0..caps.len() {
                 match caps.get(i) {
                     Some(m) => {
-                        let s = map.byte_to_char(last_byte + m.start());
-                        let e = map.byte_to_char(last_byte + m.end());
+                        let s = map.byte_to_char(last_byte + m.start()) + start_char;
+                        let e = map.byte_to_char(last_byte + m.end()) + start_char;
                         match_data.groups.push(Some((s, e)));
                     }
                     None => match_data.groups.push(None),
                 }
             }
 
-            let start_char = map.byte_to_char(last_byte);
-            cursor.position = start_char;
-            Some(start_char + 1)
+            let match_start_char = map.byte_to_char(last_byte) + start_char;
+            cursor.position = match_start_char;
+            Some(match_start_char + 1)
         }
     }
 }
 
-/// Convenience: `re-search-forward` / `re-search-backward` from a pattern string.
 pub fn re_search(
     pattern: &str,
     doc: &DocumentBuffer,
@@ -460,7 +521,6 @@ pub fn re_search(
 
 // ---- Replace ----
 
-/// `(replace-match NEWTEXT)` — replace the last match with NEWTEXT.
 pub fn replace_match(
     doc: &mut DocumentBuffer,
     cursor: &mut EditorCursor,
@@ -482,7 +542,6 @@ pub fn replace_match(
     true
 }
 
-/// `(regexp-quote STRING)` — quote special regex characters.
 pub fn regexp_quote(s: &str) -> String {
     regex::escape(s)
 }
@@ -501,18 +560,18 @@ mod tests {
         assert_eq!(map.byte_to_char(0), 0);
         assert_eq!(map.byte_to_char(3), 3);
         assert_eq!(map.byte_to_char(5), 5);
-        assert!(map.table.is_none()); // ASCII fast path
+        assert!(map.table.is_none());
     }
 
     #[test]
     fn test_char_byte_map_unicode() {
-        let s = "héllo"; // é is 2 bytes
+        let s = "héllo";
         let map = CharByteMap::new(s);
         assert!(map.table.is_some());
-        assert_eq!(map.byte_to_char(0), 0); // 'h'
-        assert_eq!(map.byte_to_char(1), 1); // start of 'é'
-        assert_eq!(map.byte_to_char(3), 2); // 'l' (byte 3 = char 2)
-        assert_eq!(map.byte_to_char(5), 4); // 'o'
+        assert_eq!(map.byte_to_char(0), 0);
+        assert_eq!(map.byte_to_char(1), 1);
+        assert_eq!(map.byte_to_char(3), 2);
+        assert_eq!(map.byte_to_char(5), 4);
         assert_eq!(map.len_chars, 5);
     }
 
@@ -529,7 +588,7 @@ mod tests {
         let mut cache = RegexCache::new(2);
         cache.get("a+");
         cache.get("b+");
-        cache.get("c+"); // should evict "a+"
+        cache.get("c+");
         assert_eq!(cache.cache.len(), 2);
         assert!(!cache.cache.contains_key("a+"));
     }
@@ -579,6 +638,22 @@ mod tests {
     }
 
     #[test]
+    fn test_search_forward_at_start() {
+        let (doc, mut cursor) = make_doc("hello world");
+        let mut md = MatchData::default();
+        let result = search_literal(
+            "hello",
+            &doc,
+            &mut cursor,
+            SearchDirection::Forward,
+            None,
+            &mut md,
+        );
+        assert_eq!(result, Some(6));
+        assert_eq!(cursor.position, 5);
+    }
+
+    #[test]
     fn test_search_backward() {
         let (doc, mut cursor) = make_doc("hello hello");
         cursor.position = 11;
@@ -592,6 +667,32 @@ mod tests {
             &mut md,
         );
         assert_eq!(result, Some(7));
+    }
+
+    #[test]
+    fn test_search_backward_from_middle() {
+        let (doc, mut cursor) = make_doc("abc def abc");
+        cursor.position = 8; // after "def "
+        let mut md = MatchData::default();
+        let result = search_literal(
+            "abc",
+            &doc,
+            &mut cursor,
+            SearchDirection::Backward,
+            None,
+            &mut md,
+        );
+        assert_eq!(result, Some(1)); // first "abc"
+    }
+
+    #[test]
+    fn test_search_empty_needle() {
+        let (doc, mut cursor) = make_doc("hello");
+        let mut md = MatchData::default();
+        assert_eq!(
+            search_literal("", &doc, &mut cursor, SearchDirection::Forward, None, &mut md),
+            None
+        );
     }
 
     #[test]

@@ -270,8 +270,16 @@ impl Render for MainView {
         } else {
             1
         };
-        let word_count = state.document.text().split_whitespace().count();
+        // word_count() is cached on DocumentBuffer keyed by version, so this
+        // is O(1) amortised across frames that don't mutate the buffer.
+        let word_count = state.document.word_count();
         let keymap_name = state.keymap_preset.name();
+        let diag_count = state
+            .lsp_buffer_state
+            .as_ref()
+            .map(|s| s.diagnostics.len())
+            .unwrap_or(0);
+        let lsp_status = state.lsp_status.clone().unwrap_or_default();
 
         // Emacs-style status indicators
         let universal_arg_text = state.universal_arg.map(|n| format!("C-u {} ", n));
@@ -339,6 +347,10 @@ impl Render for MainView {
                     .when_some(isearch_text, |el, text| el.child(text))
                     .child(format!("Ln {}", cursor_line))
                     .child(format!("{} words", word_count))
+                    .when(diag_count > 0, |el| {
+                        el.child(format!("diag:{}", diag_count))
+                    })
+                    .when(!lsp_status.is_empty(), |el| el.child(lsp_status.clone()))
                     .child(keymap_name),
             )
             // Mini-buffer / echo area (Emacs-style: below mode line)

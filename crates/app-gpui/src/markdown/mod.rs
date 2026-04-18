@@ -8,5 +8,5 @@ pub mod theme_colors;
 pub use parser::parse_markdown;
 pub use renderer::render_markdown;
 pub use source_map::{SourceMap, SourceSpan};
-pub use syntax_highlight::{HighlightSpan, highlight_line};
+pub use syntax_highlight::{HighlightSpan, highlight_line, ts_ranges_to_spans};
 pub use theme_colors::MdThemeColors;

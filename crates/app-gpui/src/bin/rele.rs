@@ -51,6 +51,10 @@ fn main() {
                 cx.new(|_| MdAppState::new())
             };
 
+            // Wire up elisp editor callbacks now that the state lives in a
+            // stable GPUI entity (heap-backed, never moves).
+            state.update(cx, |s, _cx| s.install_elisp_editor_callbacks());
+
             // Create additional buffers for remaining files.
             state.update(cx, |s, _cx| {
                 for file in files.iter().skip(1) {
@@ -72,6 +76,27 @@ fn main() {
 
             register_actions(cx);
             cx.set_menus(build_menus());
+
+            // Start the LSP event polling task.
+            // Takes the event receiver from the registry and spawns a GPUI
+            // async task that forwards events to state.handle_lsp_event().
+            let lsp_state = state.clone();
+            let lsp_rx = state.update(cx, |s, _cx| {
+                s.ensure_lsp_registry();
+                s.lsp_registry.as_mut().and_then(|r| r.take_event_receiver())
+            });
+            if let Some(mut rx) = lsp_rx {
+                cx.spawn(async move |cx| {
+                    while let Some(event) = rx.recv().await {
+                        let _ = cx.update(|cx| {
+                            lsp_state.update(cx, |s, _cx| {
+                                s.handle_lsp_event(event);
+                            });
+                        });
+                    }
+                })
+                .detach();
+            }
 
             cx.new(|cx| MainView::new(state, cx))
         },
@@ -167,7 +192,10 @@ fn register_actions(cx: &mut App) {
 
         if let Some(path) = path {
             match std::fs::write(&path, &text) {
-                Ok(()) => state.update(cx, |s, _cx| s.document.mark_clean()),
+                Ok(()) => state.update(cx, |s, _cx| {
+                    s.document.mark_clean();
+                    s.lsp_did_save();
+                }),
                 Err(e) => error!("Failed to save file {}: {}", path.display(), e),
             }
         } else {
@@ -186,6 +214,7 @@ fn register_actions(cx: &mut App) {
                                     s.document.set_file_path(path.clone());
                                     s.document.mark_clean();
                                     s.add_recent_file(path);
+                                    s.lsp_did_save();
                                 });
                             });
                         }
@@ -214,6 +243,7 @@ fn register_actions(cx: &mut App) {
                                 s.document.set_file_path(path.clone());
                                 s.document.mark_clean();
                                 s.add_recent_file(path);
+                                s.lsp_did_save();
                             });
                         });
                     }

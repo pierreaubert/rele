@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use comrak::Arena;
 use gpui::prelude::*;
 use gpui::*;
@@ -6,6 +8,12 @@ use gpui_ui_kit::theme::ThemeExt;
 
 use crate::markdown::{MdThemeColors, SourceMap, SourceSpan, parse_markdown, render_markdown};
 use crate::state::MdAppState;
+
+/// How long to wait after the last edit before re-parsing markdown for the
+/// preview. During burst typing, consecutive edits all cancel the previous
+/// timer, so only the final quiet period triggers a parse. See
+/// `PERFORMANCE.md` Rule 9 — parse once, query many.
+const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
 
 /// Rendered markdown preview pane with click-to-locate and inline WYSIWYG editing.
 pub struct PreviewPane {
@@ -23,19 +31,53 @@ pub struct PreviewPane {
     /// use `scroll_handle.bounds_for_item(i)` to get that block's
     /// rendered pixel bounds.
     pub block_spans: Vec<SourceSpan>,
+    /// Generation counter incremented on every observed edit. The debounce
+    /// task captures the generation at scheduling time and only fires the
+    /// re-render if the generation hasn't changed by the time it wakes
+    /// (i.e. no newer edit landed).
+    debounce_generation: u64,
 }
 
 impl PreviewPane {
     pub fn new(state: Entity<MdAppState>, cx: &mut Context<Self>) -> Self {
         // Re-render on document changes and settings changes (line numbers, etc.)
+        //
+        // Parsing markdown is O(n) in document size (6.5 ms on a 1000-section
+        // fixture, per `crates/server/benches/markdown_parse.rs`). Running
+        // on every keystroke is wasteful and, for large docs, blows the
+        // 16 ms frame budget. So we debounce: record the edit, schedule a
+        // re-render after `PREVIEW_DEBOUNCE`, and drop the scheduled render
+        // if a newer edit arrives before it fires.
         cx.observe(&state, |this, state, cx| {
             let s = state.read(cx);
             let version = s.document.version();
             let show_ln = s.show_preview_line_numbers;
-            // Re-render on document changes and settings changes
-            if version != this.cached_version || show_ln != this.cached_show_line_numbers {
+
+            // Settings changes (line numbers toggle) render immediately —
+            // they're rare and the user expects instant feedback.
+            if show_ln != this.cached_show_line_numbers {
                 cx.notify();
+                return;
             }
+
+            if version == this.cached_version {
+                return; // Nothing changed that would affect the preview.
+            }
+
+            // Schedule a debounced re-render.
+            this.debounce_generation = this.debounce_generation.wrapping_add(1);
+            let gen_at_schedule = this.debounce_generation;
+            let background = cx.background_executor().clone();
+            cx.spawn(async move |this, cx| {
+                background.timer(PREVIEW_DEBOUNCE).await;
+                let _ = this.update(cx, |this, cx| {
+                    // Only render if no newer edit bumped the counter.
+                    if this.debounce_generation == gen_at_schedule {
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
         })
         .detach();
 
@@ -46,6 +88,7 @@ impl PreviewPane {
             cached_source_map: SourceMap::new(),
             cached_show_line_numbers: false,
             block_spans: Vec::new(),
+            debounce_generation: 0,
         }
     }
 }

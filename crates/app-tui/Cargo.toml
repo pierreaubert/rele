@@ -23,6 +23,9 @@ serde = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 
+# LSP types
+lsp-types = { workspace = true }
+
 # TUI framework
 ratatui = { workspace = true }
 crossterm = { workspace = true }

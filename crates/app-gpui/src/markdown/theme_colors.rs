@@ -4,6 +4,7 @@
 //! and syntax highlighter produce correct colors in both light and dark modes.
 
 use gpui::Rgba;
+use rele_server::syntax::Highlight;
 
 /// Colors used by the markdown renderer and syntax highlighter.
 #[derive(Debug, Clone, Copy)]
@@ -100,6 +101,31 @@ impl MdThemeColors {
                 find_match_bg: rgba(0x61502bff),
                 find_match_text: rgba(0xffdd57ff),
             }
+        }
+    }
+
+    /// Map a language-agnostic `Highlight` token to a concrete `Rgba`.
+    /// Used by the tree-sitter path in the editor pane. Falls back to
+    /// `self.text` for unrecognised kinds.
+    pub fn color_for_highlight(&self, kind: Highlight) -> Rgba {
+        match kind {
+            Highlight::Plain => self.text,
+            Highlight::Keyword => self.syn_bold,
+            Highlight::String => self.syn_code,
+            Highlight::Number => self.syn_checkbox,
+            Highlight::Comment => self.text_muted,
+            Highlight::Function => self.syn_link,
+            Highlight::Type => self.syn_heading,
+            Highlight::Macro => self.syn_bold,
+            Highlight::Heading => self.syn_heading,
+            Highlight::Emphasis => self.syn_italic,
+            Highlight::Strong => self.syn_bold,
+            Highlight::Code => self.syn_code,
+            Highlight::Link => self.syn_link,
+            Highlight::ListMarker => self.syn_list_marker,
+            Highlight::Fence => self.syn_fence,
+            Highlight::Quote => self.syn_blockquote,
+            Highlight::Checkbox => self.syn_checkbox,
         }
     }
 }

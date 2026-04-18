@@ -35,6 +35,10 @@ pub enum MiniBufferPrompt {
     FreeText { label: String },
     /// Single-key yes/no confirmation.
     YesNo { label: String },
+    /// LSP completion at point.
+    Completion,
+    /// LSP go-to-definition or find-references result list.
+    LspLocations { label: String },
 }
 
 impl MiniBufferPrompt {
@@ -52,6 +56,8 @@ impl MiniBufferPrompt {
             Self::GotoLine => "Goto line: ".to_string(),
             Self::FreeText { label } => format!("{}: ", label),
             Self::YesNo { label } => format!("{} (y or n) ", label),
+            Self::Completion => "Complete: ".to_string(),
+            Self::LspLocations { label } => format!("{}: ", label),
         }
     }
 
@@ -77,6 +83,8 @@ impl MiniBufferPrompt {
             Self::GotoLine => "goto-line",
             Self::FreeText { .. } => "free-text",
             Self::YesNo { .. } => "yes-no",
+            Self::Completion => "completion",
+            Self::LspLocations { .. } => "lsp-locations",
         }
     }
 }

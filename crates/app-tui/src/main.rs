@@ -56,6 +56,9 @@ fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut TuiAppState,
 ) -> Result<()> {
+    // Start LSP for the initial file if one was opened.
+    state.lsp_did_open();
+
     loop {
         terminal.draw(|frame| ui::draw(frame, state))?;
 
@@ -63,10 +66,17 @@ fn event_loop(
         state.message = None;
 
         if state.should_quit {
+            // Shut down LSP servers gracefully.
+            if let Some(ref mut registry) = state.lsp_registry {
+                registry.shutdown_all();
+            }
             return Ok(());
         }
 
-        // Poll for events with a timeout (allows responsive quit)
+        // Process pending LSP events (non-blocking).
+        state.poll_lsp_events();
+
+        // Poll for terminal events with a timeout (allows responsive quit)
         if event::poll(Duration::from_millis(100))?
             && let Event::Key(key) = event::read()?
         {

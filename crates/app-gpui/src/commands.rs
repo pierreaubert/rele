@@ -507,4 +507,48 @@ pub fn register_builtin_commands(registry: &mut CommandRegistry) {
             }
         },
     );
+
+    // ---- LSP ----
+    registry.register_fn(
+        "lsp-completion",
+        "Request LSP completion at point",
+        Custom,
+        InteractiveSpec::None,
+        |s, _args| s.lsp_request_completion(),
+    );
+    registry.register_fn(
+        "lsp-hover",
+        "Show LSP hover info at point",
+        Custom,
+        InteractiveSpec::None,
+        |s, _args| s.lsp_request_hover(),
+    );
+    registry.register_fn(
+        "lsp-goto-definition",
+        "Jump to definition at point (M-.)",
+        Custom,
+        InteractiveSpec::None,
+        |s, _args| s.lsp_goto_definition(),
+    );
+    registry.register_fn(
+        "lsp-find-references",
+        "Find all references at point",
+        Custom,
+        InteractiveSpec::None,
+        |s, _args| s.lsp_find_references(),
+    );
+    registry.register_fn(
+        "lsp-format-buffer",
+        "Format the current buffer via LSP",
+        Custom,
+        InteractiveSpec::None,
+        |s, _args| s.lsp_format_buffer(),
+    );
+    registry.register_fn(
+        "lsp-restart-server",
+        "Restart the LSP server for the current language",
+        Custom,
+        InteractiveSpec::None,
+        |s, _args| s.lsp_restart_server(),
+    );
 }

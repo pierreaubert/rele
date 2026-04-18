@@ -5,7 +5,7 @@ use gpui::prelude::*;
 use gpui::*;
 use gpui_ui_kit::theme::ThemeExt;
 
-use crate::markdown::{MdThemeColors, highlight_line};
+use crate::markdown::{MdThemeColors, highlight_line, ts_ranges_to_spans};
 use crate::state::MdAppState;
 
 /// Estimated line height in pixels for scroll offset calculations.
@@ -16,6 +16,18 @@ pub const LINE_HEIGHT_PX: f32 = 20.0;
 
 /// Lines of padding rendered above/below the visible viewport for smooth scrolling.
 const VIRTUALIZATION_OVERSCAN: usize = 10;
+
+/// Maximum number of characters of a single line that the editor will
+/// render. Lines longer than this are truncated at render time (the
+/// underlying `DocumentBuffer` is untouched) to keep pathological inputs —
+/// minified JSON, compiled CSS, base64 blobs — from freezing GPUI or the
+/// syntax highlighter.
+///
+/// Per `PERFORMANCE.md` Rule 5 — cap pathological inputs at render time.
+const MAX_LINE_DISPLAY_CHARS: usize = 10_000;
+
+/// Marker appended to truncated lines so the user knows it happened.
+const LINE_TRUNCATED_MARKER: &str = " … [line truncated]";
 
 /// Derive page jump size from a viewport height in pixels.
 /// Falls back to 40 lines if height is unknown or zero.
@@ -35,13 +47,72 @@ pub struct EditorPane {
     focus_handle: FocusHandle,
     /// Last known viewport height in pixels, used to derive page jump size.
     viewport_height: Rc<Cell<f32>>,
+    /// Fingerprint of the state fields this view renders. The observer
+    /// only fires `cx.notify()` when the fingerprint changes, so state
+    /// mutations that don't affect the editor (e.g. preview settings,
+    /// recent-files list) don't trigger an editor re-render.
+    /// See `PERFORMANCE.md` Rule 10.
+    last_fingerprint: Cell<EditorFingerprint>,
+}
+
+/// Fields the editor pane actually displays. Any change here should
+/// trigger a re-render; anything outside should not.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+struct EditorFingerprint {
+    doc_version: u64,
+    cursor_pos: usize,
+    anchor: Option<usize>,
+    font_size_bits: u32,
+    show_line_numbers: bool,
+    find_bar_visible: bool,
+    find_query_len: usize,
+    isearch_active: bool,
+    universal_arg: Option<usize>,
+    completion_visible: bool,
+    completion_selected: usize,
+    hover_present: bool,
+    /// Number of diagnostics on the active buffer — a change here is rare
+    /// but does change what we paint (underlines).
+    diag_count: usize,
+}
+
+impl EditorFingerprint {
+    fn from_state(s: &MdAppState) -> Self {
+        Self {
+            doc_version: s.document.version(),
+            cursor_pos: s.cursor.position,
+            anchor: s.cursor.anchor,
+            font_size_bits: s.font_size.to_bits(),
+            show_line_numbers: s.show_line_numbers,
+            find_bar_visible: s.find_bar_visible,
+            find_query_len: s.find_query.len(),
+            isearch_active: s.isearch.active,
+            universal_arg: s.universal_arg,
+            completion_visible: s.lsp_completion_visible,
+            completion_selected: s.lsp_completion_selected,
+            hover_present: s.lsp_hover_text.is_some(),
+            diag_count: s
+                .lsp_buffer_state
+                .as_ref()
+                .map(|b| b.diagnostics.len())
+                .unwrap_or(0),
+        }
+    }
 }
 
 impl EditorPane {
     pub fn new(state: Entity<MdAppState>, cx: &mut Context<Self>) -> Self {
-        // Re-render when any state changes (line numbers toggle, etc.)
-        cx.observe(&state, |_this, _state, cx| {
-            cx.notify();
+        let initial_fp = EditorFingerprint::from_state(state.read(cx));
+
+        // Only notify when a field the editor renders has changed. This
+        // shields the editor from re-rendering when unrelated state
+        // mutates (e.g. preview settings, recent-files list, dired state).
+        cx.observe(&state, |this, state, cx| {
+            let fp = EditorFingerprint::from_state(state.read(cx));
+            if fp != this.last_fingerprint.get() {
+                this.last_fingerprint.set(fp);
+                cx.notify();
+            }
         })
         .detach();
 
@@ -50,6 +121,7 @@ impl EditorPane {
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             viewport_height: Rc::new(Cell::new(0.0)),
+            last_fingerprint: Cell::new(initial_fp),
         }
     }
 }
@@ -102,6 +174,25 @@ impl Render for EditorPane {
             0.0
         };
 
+        // Collect diagnostic line ranges for underline rendering.
+        let diag_ranges: Vec<(u32, u32, u32, u32)> = state
+            .lsp_buffer_state
+            .as_ref()
+            .map(|s| {
+                s.diagnostics
+                    .iter()
+                    .map(|d| {
+                        (
+                            d.range.start.line,
+                            d.range.start.character,
+                            d.range.end.line,
+                            d.range.end.character,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let md_colors = MdThemeColors::from_theme(&theme);
         let bg_color = theme.background;
         let surface_color = theme.surface;
@@ -132,37 +223,97 @@ impl Render for EditorPane {
             line_elements.push(div().h(px(spacer_height)).w_full().into_any_element());
         }
 
-        // Track code block state by scanning from line 0 to render_start
+        // Tree-sitter highlighting path: if the buffer has a grammar,
+        // reparse (if stale) and query the visible range once. The per-
+        // line loop below uses these ranges directly. Otherwise the
+        // regex `highlight_line` runs per line with the `in_code_block`
+        // state we derive by scanning from line 0 to `render_start`.
+        let has_ts_highlighter = state.buffer_highlighter.is_some();
+        // Release the immutable borrow so we can call the mutable
+        // `ensure_highlight_fresh` below.
+        let _ = state;
+        if has_ts_highlighter {
+            self.state
+                .update(cx, |s, _cx| s.ensure_highlight_fresh());
+        }
+        let state = self.state.read(cx);
+        let doc = &state.document; // rebind after state.update
+        let ts_ranges_by_line: std::collections::HashMap<usize, Vec<rele_server::syntax::HighlightRange>> =
+            if let Some(h) = state.buffer_highlighter.as_ref() {
+                h.highlight_range(doc.rope(), render_start, render_end)
+                    .into_iter()
+                    .collect()
+            } else {
+                std::collections::HashMap::new()
+            };
+
+        // Track code block state by scanning from line 0 to render_start.
+        // Skipped entirely when tree-sitter is driving — the whole-file
+        // parse tree carries the context naturally.
         let mut in_code_block = false;
-        for i in 0..render_start {
-            let line_slice = doc.line(i);
-            let line_str: String = line_slice.to_string();
-            let trimmed = line_str.trim_start();
-            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-                in_code_block = !in_code_block;
+        if !has_ts_highlighter {
+            for i in 0..render_start {
+                let line_slice = doc.line(i);
+                let line_str: String = line_slice.to_string();
+                let trimmed = line_str.trim_start();
+                if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+                    in_code_block = !in_code_block;
+                }
             }
         }
 
         for i in render_start..render_end {
             let line_slice = doc.line(i);
-            // Strip trailing newline from ropey line slice
-            let line_text_owned: String = {
-                let s = line_slice.to_string();
-                if s.ends_with('\n') {
-                    s[..s.len() - 1].to_string()
+            // Pull characters one chunk at a time and stop early if the line
+            // exceeds MAX_LINE_DISPLAY_CHARS. This avoids materialising a
+            // 10 MB `String` for pathological lines — we pay only for what
+            // we display.
+            let line_slice_len = line_slice.len_chars();
+            let (line_text_owned, was_truncated): (String, bool) =
+                if line_slice_len > MAX_LINE_DISPLAY_CHARS {
+                    let mut s =
+                        String::with_capacity(MAX_LINE_DISPLAY_CHARS * 4);
+                    for ch in line_slice.chars().take(MAX_LINE_DISPLAY_CHARS) {
+                        s.push(ch);
+                    }
+                    s.push_str(LINE_TRUNCATED_MARKER);
+                    (s, true)
                 } else {
-                    s
-                }
-            };
+                    let s = line_slice.to_string();
+                    let stripped = if s.ends_with('\n') {
+                        s[..s.len() - 1].to_string()
+                    } else {
+                        s
+                    };
+                    (stripped, false)
+                };
             let line_text: &str = &line_text_owned;
             let is_cursor_line = i == cursor_line;
             let line_char_offset = doc.line_to_char(i);
+            // Char count of the DISPLAY text, not the underlying line.
+            // Used for selection/cursor math on the rendered line only;
+            // off-screen characters past the truncation marker are
+            // un-clickable by design (user must scroll or wrap the file).
             let line_char_count = line_text.chars().count();
+            let _ = was_truncated;
             let state_for_click = self.state.clone();
             let focus_for_click = self.focus_handle.clone();
             let state_for_drag = self.state.clone();
 
-            let (spans, new_code_block) = highlight_line(line_text, in_code_block, &md_colors);
+            // Prefer tree-sitter ranges when the buffer has a grammar;
+            // fall back to the regex line highlighter otherwise. The
+            // per-line `in_code_block` state is only advanced on the
+            // regex path — tree-sitter handles fences globally.
+            let (spans, new_code_block) = if has_ts_highlighter {
+                let default = ts_ranges_by_line
+                    .get(&i)
+                    .map(|r| ts_ranges_to_spans(line_text, r, &md_colors))
+                    .unwrap_or_else(|| ts_ranges_to_spans(line_text, &[], &md_colors));
+                (default, in_code_block)
+            } else {
+                let (spans, next) = highlight_line(line_text, in_code_block, &md_colors);
+                (spans, next)
+            };
             in_code_block = new_code_block;
 
             let line_start = line_char_offset;
@@ -215,6 +366,21 @@ impl Render for EditorPane {
                 line_div = line_div.bg(surface_color);
             }
 
+            // Collect diagnostic column ranges for this line.
+            let line_diag_cols: Vec<(usize, usize)> = diag_ranges
+                .iter()
+                .filter(|(sl, _, el, _)| *sl <= i as u32 && *el >= i as u32)
+                .map(|(sl, sc, el, ec)| {
+                    let col_start = if *sl == i as u32 { *sc as usize } else { 0 };
+                    let col_end = if *el == i as u32 {
+                        *ec as usize
+                    } else {
+                        line_char_count
+                    };
+                    (col_start, col_end.max(col_start + 1))
+                })
+                .collect();
+
             // Build StyledText with syntax highlighting, selection, cursor, and find overlays
             let (text_content, runs) = build_line_text_runs(
                 &spans,
@@ -224,6 +390,7 @@ impl Render for EditorPane {
                 sel_cols,
                 &find_query,
                 &md_colors,
+                &line_diag_cols,
             );
 
             let styled = StyledText::new(SharedString::from(text_content.clone())).with_runs(runs);
@@ -305,6 +472,25 @@ impl Render for EditorPane {
         }
 
         // Key handler state references
+        // Completion popup state
+        let completion_visible = state.lsp_completion_visible;
+        let completion_items: Vec<(String, bool)> = if completion_visible {
+            state
+                .lsp_completion_items
+                .iter()
+                .enumerate()
+                .take(10)
+                .map(|(idx, item)| {
+                    (item.label.clone(), idx == state.lsp_completion_selected)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Hover text (shown below completion popup or standalone)
+        let hover_text = state.lsp_hover_text.clone();
+
         let state_for_keys = self.state.clone();
         let focus_for_keys = self.focus_handle.clone();
         let scroll_for_keys = self.scroll_handle.clone();
@@ -929,6 +1115,78 @@ impl Render for EditorPane {
                 }
             })
             .child(div().flex().flex_col().w_full().children(line_elements))
+            // Completion popup
+            .when(completion_visible, |el| {
+                let items: Vec<AnyElement> = completion_items
+                    .iter()
+                    .map(|(label, selected)| {
+                        let bg = if *selected {
+                            surface_color
+                        } else {
+                            bg_color
+                        };
+                        div()
+                            .px_2()
+                            .py(px(1.0))
+                            .bg(bg)
+                            .text_size(px(12.0))
+                            .font_family("monospace")
+                            .text_color(text_color)
+                            .child(label.clone())
+                            .into_any_element()
+                    })
+                    .collect();
+                // Position the popup just below the cursor line. The editor
+                // pane has `.p_2()` (8px padding) and the gutter offset pushes
+                // content right. Y is relative to the scrolled document, so
+                // we subtract the current scroll offset.
+                let char_width = editor_font_size * 0.6;
+                let popup_y =
+                    ((cursor_line + 1) as f32 * LINE_HEIGHT_PX) - scroll_top + 8.0;
+                let popup_x =
+                    8.0 + gutter_width + (cursor_col as f32 * char_width);
+                el.child(
+                    div()
+                        .absolute()
+                        .top(px(popup_y))
+                        .left(px(popup_x))
+                        .w(px(300.0))
+                        .max_h(px(200.0))
+                        .overflow_hidden()
+                        .bg(bg_color)
+                        .border_1()
+                        .border_color(border_color)
+                        .shadow_md()
+                        .children(items),
+                )
+            })
+            // Hover tooltip: above the cursor line so it doesn't overlap typing.
+            .when_some(hover_text, |el, text| {
+                let first_line = text.lines().next().unwrap_or("").to_string();
+                let char_width = editor_font_size * 0.6;
+                let hover_y = (cursor_line as f32 * LINE_HEIGHT_PX) - scroll_top
+                    - 24.0
+                    + 8.0;
+                let hover_x =
+                    8.0 + gutter_width + (cursor_col as f32 * char_width);
+                el.child(
+                    div()
+                        .absolute()
+                        .top(px(hover_y.max(0.0)))
+                        .left(px(hover_x))
+                        .max_w(px(500.0))
+                        .px_2()
+                        .py_1()
+                        .bg(surface_color)
+                        .border_1()
+                        .border_color(border_color)
+                        .shadow_md()
+                        .text_size(px(12.0))
+                        .font_family("monospace")
+                        .text_color(text_color)
+                        .child(first_line),
+                )
+            })
             // Isearch status bar
             .when(isearch_active, |el| {
                 el.child(
@@ -991,6 +1249,7 @@ fn build_line_text_runs(
     sel_cols: Option<(usize, usize)>,
     find_query: &str,
     colors: &MdThemeColors,
+    diag_cols: &[(usize, usize)],
 ) -> (String, Vec<TextRun>) {
     let font = Font {
         family: SharedString::from("monospace"),
@@ -1054,7 +1313,22 @@ fn build_line_text_runs(
         }
     }
 
-    // Phase 4: Overlay cursor block (highest priority)
+    // Phase 4: Overlay diagnostic underlines
+    let mut underlines: Vec<Option<UnderlineStyle>> = vec![None; text_bytes];
+    for &(diag_start_col, diag_end_col) in diag_cols {
+        let byte_start = char_col_to_byte_offset(&text, diag_start_col);
+        let byte_end = char_col_to_byte_offset(&text, diag_end_col);
+        let diag_underline = UnderlineStyle {
+            thickness: px(1.0),
+            color: Some(gpui::red()),
+            wavy: true,
+        };
+        for b in byte_start..byte_end.min(text_bytes) {
+            underlines[b] = Some(diag_underline);
+        }
+    }
+
+    // Phase 5: Overlay cursor block (highest priority)
     if is_cursor_line {
         let cursor_byte_start = char_col_to_byte_offset(&text, cursor_col);
         let cursor_byte_end = char_col_to_byte_offset(&text, cursor_col + 1);
@@ -1066,26 +1340,28 @@ fn build_line_text_runs(
         }
     }
 
-    // Phase 5: Compress consecutive bytes with identical styling into TextRuns
+    // Phase 6: Compress consecutive bytes with identical styling into TextRuns
     let mut runs: Vec<TextRun> = Vec::new();
     if text_bytes > 0 {
         let mut run_start = 0;
         let mut cur_fg = fg_colors[0];
         let mut cur_bg = bg_colors[0];
+        let mut cur_ul = underlines[0];
 
         for b in 1..text_bytes {
-            if fg_colors[b] != cur_fg || bg_colors[b] != cur_bg {
+            if fg_colors[b] != cur_fg || bg_colors[b] != cur_bg || underlines[b] != cur_ul {
                 runs.push(TextRun {
                     len: b - run_start,
                     font: font.clone(),
                     color: cur_fg,
                     background_color: cur_bg,
-                    underline: None,
+                    underline: cur_ul,
                     strikethrough: None,
                 });
                 run_start = b;
                 cur_fg = fg_colors[b];
                 cur_bg = bg_colors[b];
+                cur_ul = underlines[b];
             }
         }
         // Final run
@@ -1094,7 +1370,7 @@ fn build_line_text_runs(
             font,
             color: cur_fg,
             background_color: cur_bg,
-            underline: None,
+            underline: cur_ul,
             strikethrough: None,
         });
     }

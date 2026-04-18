@@ -7,15 +7,19 @@
 //! - Markdown parsing
 //! - Import/export
 
+pub mod cancel;
 pub mod commands;
 pub mod document;
 pub mod emacs;
 pub mod error;
 pub mod export;
 pub mod import;
+pub mod lsp;
 pub mod macros;
 pub mod markdown;
+pub mod syntax;
 
+pub use cancel::CancellationFlag;
 pub use commands::{CommandArgs, CommandCategory, InteractiveSpec};
 pub use document::{BufferId, BufferKind, DocumentBuffer, EditHistory, EditorCursor, StoredBuffer};
 pub use document::kill_ring::KillRing;

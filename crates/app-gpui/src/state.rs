@@ -14,6 +14,15 @@ use crate::macros::{MacroState, RecordedAction};
 use crate::markdown::SourceMap;
 use crate::minibuffer::{MiniBufferPrompt, MiniBufferResult, MiniBufferState};
 
+use rele_server::CancellationFlag;
+use rele_server::lsp::{
+    LspBufferState, LspConfig, LspEvent, LspRegistry,
+    position::uri_from_path,
+};
+use rele_server::syntax::{
+    Highlighter, TreeSitterHighlighter, language_for_extension,
+};
+
 struct ElispEditorCallbacks {
     state: *mut MdAppState,
 }
@@ -360,6 +369,38 @@ pub struct MdAppState {
     pub c_x_pending: bool,
     /// Emacs C-x r prefix: the next key is a rectangle operation.
     pub c_x_r_pending: bool,
+
+    // ---- LSP ----
+    /// LSP server lifecycle manager (created lazily on first file open).
+    pub lsp_registry: Option<LspRegistry>,
+    /// LSP state for the currently active buffer.
+    pub lsp_buffer_state: Option<LspBufferState>,
+    /// Completion items from the last LSP response.
+    pub lsp_completion_items: Vec<lsp_types::CompletionItem>,
+    /// Currently selected completion index.
+    pub lsp_completion_selected: usize,
+    /// Whether the completion popup is visible.
+    pub lsp_completion_visible: bool,
+    /// Hover text from the last LSP response.
+    pub lsp_hover_text: Option<String>,
+    /// Status message from LSP (server started/stopped/errors).
+    pub lsp_status: Option<String>,
+
+    /// Shared cancellation flag for long-running commands. C-g sets it;
+    /// spawned workers check it between chunks and exit early.
+    /// Clone the `CancellationFlag` into the task before `move`ing.
+    /// See `PERFORMANCE.md` Rule 7.
+    pub cancel_flag: CancellationFlag,
+
+    /// Tree-sitter highlighter for the active buffer, if its language
+    /// has a grammar. `None` for plain-text buffers and languages we
+    /// don't ship grammars for; in those cases the editor falls back to
+    /// the line-oriented regex highlighter. Rebuilt on buffer switch.
+    pub buffer_highlighter: Option<Box<dyn Highlighter>>,
+    /// Document version the `buffer_highlighter` last parsed against.
+    /// If this lags `document.version()`, the next render triggers a
+    /// reparse.
+    pub buffer_highlighter_version: u64,
 }
 
 impl MdAppState {
@@ -369,6 +410,7 @@ impl MdAppState {
         state.current_buffer_name = name_from_path(&path);
         state.current_buffer_kind = BufferKind::File;
         state.document = DocumentBuffer::from_file(path, content);
+        state.refresh_buffer_highlighter();
         state
     }
 
@@ -437,16 +479,50 @@ impl MdAppState {
             meta_pending: false,
             c_x_pending: false,
             c_x_r_pending: false,
+            lsp_registry: None,
+            lsp_buffer_state: None,
+            lsp_completion_items: Vec::new(),
+            lsp_completion_selected: 0,
+            lsp_completion_visible: false,
+            lsp_hover_text: None,
+            lsp_status: None,
+            cancel_flag: CancellationFlag::new(),
+            buffer_highlighter: None,
+            buffer_highlighter_version: u64::MAX,
         };
 
-        let callbacks = Box::new(ElispEditorCallbacks {
-            state: &mut state as *mut MdAppState,
-        });
-        state.elisp.set_editor(callbacks);
-
+        // NOTE: We do NOT install elisp editor callbacks here. The callbacks
+        // would capture a raw pointer to `state`, which is a local variable
+        // about to be moved out of this function. The raw pointer would
+        // become dangling the instant we return.
+        //
+        // The caller must pin the state in stable storage (Box, GPUI
+        // Entity, etc.) and then call `install_elisp_editor_callbacks()`
+        // to wire the callbacks up with a valid pointer.
+        //
+        // `init_elisp` runs here because it only evaluates forms that don't
+        // need the editor callbacks (e.g. `~/.gpui-md.el` is usually
+        // configuration, not buffer manipulation).
         Self::init_elisp(&mut state.elisp);
 
         state
+    }
+
+    /// Install elisp editor callbacks using a raw pointer to `self`.
+    ///
+    /// # Safety contract
+    /// `self` must already live in stable memory — i.e. it must not be
+    /// moved after this call. GPUI entities created via `cx.new(|_| ...)`
+    /// and `Box<MdAppState>` both satisfy this (the heap allocation
+    /// doesn't move even if the handle is moved).
+    ///
+    /// Calling this function when `self` will later be moved is
+    /// Undefined Behaviour.
+    pub fn install_elisp_editor_callbacks(&mut self) {
+        let callbacks = Box::new(ElispEditorCallbacks {
+            state: self as *mut MdAppState,
+        });
+        self.elisp.set_editor(callbacks);
     }
 
     fn init_elisp(interp: &mut Interpreter) {
@@ -595,6 +671,10 @@ impl MdAppState {
                 &mut self.last_move_was_vertical,
                 incoming.last_move_was_vertical,
             ),
+            lsp_state: std::mem::replace(
+                &mut self.lsp_buffer_state,
+                incoming.lsp_state,
+            ),
         };
 
         // Active buffer id becomes the incoming buffer's id.
@@ -605,6 +685,10 @@ impl MdAppState {
 
         // Invalidate parsed version so preview re-parses
         self.last_parsed_version = 0;
+
+        // The active buffer's language may have changed; re-pick the
+        // tree-sitter grammar. Parse runs lazily in `ensure_highlight_fresh`.
+        self.refresh_buffer_highlighter();
     }
 
     /// Switch to a buffer by its id. Returns true on success.
@@ -657,6 +741,18 @@ impl MdAppState {
         if self.buffer_count() <= 1 {
             return false;
         }
+
+        // If this buffer has LSP state, send `didClose` before removing it.
+        // For the active buffer, `lsp_buffer_state` is the one to close; for
+        // a stored buffer, we pull the state out of its `StoredBuffer`.
+        if id == self.current_buffer_id {
+            self.lsp_did_close();
+        } else if let Some(pos) = self.stored_buffers.iter().position(|b| b.id == id)
+            && let Some(stored_lsp) = self.stored_buffers[pos].lsp_state.take()
+        {
+            self.lsp_did_close_for(stored_lsp);
+        }
+
         let removed = if id == self.current_buffer_id {
             // Swap in a stored buffer, then drop the outgoing one.
             self.swap_active_with_stored(0);
@@ -680,6 +776,22 @@ impl MdAppState {
         removed
     }
 
+    /// Send `didClose` for an `LspBufferState` that isn't currently active.
+    /// Used when killing a stored buffer that has LSP state attached.
+    fn lsp_did_close_for(&self, lsp_state: LspBufferState) {
+        let uri = lsp_state.uri.clone();
+        let server_name = lsp_state.server_name.clone();
+        if let Some(ref registry) = self.lsp_registry
+            && let Some(client) = registry.client(&server_name)
+        {
+            registry.runtime_handle().spawn(async move {
+                if let Err(e) = client.did_close(uri).await {
+                    log::error!("LSP didClose error: {e}");
+                }
+            });
+        }
+    }
+
     /// Kill the current buffer. Refuses if it's the only one.
     pub fn kill_current_buffer(&mut self) -> bool {
         self.kill_buffer_id(self.current_buffer_id)
@@ -700,10 +812,14 @@ impl MdAppState {
         let canonical = std::fs::canonicalize(&path).unwrap_or(path);
         if let Some(id) = self.find_buffer_by_path(&canonical) {
             self.switch_to_buffer_id(id);
+            self.refresh_buffer_highlighter();
+            self.lsp_did_open();
             return id;
         }
         let id = self.create_file_buffer(canonical, content);
         self.switch_to_buffer_id(id);
+        self.refresh_buffer_highlighter();
+        self.lsp_did_open();
         id
     }
 
@@ -908,6 +1024,7 @@ impl MdAppState {
             scroll_line: 0,
             last_edit_was_char_insert: false,
             last_move_was_vertical: false,
+            lsp_state: None,
         };
         self.stored_buffers.push(buf);
         self.dired_states.insert(id, state);
@@ -1262,6 +1379,12 @@ impl MdAppState {
     }
 
     fn update_preferred_column(&mut self) {
+        // Cursor has moved (or edit happened) — stale hover info no longer
+        // applies to the new cursor position. Completion popup is dismissed
+        // separately by edit paths; here we only handle hover, since
+        // movement-only shouldn't dismiss completions.
+        self.lsp_hover_text = None;
+
         if self.document.len_chars() == 0 {
             self.cursor.preferred_column = 0;
             return;
@@ -1300,6 +1423,13 @@ impl MdAppState {
         self.cursor.position += text.chars().count();
         self.last_edit_was_char_insert = is_single_char;
         self.update_preferred_column();
+        // Any edit invalidates pending completions/hover.
+        self.lsp_completion_visible = false;
+        self.lsp_hover_text = None;
+        // Must come before `lsp_did_change()` — that one drains the
+        // change journal; we need to peek it first.
+        self.notify_highlighter();
+        self.lsp_did_change();
     }
 
     pub fn backspace(&mut self) {
@@ -1319,6 +1449,12 @@ impl MdAppState {
                 .remove(self.cursor.position, self.cursor.position + 1);
         }
         self.update_preferred_column();
+        self.lsp_completion_visible = false;
+        self.lsp_hover_text = None;
+        // Must come before `lsp_did_change()` — that one drains the
+        // change journal; we need to peek it first.
+        self.notify_highlighter();
+        self.lsp_did_change();
     }
 
     pub fn delete_forward(&mut self) {
@@ -1337,6 +1473,12 @@ impl MdAppState {
                 .remove(self.cursor.position, self.cursor.position + 1);
         }
         self.update_preferred_column();
+        self.lsp_completion_visible = false;
+        self.lsp_hover_text = None;
+        // Must come before `lsp_did_change()` — that one drains the
+        // change journal; we need to peek it first.
+        self.notify_highlighter();
+        self.lsp_did_change();
     }
 
     pub fn undo(&mut self) {
@@ -1348,6 +1490,11 @@ impl MdAppState {
             self.document.restore(snapshot);
             self.cursor.position = cursor.min(self.document.len_chars());
             self.cursor.clear_selection();
+            // Undo/redo triggers a full tree-sitter reparse (restore
+            // sets full_sync_needed); the highlighter sees that flag
+            // via peek_changes and resets its tree.
+            self.notify_highlighter();
+            self.lsp_did_change();
         }
     }
 
@@ -1360,6 +1507,11 @@ impl MdAppState {
             self.document.restore(snapshot);
             self.cursor.position = cursor.min(self.document.len_chars());
             self.cursor.clear_selection();
+            // Undo/redo triggers a full tree-sitter reparse (restore
+            // sets full_sync_needed); the highlighter sees that flag
+            // via peek_changes and resets its tree.
+            self.notify_highlighter();
+            self.lsp_did_change();
         }
     }
 
@@ -2147,6 +2299,10 @@ impl MdAppState {
 
     /// Cancel the current modal operation (selection, isearch, palette, universal arg, find bar).
     pub fn abort(&mut self) {
+        // Signal any long-running spawned work to stop. Cheap: just a flag flip.
+        // New work resets the flag via `begin_cancellable_op`.
+        self.cancel_flag.cancel();
+
         if self.isearch.active {
             self.isearch_abort();
             return;
@@ -2165,6 +2321,90 @@ impl MdAppState {
             self.find_query.clear();
             self.replace_bar_visible = false;
         }
+    }
+
+    /// Start a new cancellable long-running operation. Resets the flag
+    /// (so a previous `C-g` doesn't immediately abort us) and returns a
+    /// clone that the spawned task captures. The UI's `abort()` will
+    /// flip it.
+    ///
+    /// Usage:
+    /// ```ignore
+    /// let flag = state.begin_cancellable_op();
+    /// runtime.spawn(async move {
+    ///     for chunk in items {
+    ///         if flag.is_cancelled() { break; }
+    ///         do_work(chunk).await;
+    ///     }
+    /// });
+    /// ```
+    pub fn begin_cancellable_op(&mut self) -> CancellationFlag {
+        self.cancel_flag.reset();
+        self.cancel_flag.clone()
+    }
+
+    /// Re-pick the tree-sitter highlighter based on the current buffer's
+    /// file extension. Call after `open_file_as_buffer` or a buffer
+    /// switch. If the language has no grammar, `buffer_highlighter` is
+    /// set to `None` and the editor falls back to the regex
+    /// highlighter.
+    ///
+    /// Drops any cached parse tree; `ensure_highlight_fresh` will
+    /// re-parse on the next render.
+    pub fn refresh_buffer_highlighter(&mut self) {
+        let lang = self
+            .document
+            .file_path()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .and_then(language_for_extension);
+        self.buffer_highlighter = lang
+            .and_then(|l| TreeSitterHighlighter::new(l).ok())
+            .map(|h| Box::new(h) as Box<dyn Highlighter>);
+        self.buffer_highlighter_version = u64::MAX;
+    }
+
+    /// Ensure the tree-sitter highlighter (if any) has parsed the
+    /// current document version. Called once per render before the
+    /// view queries highlight ranges.
+    ///
+    /// If the highlighter has already seen the latest document version
+    /// (via edit-time incremental updates in `notify_highlighter`),
+    /// this is a no-op. Otherwise — typically on first render after
+    /// `refresh_buffer_highlighter` — we do a full reparse.
+    pub fn ensure_highlight_fresh(&mut self) {
+        if let Some(h) = self.buffer_highlighter.as_mut() {
+            let doc_version = self.document.version();
+            if self.buffer_highlighter_version != doc_version {
+                h.on_edit(self.document.rope(), &[], true);
+                self.buffer_highlighter_version = doc_version;
+            }
+        }
+    }
+
+    /// Incremental tree-sitter update. Called from the edit path
+    /// **after** the rope has mutated and **before** LSP drains the
+    /// journal. Uses [`DocumentBuffer::peek_changes`] so the LSP
+    /// consumer still sees the same events.
+    ///
+    /// At ~1 ms per keystroke on a 1000-section markdown buffer (see
+    /// `syntax` bench), this is comfortably inside the 16 ms frame
+    /// budget. Without this we'd full-reparse on next render
+    /// (~40 ms) — over budget.
+    pub fn notify_highlighter(&mut self) {
+        let Some(h) = self.buffer_highlighter.as_mut() else {
+            return;
+        };
+        let (changes, full_sync) = self.document.peek_changes();
+        if changes.is_empty() && !full_sync {
+            // Nothing new since last call. Also covers the "we just
+            // refreshed_buffer_highlighter" case on first render.
+            return;
+        }
+        // If the journal says full-sync, respect that; otherwise we
+        // have legitimate incremental changes to apply.
+        h.on_edit(self.document.rope(), changes, full_sync);
+        self.buffer_highlighter_version = self.document.version();
     }
 
     // ---- Upcase / downcase word (M-u / M-l) ----
@@ -2686,6 +2926,544 @@ impl MdAppState {
             .filter(|(_, cmd)| query.is_empty() || cmd.name.to_lowercase().contains(&query))
             .map(|(i, _)| i)
             .collect();
+    }
+
+    // ---- LSP integration ----
+
+    /// Ensure the LSP registry is initialized. Lazy — only created on first call.
+    pub fn ensure_lsp_registry(&mut self) -> &mut LspRegistry {
+        if self.lsp_registry.is_none() {
+            let config = LspConfig::load_or_default();
+            self.lsp_registry = Some(LspRegistry::new(config));
+        }
+        self.lsp_registry.as_mut().expect("just created")
+    }
+
+    /// Notify the LSP server that the active buffer was opened.
+    /// Called when a file-backed buffer becomes active for the first time.
+    pub fn lsp_did_open(&mut self) {
+        let Some(path) = self.document.file_path().cloned() else {
+            return;
+        };
+
+        // Skip if this buffer already has LSP state.
+        if self.lsp_buffer_state.is_some() {
+            return;
+        }
+
+        // Collect everything we need before borrowing the registry.
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+        let Some(uri) = uri_from_path(&path) else {
+            return;
+        };
+        let text = self.document.text();
+
+        self.ensure_lsp_registry();
+        let registry = self.lsp_registry.as_mut().expect("just created");
+
+        let Some(server_name) = registry.ensure_server_for_file(&path) else {
+            return;
+        };
+        let Some(config) = registry.config_for_extension(&ext) else {
+            return;
+        };
+        let language_id = config.language_id.clone();
+
+        let mut buf_state = LspBufferState::new(uri.clone(), language_id.clone(), server_name.clone());
+        let version = buf_state.next_version();
+
+        // Send didOpen if the server is ready; otherwise leave did_open_sent
+        // = false and let `handle_lsp_event(ServerStarted)` flush it later.
+        if let Some(client) = registry.client(&server_name) {
+            buf_state.did_open_sent = true;
+            registry.runtime_handle().spawn(async move {
+                if let Err(e) = client.did_open(uri, &language_id, version, &text).await {
+                    log::error!("LSP didOpen error: {e}");
+                }
+            });
+        }
+
+        self.lsp_buffer_state = Some(buf_state);
+    }
+
+    /// Flush `didOpen` for buffers attached to `server_name` that haven't
+    /// been opened yet (because the server was still initializing when the
+    /// buffer was opened). Called from the `ServerStarted` event handler.
+    fn flush_pending_did_open(&mut self, server_name: &str) {
+        // Active buffer.
+        if let Some(ref mut lsp_state) = self.lsp_buffer_state
+            && !lsp_state.did_open_sent
+            && lsp_state.server_name == server_name
+        {
+            let uri = lsp_state.uri.clone();
+            let language_id = lsp_state.language_id.clone();
+            let version = lsp_state.lsp_version;
+            let text = self.document.text();
+            lsp_state.did_open_sent = true;
+            if let Some(ref registry) = self.lsp_registry
+                && let Some(client) = registry.client(server_name)
+            {
+                registry.runtime_handle().spawn(async move {
+                    if let Err(e) = client.did_open(uri, &language_id, version, &text).await {
+                        log::error!("LSP deferred didOpen error: {e}");
+                    }
+                });
+            }
+        }
+
+        // Stored buffers. We can't easily grab their text through the rope
+        // without clones, but each StoredBuffer owns its own DocumentBuffer.
+        let runtime_handle = self
+            .lsp_registry
+            .as_ref()
+            .map(rele_server::lsp::LspRegistry::runtime_handle);
+        let client = self
+            .lsp_registry
+            .as_ref()
+            .and_then(|r| r.client(server_name));
+        if let (Some(handle), Some(client)) = (runtime_handle, client) {
+            for buf in &mut self.stored_buffers {
+                let Some(ref mut lsp_state) = buf.lsp_state else {
+                    continue;
+                };
+                if lsp_state.did_open_sent || lsp_state.server_name != server_name {
+                    continue;
+                }
+                let uri = lsp_state.uri.clone();
+                let language_id = lsp_state.language_id.clone();
+                let version = lsp_state.lsp_version;
+                let text = buf.document.text();
+                lsp_state.did_open_sent = true;
+                let client = client.clone();
+                handle.spawn(async move {
+                    if let Err(e) = client.did_open(uri, &language_id, version, &text).await {
+                        log::error!("LSP deferred didOpen error: {e}");
+                    }
+                });
+            }
+        }
+    }
+
+    /// Notify the LSP server of document changes.
+    /// Should be called after edits to the active buffer.
+    pub fn lsp_did_change(&mut self) {
+        let Some(ref mut lsp_state) = self.lsp_buffer_state else {
+            return;
+        };
+        let (changes, full_sync) = self.document.drain_changes();
+        if changes.is_empty() && !full_sync {
+            return;
+        }
+
+        let version = lsp_state.next_version();
+        let uri = lsp_state.uri.clone();
+        let server_name = lsp_state.server_name.clone();
+
+        let content_changes = if full_sync {
+            vec![lsp_types::TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: self.document.text(),
+            }]
+        } else {
+            changes
+                .into_iter()
+                .map(|c| lsp_types::TextDocumentContentChangeEvent {
+                    range: Some(lsp_types::Range {
+                        start: lsp_types::Position {
+                            line: c.start_line,
+                            character: c.start_character,
+                        },
+                        end: lsp_types::Position {
+                            line: c.end_line,
+                            character: c.end_character,
+                        },
+                    }),
+                    range_length: None,
+                    text: c.new_text,
+                })
+                .collect()
+        };
+
+        if let Some(ref registry) = self.lsp_registry
+            && let Some(client) = registry.client(&server_name)
+        {
+            registry.runtime_handle().spawn(async move {
+                if let Err(e) = client.did_change(uri, version, content_changes).await {
+                    log::error!("LSP didChange error: {e}");
+                }
+            });
+        }
+    }
+
+    /// Notify the LSP server that the active buffer was saved.
+    pub fn lsp_did_save(&mut self) {
+        let Some(ref lsp_state) = self.lsp_buffer_state else {
+            return;
+        };
+        let uri = lsp_state.uri.clone();
+        let server_name = lsp_state.server_name.clone();
+        let text = self.document.text();
+
+        if let Some(ref registry) = self.lsp_registry
+            && let Some(client) = registry.client(&server_name)
+        {
+            registry.runtime_handle().spawn(async move {
+                if let Err(e) = client.did_save(uri, Some(&text)).await {
+                    log::error!("LSP didSave error: {e}");
+                }
+            });
+        }
+    }
+
+    /// Notify the LSP server that the active buffer was closed.
+    pub fn lsp_did_close(&mut self) {
+        let Some(lsp_state) = self.lsp_buffer_state.take() else {
+            return;
+        };
+        let uri = lsp_state.uri.clone();
+        let server_name = lsp_state.server_name.clone();
+
+        if let Some(ref registry) = self.lsp_registry
+            && let Some(client) = registry.client(&server_name)
+        {
+            registry.runtime_handle().spawn(async move {
+                if let Err(e) = client.did_close(uri).await {
+                    log::error!("LSP didClose error: {e}");
+                }
+            });
+        }
+    }
+
+    /// Request completion at the current cursor position.
+    pub fn lsp_request_completion(&mut self) {
+        let Some(ref lsp_state) = self.lsp_buffer_state else {
+            return;
+        };
+        let uri = lsp_state.uri.clone();
+        let server_name = lsp_state.server_name.clone();
+        let position = rele_server::lsp::position::char_offset_to_position(
+            self.document.rope(),
+            self.cursor.position,
+        );
+
+        if let Some(ref registry) = self.lsp_registry
+            && let Some(client) = registry.client(&server_name)
+        {
+            registry.runtime_handle().spawn(async move {
+                if let Err(e) = client.completion(uri, position).await {
+                    log::error!("LSP completion error: {e}");
+                }
+            });
+        }
+    }
+
+    /// Request hover info at the current cursor position.
+    pub fn lsp_request_hover(&mut self) {
+        let Some(ref lsp_state) = self.lsp_buffer_state else {
+            return;
+        };
+        let uri = lsp_state.uri.clone();
+        let server_name = lsp_state.server_name.clone();
+        let position = rele_server::lsp::position::char_offset_to_position(
+            self.document.rope(),
+            self.cursor.position,
+        );
+
+        if let Some(ref registry) = self.lsp_registry
+            && let Some(client) = registry.client(&server_name)
+        {
+            registry.runtime_handle().spawn(async move {
+                if let Err(e) = client.hover(uri, position).await {
+                    log::error!("LSP hover error: {e}");
+                }
+            });
+        }
+    }
+
+    /// Request go-to-definition at the current cursor position.
+    pub fn lsp_goto_definition(&mut self) {
+        let Some(ref lsp_state) = self.lsp_buffer_state else {
+            return;
+        };
+        let uri = lsp_state.uri.clone();
+        let server_name = lsp_state.server_name.clone();
+        let position = rele_server::lsp::position::char_offset_to_position(
+            self.document.rope(),
+            self.cursor.position,
+        );
+
+        if let Some(ref registry) = self.lsp_registry
+            && let Some(client) = registry.client(&server_name)
+        {
+            registry.runtime_handle().spawn(async move {
+                if let Err(e) = client.definition(uri, position).await {
+                    log::error!("LSP definition error: {e}");
+                }
+            });
+        }
+    }
+
+    /// Request find-references at the current cursor position.
+    pub fn lsp_find_references(&mut self) {
+        let Some(ref lsp_state) = self.lsp_buffer_state else {
+            return;
+        };
+        let uri = lsp_state.uri.clone();
+        let server_name = lsp_state.server_name.clone();
+        let position = rele_server::lsp::position::char_offset_to_position(
+            self.document.rope(),
+            self.cursor.position,
+        );
+
+        if let Some(ref registry) = self.lsp_registry
+            && let Some(client) = registry.client(&server_name)
+        {
+            registry.runtime_handle().spawn(async move {
+                if let Err(e) = client.references(uri, position).await {
+                    log::error!("LSP references error: {e}");
+                }
+            });
+        }
+    }
+
+    /// Request document formatting.
+    pub fn lsp_format_buffer(&mut self) {
+        let Some(ref lsp_state) = self.lsp_buffer_state else {
+            return;
+        };
+        let uri = lsp_state.uri.clone();
+        let server_name = lsp_state.server_name.clone();
+
+        if let Some(ref registry) = self.lsp_registry
+            && let Some(client) = registry.client(&server_name)
+        {
+            registry.runtime_handle().spawn(async move {
+                let options = lsp_types::FormattingOptions {
+                    tab_size: 4,
+                    insert_spaces: true,
+                    ..Default::default()
+                };
+                if let Err(e) = client.formatting(uri, options).await {
+                    log::error!("LSP formatting error: {e}");
+                }
+            });
+        }
+    }
+
+    /// Restart the LSP server for the current buffer's language only.
+    /// Other servers (serving other languages in other buffers) are untouched.
+    pub fn lsp_restart_server(&mut self) {
+        let server_name = self
+            .lsp_buffer_state
+            .as_ref()
+            .map(|s| s.server_name.clone());
+        if let (Some(ref mut registry), Some(server_name)) =
+            (self.lsp_registry.as_mut(), server_name)
+        {
+            registry.shutdown_server(&server_name);
+            self.lsp_status = Some(format!("LSP: restarting {server_name}"));
+        }
+        self.lsp_buffer_state = None;
+        self.lsp_did_open();
+    }
+
+    /// Handle an incoming LSP event (called from the GPUI event polling task).
+    pub fn handle_lsp_event(&mut self, event: LspEvent) {
+        match event {
+            LspEvent::Diagnostics {
+                uri, diagnostics, ..
+            } => {
+                // Update diagnostics for the matching buffer.
+                if let Some(ref mut lsp_state) = self.lsp_buffer_state {
+                    if lsp_state.uri == uri {
+                        lsp_state.diagnostics = diagnostics;
+                        return;
+                    }
+                }
+                // Check stored buffers.
+                for buf in &mut self.stored_buffers {
+                    if let Some(ref mut lsp) = buf.lsp_state {
+                        if lsp.uri == uri {
+                            lsp.diagnostics = diagnostics;
+                            return;
+                        }
+                    }
+                }
+            }
+            LspEvent::CompletionResponse { items, .. } => {
+                self.lsp_completion_items = items;
+                self.lsp_completion_selected = 0;
+                self.lsp_completion_visible = !self.lsp_completion_items.is_empty();
+            }
+            LspEvent::HoverResponse { contents, .. } => {
+                self.lsp_hover_text =
+                    contents.map(rele_server::lsp::hover_contents_to_string);
+            }
+            LspEvent::DefinitionResponse { locations, .. } => {
+                self.handle_lsp_locations("Definition", locations);
+            }
+            LspEvent::ReferencesResponse { locations, .. } => {
+                self.handle_lsp_locations("References", locations);
+            }
+            LspEvent::FormattingResponse { edits, .. } => {
+                self.apply_lsp_formatting_edits(edits);
+            }
+            LspEvent::ServerStarted { server_name } => {
+                self.lsp_status = Some(format!("LSP: {server_name} started"));
+                log::info!("LSP server started: {server_name}");
+                // Flush any pending didOpen for buffers attached to this
+                // server. `lsp_did_open` was called when the buffer opened,
+                // but at that point the server was still initializing so
+                // `registry.client()` returned None and didOpen was dropped.
+                self.flush_pending_did_open(&server_name);
+            }
+            LspEvent::ServerExited {
+                server_name,
+                status,
+            } => {
+                self.lsp_status =
+                    Some(format!("LSP: {server_name} exited (code: {status:?})"));
+                log::warn!("LSP server exited: {server_name} (code: {status:?})");
+            }
+            LspEvent::Error { message } => {
+                self.lsp_status = Some(format!("LSP error: {message}"));
+                log::error!("LSP error: {message}");
+            }
+        }
+    }
+
+    /// Handle go-to-definition or find-references results.
+    fn handle_lsp_locations(&mut self, label: &str, locations: Vec<lsp_types::Location>) {
+        if locations.is_empty() {
+            self.lsp_status = Some(format!("{label}: no results"));
+            return;
+        }
+        if locations.len() == 1 {
+            self.jump_to_lsp_location(&locations[0]);
+            return;
+        }
+        // Multiple results — show in minibuffer.
+        let candidates: Vec<String> = locations
+            .iter()
+            .map(|loc| {
+                format!(
+                    "{}:{}:{}",
+                    loc.uri.as_str(),
+                    loc.range.start.line + 1,
+                    loc.range.start.character + 1,
+                )
+            })
+            .collect();
+        self.minibuffer_open(
+            MiniBufferPrompt::LspLocations {
+                label: label.to_string(),
+            },
+            candidates,
+            PendingMinibufferAction::RunCommandWithInput {
+                name: "lsp-jump-to-location".to_string(),
+            },
+        );
+    }
+
+    /// Jump to an LSP location (open file + move cursor).
+    fn jump_to_lsp_location(&mut self, location: &lsp_types::Location) {
+        let uri_str = location.uri.as_str();
+        if let Some(path_str) = uri_str.strip_prefix("file://") {
+            let path = PathBuf::from(path_str);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                self.open_file_as_buffer(path, &content);
+                // Move cursor to the target position.
+                let target = rele_server::lsp::position::position_to_char_offset(
+                    self.document.rope(),
+                    &location.range.start,
+                );
+                self.cursor.position = target.min(self.document.len_chars());
+                self.cursor.clear_selection();
+            }
+        }
+    }
+
+    /// Apply formatting edits from the LSP server.
+    fn apply_lsp_formatting_edits(&mut self, mut edits: Vec<lsp_types::TextEdit>) {
+        if edits.is_empty() {
+            return;
+        }
+        self.history
+            .push_undo(self.document.snapshot(), self.cursor.position);
+
+        // Apply edits in reverse order to preserve positions.
+        edits.sort_by(|a, b| {
+            b.range
+                .start
+                .line
+                .cmp(&a.range.start.line)
+                .then(b.range.start.character.cmp(&a.range.start.character))
+        });
+
+        for edit in edits {
+            let start = rele_server::lsp::position::position_to_char_offset(
+                self.document.rope(),
+                &edit.range.start,
+            );
+            let end = rele_server::lsp::position::position_to_char_offset(
+                self.document.rope(),
+                &edit.range.end,
+            );
+            if start < end {
+                self.document.remove(start, end);
+            }
+            if !edit.new_text.is_empty() {
+                self.document.insert(start, &edit.new_text);
+            }
+        }
+    }
+
+    /// Apply a selected completion item.
+    pub fn lsp_apply_completion(&mut self) {
+        if !self.lsp_completion_visible {
+            return;
+        }
+        let text = self
+            .lsp_completion_items
+            .get(self.lsp_completion_selected)
+            .map(|item| {
+                item.insert_text
+                    .clone()
+                    .unwrap_or_else(|| item.label.clone())
+            });
+        if let Some(text) = text {
+            self.insert_text(&text);
+        }
+        self.lsp_completion_visible = false;
+        self.lsp_completion_items.clear();
+    }
+
+    /// Navigate completion list down.
+    pub fn lsp_completion_next(&mut self) {
+        if !self.lsp_completion_items.is_empty() {
+            self.lsp_completion_selected =
+                (self.lsp_completion_selected + 1) % self.lsp_completion_items.len();
+        }
+    }
+
+    /// Navigate completion list up.
+    pub fn lsp_completion_prev(&mut self) {
+        if !self.lsp_completion_items.is_empty() {
+            self.lsp_completion_selected = self
+                .lsp_completion_selected
+                .checked_sub(1)
+                .unwrap_or(self.lsp_completion_items.len() - 1);
+        }
+    }
+
+    /// Dismiss the completion popup.
+    pub fn lsp_completion_dismiss(&mut self) {
+        self.lsp_completion_visible = false;
     }
 }
 

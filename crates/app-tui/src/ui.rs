@@ -38,6 +38,18 @@ fn draw_editor(frame: &mut Frame, state: &mut TuiAppState, area: Rect) {
 
     let mut lines: Vec<Line<'_>> = Vec::with_capacity(viewport_height);
 
+    // Collect diagnostic lines for gutter markers.
+    let diag_lines: std::collections::HashSet<u32> = state
+        .lsp_buffer_state
+        .as_ref()
+        .map(|s| {
+            s.diagnostics
+                .iter()
+                .map(|d| d.range.start.line)
+                .collect()
+        })
+        .unwrap_or_default();
+
     for row in 0..viewport_height {
         let line_idx = state.scroll_line + row;
         if line_idx >= total_lines {
@@ -53,13 +65,21 @@ fn draw_editor(frame: &mut Frame, state: &mut TuiAppState, area: Rect) {
         // Strip trailing newline for display
         let display_text = line_text.trim_end_matches('\n');
 
+        let has_diag = diag_lines.contains(&(line_idx as u32));
+        let gutter_color = if has_diag {
+            Color::Red
+        } else if line_idx == cursor_line {
+            Color::Yellow
+        } else {
+            Color::DarkGray
+        };
         let gutter = format!("{:>width$} ", line_idx + 1, width = gutter_width);
 
         if line_idx == cursor_line {
             // Build spans with cursor highlight
             let mut spans = vec![Span::styled(
                 gutter,
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(gutter_color),
             )];
 
             let chars: Vec<char> = display_text.chars().collect();
@@ -91,7 +111,7 @@ fn draw_editor(frame: &mut Frame, state: &mut TuiAppState, area: Rect) {
         } else {
             let truncated: String = display_text.chars().take(text_width).collect();
             lines.push(Line::from(vec![
-                Span::styled(gutter, Style::default().fg(Color::DarkGray)),
+                Span::styled(gutter, Style::default().fg(gutter_color)),
                 Span::raw(truncated),
             ]));
         }
@@ -108,8 +128,24 @@ fn draw_status_bar(frame: &mut Frame, state: &TuiAppState, area: Rect) {
     let col = state.cursor_col();
     let total = state.document.len_lines();
 
+    let diag_count = state
+        .lsp_buffer_state
+        .as_ref()
+        .map(|s| s.diagnostics.len())
+        .unwrap_or(0);
+    let lsp_info = if let Some(ref status) = state.lsp_status {
+        format!("  {status}")
+    } else {
+        String::new()
+    };
+    let diag_text = if diag_count > 0 {
+        format!("  diag:{diag_count}")
+    } else {
+        String::new()
+    };
+
     let left = format!(" {dirty} {}", state.current_buffer_name);
-    let right = format!("L{line}:C{col}  ({total}L) ");
+    let right = format!("L{line}:C{col}  ({total}L){diag_text}{lsp_info} ");
 
     let padding = (area.width as usize)
         .saturating_sub(left.len() + right.len());

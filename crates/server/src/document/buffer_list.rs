@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use super::{DocumentBuffer, EditHistory, EditorCursor};
+use crate::lsp::LspBufferState;
 
 /// Stable identifier for a buffer, monotonically increasing.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -46,6 +47,8 @@ pub struct StoredBuffer {
     pub scroll_line: usize,
     pub last_edit_was_char_insert: bool,
     pub last_move_was_vertical: bool,
+    /// LSP state for this buffer (if an LSP server is active for it).
+    pub lsp_state: Option<LspBufferState>,
 }
 
 impl StoredBuffer {
@@ -61,6 +64,7 @@ impl StoredBuffer {
             scroll_line: 0,
             last_edit_was_char_insert: false,
             last_move_was_vertical: false,
+            lsp_state: None,
         }
     }
 
@@ -76,6 +80,7 @@ impl StoredBuffer {
             scroll_line: 0,
             last_edit_was_char_insert: false,
             last_move_was_vertical: false,
+            lsp_state: None,
         }
     }
 
@@ -91,6 +96,7 @@ impl StoredBuffer {
             scroll_line: 0,
             last_edit_was_char_insert: false,
             last_move_was_vertical: false,
+            lsp_state: None,
         }
     }
 }

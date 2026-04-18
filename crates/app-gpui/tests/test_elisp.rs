@@ -1,10 +1,17 @@
 use gpui_md::state::MdAppState;
 
-fn state_with(text: &str) -> MdAppState {
-    let mut s = MdAppState::new();
+/// Construct a state in a `Box` (stable heap location), set its text and
+/// cursor, and install the elisp editor callbacks.
+///
+/// The `Box` is required because `install_elisp_editor_callbacks` captures
+/// a raw pointer to the state; returning a bare `MdAppState` would move it
+/// and invalidate the pointer immediately.
+fn state_with(text: &str) -> Box<MdAppState> {
+    let mut s = Box::new(MdAppState::new());
     s.document.set_text(text);
     s.cursor.position = 0;
     s.cursor.clear_selection();
+    s.install_elisp_editor_callbacks();
     s
 }
 
@@ -139,4 +146,59 @@ fn elisp_macro_defmacro_and_call() {
         .eval(rele_elisp::read("(my-not t)").unwrap())
         .unwrap();
     assert_eq!(result, rele_elisp::LispObject::nil());
+}
+
+// EditorCallbacks bridge tests — verify that elisp code can actually see
+// and manipulate the buffer through the trait methods. `state_with()`
+// boxes the state and installs callbacks after boxing, so the raw
+// pointer inside the callbacks points to stable heap memory.
+
+#[test]
+fn elisp_buffer_string_reads_document() {
+    let s = state_with("Hello, world!");
+    let result = s
+        .elisp
+        .eval(rele_elisp::read("(buffer-string)").unwrap())
+        .unwrap();
+    assert_eq!(result, rele_elisp::LispObject::string("Hello, world!"));
+}
+
+#[test]
+fn elisp_point_reads_cursor_position() {
+    let mut s = state_with("Hello, world!");
+    s.cursor.position = 7;
+    let result = s.elisp.eval(rele_elisp::read("(point)").unwrap()).unwrap();
+    assert_eq!(result, rele_elisp::LispObject::integer(7));
+}
+
+#[test]
+fn elisp_insert_mutates_buffer() {
+    let mut s = state_with("");
+    s.elisp
+        .eval(rele_elisp::read(r#"(insert "hello from elisp")"#).unwrap())
+        .unwrap();
+    assert_eq!(s.document.text(), "hello from elisp");
+}
+
+#[test]
+fn elisp_goto_char_moves_cursor() {
+    let mut s = state_with("0123456789");
+    s.elisp
+        .eval(rele_elisp::read("(goto-char 5)").unwrap())
+        .unwrap();
+    assert_eq!(s.cursor.position, 5);
+}
+
+#[test]
+fn elisp_cl_defstruct_works_in_gpui_md() {
+    // Verify the new cl-defstruct implementation works in the integrated env.
+    let s = state_with("");
+    s.elisp
+        .eval(rele_elisp::read("(cl-defstruct todo title done)").unwrap())
+        .unwrap();
+    let result = s
+        .elisp
+        .eval(rele_elisp::read(r#"(todo-title (make-todo "buy milk" nil))"#).unwrap())
+        .unwrap();
+    assert_eq!(result, rele_elisp::LispObject::string("buy milk"));
 }
