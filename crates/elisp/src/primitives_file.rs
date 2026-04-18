@@ -786,12 +786,19 @@ pub const FILE_PRIMITIVE_NAMES: &[&str] = &[
 mod tests {
     use super::*;
 
+    /// The obarray cell for `process-environment` is process-global.
+    /// Parallel test runs that mutate it race on each other's writes,
+    /// so serialize with a plain Mutex. Every test that touches
+    /// `process-environment` directly must take this lock first.
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Regression: R2. `setenv` used to only touch `std::env`, leaving
     /// the `process-environment` lisp list untouched. Elisp code that
     /// inspects `process-environment` (or `getenv-internal`, which
     /// prefers it over the OS env) would miss the update.
     #[test]
     fn setenv_updates_process_environment_list() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Seed the list with one unrelated entry.
         let sym = crate::obarray::intern("process-environment");
         crate::obarray::set_value_cell(
@@ -833,6 +840,7 @@ mod tests {
     /// REPLACE the existing entry, not duplicate.
     #[test]
     fn setenv_replaces_existing_entry() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let sym = crate::obarray::intern("process-environment");
         crate::obarray::set_value_cell(
             sym,

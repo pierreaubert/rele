@@ -1,0 +1,32 @@
+# Performance-related clippy configuration.
+# See PERFORMANCE.md for the full rules this file enforces.
+
+# Rule 1: Never block the UI thread.
+#
+# The methods below block the calling thread. They must NOT be called on
+# the GPUI main thread (inside `state.update(cx, |s, _| ...)` closures or
+# `on_action` handlers) or on the TUI synchronous event loop. Use
+# `cx.spawn(async move |cx| ...)` + `state.update` on GPUI, or
+# `registry.runtime_handle().spawn(async move { ... })` + channel feedback
+# to push the work off the UI thread.
+#
+# Background tasks on the tokio runtime are allowed to call these (that's
+# the whole point of being on a runtime), so suppress with
+# `#[allow(clippy::disallowed_methods)]` + comment when the call is
+# genuinely on a worker thread.
+disallowed-methods = [
+    { path = "std::fs::read_to_string", reason = "blocks; spawn instead (PERFORMANCE.md rule 1)" },
+    { path = "std::fs::read", reason = "blocks; spawn instead (PERFORMANCE.md rule 1)" },
+    { path = "std::fs::write", reason = "blocks; spawn instead (PERFORMANCE.md rule 1)" },
+    { path = "std::fs::metadata", reason = "blocks; spawn instead (PERFORMANCE.md rule 1)" },
+    { path = "std::fs::canonicalize", reason = "blocks; spawn instead (PERFORMANCE.md rule 1)" },
+    { path = "std::fs::read_dir", reason = "blocks; spawn instead (PERFORMANCE.md rule 1)" },
+    { path = "std::process::Command::output", reason = "blocks; use tokio::process (PERFORMANCE.md rule 1)" },
+    { path = "std::process::Command::status", reason = "blocks; use tokio::process (PERFORMANCE.md rule 1)" },
+    { path = "std::thread::sleep", reason = "blocks; use tokio::time::sleep (PERFORMANCE.md rule 1)" },
+    { path = "tokio::runtime::Runtime::block_on", reason = "blocks; use async propagation (PERFORMANCE.md rule 1)" },
+]
+
+# We don't disable `Command::spawn` because spawning a child and
+# immediately returning does not block — only waiting on it does.
+# Similarly we allow `Builder::new().output()` under review.

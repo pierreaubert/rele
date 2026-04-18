@@ -1965,6 +1965,152 @@ fn test_fset_sets_function_cell() {
     assert_eq!(result, LispObject::integer(15));
 }
 
+/// Regression: S1. `cl-destructuring-bind` used to fall through to
+/// the generic funcall path, which evaluated *every* arg including
+/// the VAR-LIST `(tag start end)` — producing "void function: tag"
+/// across 92 tests in buffer-tests.el. Now handled as a source-level
+/// special form that binds positionally like a lambda param list.
+#[test]
+fn cl_destructuring_bind_flat() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+
+    // Simple: bind three names to list elements.
+    let r = interp
+        .eval(
+            read(
+                "(cl-destructuring-bind (a b c) (list 1 2 3) \
+                   (+ a b c))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::integer(6));
+
+    // Exact shape used by buffer-tests.el that triggered the bug:
+    // the var-list contains a symbol named `tag`. Must NOT be
+    // evaluated as a function call.
+    let r = interp
+        .eval(
+            read(
+                "(cl-destructuring-bind (tag start end) (list 'yellow 1 10) \
+                   (list tag start end))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    // Just confirm it ran without error and produced a 3-list.
+    assert!(matches!(r, LispObject::Cons(_)));
+
+    // `&optional` semantics: missing tail defaults to nil.
+    let r = interp
+        .eval(
+            read(
+                "(cl-destructuring-bind (a &optional b c) (list 1) \
+                   (list a b c))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert!(matches!(r, LispObject::Cons(_)));
+
+    // `&rest` collects the tail.
+    let r = interp
+        .eval(
+            read(
+                "(cl-destructuring-bind (first &rest others) (list 1 2 3 4) \
+                   (length others))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::integer(3));
+}
+
+/// Regression: S2. `ert-with-temp-directory NAME BODY` is a macro
+/// that binds NAME (unevaluated) to a fresh tempdir path. Previously
+/// it fell through to the funcall path, which evaluated NAME as a
+/// variable reference — yielding "void variable: NAME" across 278+
+/// tests (171 eshell-directory-name + 107 eshell-debug-command-buffer).
+/// Now handled as a source-level special form.
+#[test]
+fn ert_with_temp_directory_binds_name_unevaluated() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+
+    // NAME is unevaluated — `my-dir-name` is NOT defined anywhere.
+    // The form must bind it to a string path.
+    let r = interp
+        .eval(
+            read(
+                "(ert-with-temp-directory my-dir-name \
+                   (stringp my-dir-name))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::t());
+
+    // The directory really exists during BODY.
+    let r = interp
+        .eval(
+            read(
+                "(ert-with-temp-directory d \
+                   (file-directory-p d))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::t());
+}
+
+#[test]
+fn ert_with_temp_file_binds_name_unevaluated() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+
+    let r = interp
+        .eval(
+            read(
+                "(ert-with-temp-file eshell-debug-command-buffer \
+                   (stringp eshell-debug-command-buffer))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::t());
+
+    // Temp file is accessible during BODY (file-exists-p returns t).
+    let r = interp
+        .eval(
+            read(
+                "(ert-with-temp-file f \
+                   (file-exists-p f))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::t());
+}
+
+/// `cl-multiple-value-bind` — wraps a single value in a list and
+/// applies the same positional-bind semantics.
+#[test]
+fn cl_multiple_value_bind_single_value() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(
+            read(
+                "(cl-multiple-value-bind (a) (+ 40 2) \
+                   a)",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::integer(42));
+}
+
 #[test]
 fn test_cl_defstruct_basic() {
     let mut interp = Interpreter::new();

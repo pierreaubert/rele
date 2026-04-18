@@ -1784,6 +1784,141 @@ fn eval_inner(
                 }
                 "define-globalized-minor-mode"
                 | "define-abbrev-table" => Ok(Value::nil()),
+                "cl-destructuring-bind" => {
+                    // (cl-destructuring-bind VAR-LIST VALUE-FORM BODY...)
+                    // Evaluate VALUE-FORM to a list, then bind VAR-LIST
+                    // positionally against that list using lambda-param
+                    // semantics (so `&optional` / `&rest` work).
+                    //
+                    // This is only the flat-list case — nested destructure
+                    // patterns like `(a (b c) d)` fall through to Emacs's
+                    // full cl-macs expansion and aren't supported here.
+                    // Rationale: the flat case covers the dominant use
+                    // in ERT test files (e.g. buffer-tests.el's 92 uses
+                    // that previously surfaced as "void function: tag")
+                    // without dragging in cl-macs' memory cost.
+                    let vars =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let value_form = cdr
+                        .nth(1)
+                        .ok_or(ElispError::WrongNumberOfArguments)?;
+                    let body = cdr
+                        .rest()
+                        .and_then(|r| r.rest())
+                        .unwrap_or(LispObject::nil());
+                    let value = eval(obj_to_value(value_form), env, editor, macros, state)?;
+                    apply_lambda(&vars, &body, value, env, editor, macros, state)
+                }
+                "ert-with-temp-directory" | "ert-with-temp-file" => {
+                    // (ert-with-temp-directory NAME &rest BODY)
+                    // (ert-with-temp-file NAME [:prefix P] [:suffix S] [:text T]
+                    //  &rest BODY)
+                    //
+                    // NAME is unevaluated — it's the name of the local
+                    // binding that will hold the tempdir/tempfile path.
+                    // We create a unique path, bind it via the current
+                    // env's parent (so it's visible to BODY), run BODY,
+                    // then clean up. Keyword options are parsed but only
+                    // :text is honored (for tempfile); prefix/suffix go
+                    // into the generated filename.
+                    let is_dir = sym_name == "ert-with-temp-directory";
+                    let name_obj =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let name_sym = name_obj
+                        .as_symbol()
+                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
+                    let mut body = cdr.rest().unwrap_or(LispObject::nil());
+
+                    // Parse leading keyword args off `body`.
+                    let mut prefix = String::from("rele-");
+                    let mut suffix = String::new();
+                    let mut text = String::new();
+                    loop {
+                        let (car, cdr2) = match body.destructure_cons() {
+                            Some(p) => p,
+                            None => break,
+                        };
+                        let kw = match car.as_symbol() {
+                            Some(n) if n.starts_with(':') => n,
+                            _ => break,
+                        };
+                        let (val_form, rest2) = match cdr2.destructure_cons() {
+                            Some(p) => p,
+                            None => break,
+                        };
+                        let evaled = eval(obj_to_value(val_form), env, editor, macros, state)
+                            .unwrap_or(Value::nil());
+                        let string_val = value_to_obj(evaled).as_string().map(|s| s.to_string());
+                        match kw.as_str() {
+                            ":prefix" => {
+                                if let Some(s) = string_val { prefix = s; }
+                            }
+                            ":suffix" => {
+                                if let Some(s) = string_val { suffix = s; }
+                            }
+                            ":text" => {
+                                if let Some(s) = string_val { text = s; }
+                            }
+                            _ => {}
+                        }
+                        body = rest2;
+                    }
+
+                    // Build a unique path under $TMPDIR.
+                    let tmp = std::env::temp_dir();
+                    let nonce = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    let pid = std::process::id();
+                    let path = tmp.join(format!("{prefix}{pid}-{nonce}{suffix}"));
+                    let path_str = path.to_string_lossy().to_string();
+
+                    // Actually create it.
+                    if is_dir {
+                        let _ = std::fs::create_dir_all(&path);
+                    } else {
+                        let _ = std::fs::write(&path, text.as_bytes());
+                    }
+
+                    // Bind NAME to the path in a fresh child env.
+                    let parent_env = Arc::new(env.read().clone());
+                    let new_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
+                    new_env.write().define(&name_sym, LispObject::string(&path_str));
+
+                    // Evaluate BODY in the new env. Use a local catch
+                    // so we can clean up on normal AND error paths.
+                    let result = eval_progn(obj_to_value(body), &new_env, editor, macros, state);
+
+                    // Cleanup.
+                    if is_dir {
+                        let _ = std::fs::remove_dir_all(&path);
+                    } else {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                    result
+                }
+                "cl-multiple-value-bind" => {
+                    // (cl-multiple-value-bind (VAR1 VAR2...) FORM BODY...)
+                    // In our runtime we don't implement actual multiple-
+                    // value returns — FORM evaluates to a single value
+                    // wrapped in a singleton list. Treat this as cl-
+                    // destructuring-bind over that list.
+                    let vars =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let value_form = cdr
+                        .nth(1)
+                        .ok_or(ElispError::WrongNumberOfArguments)?;
+                    let body = cdr
+                        .rest()
+                        .and_then(|r| r.rest())
+                        .unwrap_or(LispObject::nil());
+                    let value = eval(obj_to_value(value_form), env, editor, macros, state)?;
+                    // Wrap the single value in a list to satisfy the
+                    // positional-bind semantics.
+                    let value_list = LispObject::cons(value_to_obj(value), LispObject::nil());
+                    apply_lambda(&vars, &body, obj_to_value(value_list), env, editor, macros, state)
+                }
                 "defclass" => {
                     // (defclass NAME (PARENT...) (SLOTS...) [OPTIONS...])
                     // Parse slot specs and register the class. Slots
@@ -3620,7 +3755,7 @@ use error_forms::{
     eval_catch, eval_condition_case, eval_error_fn, eval_signal, eval_throw, eval_unwind_protect,
     eval_user_error_fn,
 };
-use functions::{eval_apply, eval_funcall, eval_funcall_form};
+use functions::{apply_lambda, eval_apply, eval_funcall, eval_funcall_form};
 use special_forms::{
     eval_and, eval_cond, eval_defalias, eval_defconst, eval_defmacro, eval_defun, eval_defvar,
     eval_dlet, eval_if, eval_let, eval_let_star, eval_loop, eval_macroexpand, eval_or, eval_prog1,
