@@ -388,6 +388,17 @@ impl LispObject {
         LispObject::cons(LispObject::symbol("lambda"), LispObject::cons(args, body))
     }
 
+    /// Build `(closure CAPTURED-ALIST ARGS . BODY)` — the Emacs representation
+    /// of a lexical closure. CAPTURED-ALIST is `((sym . val) ...)`, a snapshot
+    /// of lexical bindings visible at construction time. `call_function`
+    /// recognises `closure` heads and re-hydrates the env at call time.
+    pub fn closure_expr(captured: LispObject, args: LispObject, body: LispObject) -> LispObject {
+        LispObject::cons(
+            LispObject::symbol("closure"),
+            LispObject::cons(captured, LispObject::cons(args, body)),
+        )
+    }
+
     pub fn primitive(name: &str) -> LispObject {
         LispObject::Primitive(name.to_string())
     }

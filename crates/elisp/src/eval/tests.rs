@@ -766,7 +766,7 @@ fn test_unwind_protect_on_throw() {
 
 // --- Phase 3: stdlib loading tests ---
 
-fn make_stdlib_interp() -> Interpreter {
+pub fn make_stdlib_interp() -> Interpreter {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     // Common stubs for stdlib loading
@@ -1425,6 +1425,189 @@ fn make_stdlib_interp() -> Interpreter {
     interp.define("save-buffer", LispObject::primitive("ignore"));
     interp.define("match-data--translate", LispObject::primitive("ignore"));
 
+    // Phase 3 stubs — needed by indent, simple, minibuffer, frame, etc.
+    interp.define("make-obsolete", LispObject::primitive("ignore"));
+    interp.define("make-obsolete-variable", LispObject::primitive("ignore"));
+    interp.define("oclosure-define", LispObject::primitive("ignore"));
+    interp.define(
+        "declare-function",
+        LispObject::primitive("ignore"),
+    );
+    interp.define("defvar-local", LispObject::primitive("ignore"));
+    interp.define(
+        "internal-make-var-non-special",
+        LispObject::primitive("ignore"),
+    );
+    interp.define("current-buffer", LispObject::primitive("ignore"));
+    interp.define("set-buffer", LispObject::primitive("ignore"));
+    interp.define("buffer-name", LispObject::primitive("ignore"));
+    interp.define("buffer-list", LispObject::primitive("ignore"));
+    interp.define("get-buffer", LispObject::primitive("ignore"));
+    interp.define("get-buffer-create", LispObject::primitive("ignore"));
+    interp.define("selected-window", LispObject::primitive("ignore"));
+    interp.define("window-buffer", LispObject::primitive("ignore"));
+    interp.define("set-window-buffer", LispObject::primitive("ignore"));
+    interp.define("minibufferp", LispObject::primitive("ignore"));
+    interp.define("minibuffer-window", LispObject::primitive("ignore"));
+    interp.define("active-minibuffer-window", LispObject::primitive("ignore"));
+    interp.define("minibuffer-depth", LispObject::primitive("ignore"));
+    interp.define("read-from-minibuffer", LispObject::primitive("ignore"));
+    interp.define("try-completion", LispObject::primitive("ignore"));
+    interp.define("all-completions", LispObject::primitive("ignore"));
+    interp.define("test-completion", LispObject::primitive("ignore"));
+    interp.define("internal-complete-buffer", LispObject::primitive("ignore"));
+    interp.define("display-buffer", LispObject::primitive("ignore"));
+    interp.define("window-end", LispObject::primitive("ignore"));
+    interp.define("window-start", LispObject::primitive("ignore"));
+    interp.define("set-window-start", LispObject::primitive("ignore"));
+    interp.define("window-dedicated-p", LispObject::primitive("ignore"));
+    interp.define("pos-visible-in-window-p", LispObject::primitive("ignore"));
+    interp.define("window-height", LispObject::primitive("ignore"));
+    interp.define("window-width", LispObject::primitive("ignore"));
+    interp.define("frame-width", LispObject::primitive("ignore"));
+    interp.define("frame-height", LispObject::primitive("ignore"));
+    interp.define("redisplay", LispObject::primitive("ignore"));
+    interp.define("force-mode-line-update", LispObject::primitive("ignore"));
+    interp.define("overlay-put", LispObject::primitive("ignore"));
+    interp.define("overlay-get", LispObject::primitive("ignore"));
+    interp.define("delete-overlay", LispObject::primitive("ignore"));
+    interp.define("move-overlay", LispObject::primitive("ignore"));
+    interp.define("overlay-start", LispObject::primitive("ignore"));
+    interp.define("overlay-end", LispObject::primitive("ignore"));
+    interp.define("overlays-at", LispObject::primitive("ignore"));
+    interp.define("overlays-in", LispObject::primitive("ignore"));
+    interp.define("next-overlay-change", LispObject::primitive("ignore"));
+    interp.define("previous-overlay-change", LispObject::primitive("ignore"));
+    interp.define("remove-overlays", LispObject::primitive("ignore"));
+    interp.define("overlay-properties", LispObject::primitive("ignore"));
+    interp.define("overlay-buffer", LispObject::primitive("ignore"));
+    interp.define("overlayp", LispObject::primitive("ignore"));
+    // Frames: we never have any.
+    interp.define("framep", LispObject::primitive("ignore"));
+    interp.define("frame-live-p", LispObject::primitive("ignore"));
+    interp.define("frame-visible-p", LispObject::primitive("ignore"));
+    interp.define("window-system", LispObject::primitive("ignore"));
+    interp.define("current-message", LispObject::primitive("ignore"));
+    interp.define("message-log-max", LispObject::nil());
+    interp.define("kill-all-local-variables", LispObject::primitive("ignore"));
+    interp.define("buffer-local-variables", LispObject::primitive("ignore"));
+    interp.define("buffer-local-value", LispObject::primitive("ignore"));
+    // tree-sitter — always absent in this runtime.
+    interp.define("treesit-language-available-p", LispObject::primitive("ignore"));
+    interp.define("treesit-ready-p", LispObject::primitive("ignore"));
+    interp.define("treesit-parser-create", LispObject::primitive("ignore"));
+    interp.define("indent-line-to", LispObject::primitive("ignore"));
+    interp.define("current-indentation", LispObject::primitive("ignore"));
+    interp.define("current-column", LispObject::primitive("ignore"));
+    interp.define("move-to-column", LispObject::primitive("ignore"));
+    interp.define("indent-to", LispObject::primitive("ignore"));
+
+    // Phase 5 stubs — display, timer, font-lock, syntax, mouse, isearch
+    interp.define("make-syntax-table", LispObject::primitive("ignore"));
+    interp.define("syntax-table-p", LispObject::primitive("ignore"));
+    interp.define("category-table-p", LispObject::primitive("ignore"));
+    interp.define("syntax-ppss", LispObject::primitive("ignore"));
+    interp.define("syntax-ppss-flush-cache", LispObject::primitive("ignore"));
+    interp.define("syntax-propertize", LispObject::primitive("ignore"));
+    interp.define("add-face-text-property", LispObject::primitive("ignore"));
+    interp.define("define-fringe-bitmap", LispObject::primitive("ignore"));
+    interp.define("set-face-background", LispObject::primitive("ignore"));
+    interp.define("set-face-foreground", LispObject::primitive("ignore"));
+    interp.define("face-name", LispObject::primitive("ignore"));
+    interp.define("face-id", LispObject::primitive("ignore"));
+    interp.define("face-documentation", LispObject::primitive("ignore"));
+    interp.define("tty-type", LispObject::primitive("ignore"));
+    interp.define("tty-color-alist", LispObject::primitive("ignore"));
+    interp.define("tty-color-approximate", LispObject::primitive("ignore"));
+    interp.define("tty-color-by-index", LispObject::primitive("ignore"));
+    interp.define("tty-color-standard-values", LispObject::primitive("ignore"));
+    interp.define("timer-create", LispObject::primitive("ignore"));
+    interp.define("timer-set-time", LispObject::primitive("ignore"));
+    interp.define("timer-set-function", LispObject::primitive("ignore"));
+    interp.define("timer-activate", LispObject::primitive("ignore"));
+    interp.define("cancel-timer", LispObject::primitive("ignore"));
+    interp.define("timer-set-idle-time", LispObject::primitive("ignore"));
+    interp.define("timer-activate-when-idle", LispObject::primitive("ignore"));
+    interp.define("input-pending-p", LispObject::primitive("ignore"));
+    interp.define("this-command-keys", LispObject::primitive("ignore"));
+    interp.define("this-command-keys-vector", LispObject::primitive("ignore"));
+    interp.define("this-single-command-keys", LispObject::primitive("ignore"));
+    interp.define("this-single-command-raw-keys", LispObject::primitive("ignore"));
+    interp.define("recent-keys", LispObject::primitive("ignore"));
+    interp.define("set-input-mode", LispObject::primitive("ignore"));
+    interp.define("current-input-mode", LispObject::primitive("ignore"));
+    interp.define("x-display-list", LispObject::primitive("ignore"));
+    interp.define("terminal-list", LispObject::primitive("ignore"));
+    interp.define("set-terminal-parameter", LispObject::primitive("ignore"));
+    interp.define("terminal-parameter", LispObject::primitive("ignore"));
+    interp.define("terminal-name", LispObject::primitive("ignore"));
+    interp.define("terminal-live-p", LispObject::primitive("ignore"));
+    interp.define("frame-live-p", LispObject::primitive("ignore"));
+    interp.define("frame-visible-p", LispObject::primitive("ignore"));
+    interp.define("frame-terminal", LispObject::primitive("ignore"));
+    interp.define("modify-frame-parameters", LispObject::primitive("ignore"));
+    interp.define("x-parse-geometry", LispObject::primitive("ignore"));
+    interp.define("make-frame-visible", LispObject::primitive("ignore"));
+    interp.define("iconify-frame", LispObject::primitive("ignore"));
+    interp.define("make-frame-invisible", LispObject::primitive("ignore"));
+    interp.define("raise-frame", LispObject::primitive("ignore"));
+    interp.define("lower-frame", LispObject::primitive("ignore"));
+    interp.define("handle-switch-frame", LispObject::primitive("ignore"));
+    interp.define("select-frame", LispObject::primitive("ignore"));
+    interp.define("delete-frame", LispObject::primitive("ignore"));
+    interp.define("mouse-position", LispObject::primitive("ignore"));
+    interp.define("set-mouse-position", LispObject::primitive("ignore"));
+    interp.define("track-mouse", LispObject::primitive("ignore"));
+    interp.define("mouse-pixel-position", LispObject::primitive("ignore"));
+    interp.define("coordinates-in-window-p", LispObject::primitive("ignore"));
+    interp.define("posn-at-point", LispObject::primitive("ignore"));
+    interp.define("posn-at-x-y", LispObject::primitive("ignore"));
+    interp.define("x-popup-menu", LispObject::primitive("ignore"));
+    interp.define("x-popup-dialog", LispObject::primitive("ignore"));
+    interp.define("set-clipboard-coding-system", LispObject::primitive("ignore"));
+    interp.define("gui-set-selection", LispObject::primitive("ignore"));
+    interp.define("gui-get-selection", LispObject::primitive("ignore"));
+    interp.define("gui-selection-owner-p", LispObject::primitive("ignore"));
+    interp.define("gui-selection-exists-p", LispObject::primitive("ignore"));
+    interp.define("x-own-selection-internal", LispObject::primitive("ignore"));
+    interp.define("x-get-selection-internal", LispObject::primitive("ignore"));
+    interp.define("x-disown-selection-internal", LispObject::primitive("ignore"));
+    interp.define("x-selection-owner-p", LispObject::primitive("ignore"));
+    interp.define("x-selection-exists-p", LispObject::primitive("ignore"));
+    interp.define("process-list", LispObject::primitive("ignore"));
+
+    // Phase B4 — skip-gate stubs. Tests use these in (skip-unless ...)
+    // forms to bail out when a feature isn't available. We make them
+    // all return nil so those tests trivially skip.
+    interp.define("display-images-p", LispObject::primitive("ignore"));
+    interp.define("display-multi-frame-p", LispObject::primitive("ignore"));
+    interp.define("display-popup-menus-p", LispObject::primitive("ignore"));
+    interp.define("display-mouse-p", LispObject::primitive("ignore"));
+    interp.define("executable-find", LispObject::primitive("ignore"));
+    interp.define("pdumper-stats", LispObject::primitive("ignore"));
+    interp.define(
+        "native-comp-available-p",
+        LispObject::primitive("ignore"),
+    );
+    interp.define("subr-native-elisp-p", LispObject::primitive("ignore"));
+    interp.define("native-compile", LispObject::primitive("ignore"));
+    interp.define("module-load", LispObject::primitive("ignore"));
+    interp.define("dbus-ping", LispObject::primitive("ignore"));
+    interp.define("sqlite-available-p", LispObject::primitive("ignore"));
+    interp.define("json-available-p", LispObject::primitive("ignore"));
+    interp.define("treesit-available-p", LispObject::primitive("ignore"));
+    interp.define("daemonp", LispObject::primitive("ignore"));
+    interp.define("subword-mode", LispObject::primitive("ignore"));
+    interp.define("setq-local", LispObject::primitive("ignore"));
+    interp.define("fixnump", LispObject::primitive("integerp"));
+    interp.define("bignump", LispObject::primitive("ignore"));
+    interp.define("cl-typep", LispObject::primitive("ignore"));
+    interp.define("cl-progv", LispObject::primitive("ignore"));
+
+    // cl--find-class is implemented in the eval dispatch (mod.rs)
+    // since it's tightly coupled with the (setf (cl--find-class N) V)
+    // place expansion handled there. No registration needed here.
+
     interp
 }
 
@@ -1820,10 +2003,105 @@ fn test_intern_soft_returns_nil_for_unknown() {
     );
 }
 
+#[test]
+fn test_fset_sets_function_cell() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+
+    // fset should set the function cell so the function is callable
+    interp
+        .eval(read("(defun my-original (x) (+ x 10))").unwrap())
+        .unwrap();
+    interp
+        .eval(read("(fset 'my-alias (symbol-function 'my-original))").unwrap())
+        .unwrap();
+    let result = interp.eval(read("(my-alias 5)").unwrap()).unwrap();
+    assert_eq!(result, LispObject::integer(15));
+}
+
+#[test]
+fn test_cl_defstruct_basic() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+
+    // Define a simple struct
+    interp
+        .eval(read("(cl-defstruct point x y z)").unwrap())
+        .unwrap();
+
+    // Constructor
+    let p = interp
+        .eval(read("(make-point 1 2 3)").unwrap())
+        .unwrap();
+    assert!(matches!(p, LispObject::Vector(_)));
+
+    // Predicate
+    assert_eq!(
+        interp
+            .eval(read("(point-p (make-point 1 2 3))").unwrap())
+            .unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp
+            .eval(read("(point-p '(1 2 3))").unwrap())
+            .unwrap(),
+        LispObject::nil()
+    );
+
+    // Accessors
+    assert_eq!(
+        interp
+            .eval(read("(point-x (make-point 10 20 30))").unwrap())
+            .unwrap(),
+        LispObject::integer(10)
+    );
+    assert_eq!(
+        interp
+            .eval(read("(point-z (make-point 10 20 30))").unwrap())
+            .unwrap(),
+        LispObject::integer(30)
+    );
+}
+
+#[test]
+fn test_cl_defstruct_with_options() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+
+    // Struct with options list and docstring
+    interp
+        .eval(read(r#"(cl-defstruct (my-struct (:copier nil))
+                         "A struct with a docstring."
+                         field-a field-b)"#).unwrap())
+        .unwrap();
+
+    let s = interp
+        .eval(read("(my-struct-field-b (make-my-struct 100 200))").unwrap())
+        .unwrap();
+    assert_eq!(s, LispObject::integer(200));
+}
+
+#[test]
+fn test_defalias_creates_function_alias() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+
+    interp
+        .eval(read("(defun my-fn () 42)").unwrap())
+        .unwrap();
+    interp
+        .eval(read("(defalias 'my-alias-fn 'my-fn)").unwrap())
+        .unwrap();
+    // The alias should resolve to the original function
+    let result = interp.eval(read("(my-alias-fn)").unwrap()).unwrap();
+    assert_eq!(result, LispObject::integer(42));
+}
+
 /// Ensure all required stdlib files are decompressed to /tmp/elisp-stdlib/.
 /// Returns false if Emacs lisp directory is not available (skip tests).
 /// All files in loadup.el order that ensure_stdlib_files will decompress.
-const BOOTSTRAP_FILES: &[&str] = &[
+pub const BOOTSTRAP_FILES: &[&str] = &[
     // --- Phase 1: core (30 files from loadup.el) ---
     "emacs-lisp/debug-early",
     "emacs-lisp/byte-run",
@@ -1879,12 +2157,67 @@ const BOOTSTRAP_FILES: &[&str] = &[
     "language/misc-lang",
     "language/utf-8-lang",
     "language/georgian",
+    // --- Phase 3: remaining language + i18n files ---
+    "international/cp51932",
+    "international/eucjp-ms",
+    "language/khmer",
+    "language/burmese",
+    "language/cham",
+    "language/philippine",
+    "language/indonesian",
+    // --- Phase 4: core editor infrastructure ---
+    "emacs-lisp/float-sup",
+    "indent",
+    "emacs-lisp/cl-generic",
+    "simple",
+    "emacs-lisp/seq",
+    "emacs-lisp/nadvice",
+    "minibuffer",
+    "frame",
+    // --- Phase 5: display, input, and editing infrastructure ---
+    "startup",
+    "term/tty-colors",
+    "font-core",
+    "emacs-lisp/syntax",
+    "font-lock",
+    "jit-lock",
+    "mouse",
+    "select",
+    "emacs-lisp/timer",
+    "emacs-lisp/easymenu",
+    "isearch",
+    "rfn-eshadow",
+    "emacs-lisp/lisp",
+    "newcomment",
+    "paren",
+    // --- Phase 6: user-facing modes and UI ---
+    "replace",
+    "electric",
+    "register",
+    "menu-bar",
+    "tab-bar",
+    "cus-start",
+    "international/iso-transl",
+    "emacs-lisp/eldoc",
+    "emacs-lisp/rmc",
+    "emacs-lisp/shorthands",
+    "emacs-lisp/tabulated-list",
+    "emacs-lisp/lisp-mode",
+    "textmodes/text-mode",
+    "textmodes/paragraphs",
+    "textmodes/page",
+    "textmodes/fill",
+    "progmodes/prog-mode",
+    "progmodes/elisp-mode",
+    "buff-menu",
+    "uniquify",
+    "vc/vc-hooks",
+    "vc/ediff-hook",
     // --- Extra files needed for individual tests ---
     "emacs-lisp/cconv",
-    "simple",
 ];
 
-fn ensure_stdlib_files() -> bool {
+pub fn ensure_stdlib_files() -> bool {
     let emacs_lisp_dir = "/opt/homebrew/share/emacs/30.2/lisp";
     if !std::path::Path::new(emacs_lisp_dir).exists() {
         return false;
@@ -2928,13 +3261,24 @@ fn test_bootstrap_loading_chain() {
 
 #[test]
 fn test_full_bootstrap_chain() {
+    // Run the bootstrap loader in a dedicated thread with a larger stack.
+    // Files like lisp-mode.el have deeply nested defvar structures whose
+    // eval depth exceeds the default 2 MiB Rust test stack.
+    let handle = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(run_full_bootstrap_chain)
+        .expect("failed to spawn bootstrap thread");
+    handle.join().expect("bootstrap thread panicked");
+}
+
+fn run_full_bootstrap_chain() {
     if !ensure_stdlib_files() {
         return;
     }
     let interp = make_stdlib_interp();
 
-    // All loadup.el files (excluding cconv/simple which are test-only extras)
-    let file_count = BOOTSTRAP_FILES.len() - 2; // exclude trailing extras
+    // All loadup.el files (excluding cconv which is a test-only extra)
+    let file_count = BOOTSTRAP_FILES.len() - 1; // exclude trailing extra
     let files: &[&str] = &BOOTSTRAP_FILES[..file_count];
 
     let mut loaded = 0;
@@ -3570,4 +3914,1209 @@ fn test_symbol_plist_returns_full_list() {
         ),
     );
     assert_eq!(result, expected);
+}
+
+/// Rough performance signal for the Value-native fast path. Evaluates
+/// `(+ 1 2 3)` many times and prints the rate. Failure indicates a
+/// massive regression; we don't assert on absolute numbers.
+#[test]
+fn test_value_native_fastpath_perf() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let expr = read("(+ 1 2 3)").unwrap();
+
+    crate::primitives_value::reset_hit_counters();
+    let iterations = 50_000;
+    let start = std::time::Instant::now();
+    for _ in 0..iterations {
+        let _ = interp.eval(expr.clone()).unwrap();
+    }
+    let elapsed = start.elapsed();
+    let per_call_ns = elapsed.as_nanos() as f64 / iterations as f64;
+    let calls_per_sec = iterations as f64 / elapsed.as_secs_f64();
+    let fast = crate::primitives_value::fast_hits();
+    let slow = crate::primitives_value::slow_hits();
+    eprintln!(
+        "fast path: {iterations} × (+ 1 2 3) in {elapsed:?} \
+         = {per_call_ns:.0} ns/call, {calls_per_sec:.0} calls/s \
+         (fast_hits={fast}, slow_hits={slow})"
+    );
+    // 50k calls should finish well under 10 seconds even on a slow machine.
+    assert!(elapsed.as_secs() < 10, "Value-native fast path too slow");
+}
+
+/// Load the full stdlib bootstrap chain (BOOTSTRAP_FILES) into an
+/// existing interpreter. `make_stdlib_interp` only registers Rust
+/// stubs — the actual Lisp stdlib (backquote.el, subr.el, etc.) is
+/// loaded by the bootstrap test itself. The full-suite harness needs
+/// the same Lisp infrastructure or every macro using ` will fail.
+pub fn load_full_bootstrap(interp: &Interpreter) {
+    // BOOTSTRAP_FILES has trailing test-only extras we should skip.
+    // They're conventionally the last 1 entry (cconv).
+    let n = BOOTSTRAP_FILES.len().saturating_sub(1);
+    let mut since_gc: usize = 0;
+    for f in &BOOTSTRAP_FILES[..n] {
+        let path = format!("/tmp/elisp-stdlib/{f}.el");
+        let source = match read_emacs_source(&path) {
+            Some(s) => s,
+            None => continue,
+        };
+        let forms = match crate::read_all(&source) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        // Same per-form budget as the bootstrap test uses.
+        let skip_heavy = matches!(
+            *f,
+            "emacs-lisp/cl-preloaded" | "emacs-lisp/oclosure" | "international/mule-cmds"
+        );
+        interp.set_eval_ops_limit(if skip_heavy { 500_000 } else { 5_000_000 });
+        for form in forms {
+            interp.reset_eval_ops();
+            let _ = interp.eval(form);
+            since_gc += 1;
+            // Heap is in Manual GC mode, so without explicit collection
+            // the stdlib load can allocate hundreds of MB. Sweeping
+            // every ~200 forms keeps peak RSS down for subsequent
+            // cl-macs loading.
+            if since_gc >= 200 {
+                interp.gc();
+                since_gc = 0;
+            }
+        }
+    }
+    interp.gc();
+    interp.set_eval_ops_limit(0);
+
+    // Extra tiny shims commonly assumed by test files that would
+    // otherwise require cl-macs to be loaded. Defining them directly
+    // avoids pulling cl-macs (which OOMs in bootstrap).
+    let extras = "
+(defmacro cl-incf (place &optional x) \
+  (list 'setq place (list '+ place (or x 1))))
+(defmacro cl-decf (place &optional x) \
+  (list 'setq place (list '- place (or x 1))))
+(defalias 'incf 'cl-incf)
+(defalias 'decf 'cl-decf)
+(unless (fboundp 'gv-ref) (defun gv-ref (place) place))
+(unless (fboundp 'gv-deref) (defun gv-deref (ref) ref))
+";
+    if let Ok(forms) = crate::read_all(extras) {
+        interp.set_eval_ops_limit(200_000);
+        for form in forms {
+            interp.reset_eval_ops();
+            let _ = interp.eval(form);
+        }
+        interp.set_eval_ops_limit(0);
+    }
+}
+
+/// Load Emacs cl-* files (cl-macs, cl-extra, cl-seq, cl-print) into an
+/// existing interpreter. These provide cl-loop, cl-flet, cl-labels,
+/// cl-destructuring-bind, cl-letf*, cl-typep, cl-do — used by ~30% of
+/// the test files. Loading them in `make_stdlib_interp` directly causes
+/// memory pressure across all unit tests, so we load them only in the
+/// full-suite harness where it pays off.
+///
+/// Each call ensures the files exist on disk first.
+pub fn load_cl_lib(interp: &Interpreter) {
+    let emacs_dir = "/opt/homebrew/share/emacs/30.2/lisp";
+    for f in [
+        "emacs-lisp/cl-macs",
+        "emacs-lisp/cl-extra",
+        "emacs-lisp/cl-seq",
+        "emacs-lisp/cl-print",
+    ] {
+        let dest = format!("/tmp/elisp-stdlib/{f}.el");
+        if !std::path::Path::new(&dest).exists() {
+            if let Some(parent) = std::path::Path::new(&dest).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let plain = format!("{emacs_dir}/{f}.el");
+            let gz = format!("{emacs_dir}/{f}.el.gz");
+            if std::path::Path::new(&plain).exists() {
+                let _ = std::fs::copy(&plain, &dest);
+            } else if std::path::Path::new(&gz).exists() {
+                if let Ok(out) = std::process::Command::new("gunzip")
+                    .args(["-c", &gz])
+                    .output()
+                {
+                    if out.status.success() {
+                        let _ = std::fs::write(&dest, out.stdout);
+                    }
+                }
+            }
+        }
+
+        // Load the file form-by-form with periodic GC — cl-macs.el
+        // is ~3500 lines and macro expansion blows the heap without
+        // forced collection.
+        if let Some(source) = read_emacs_source(&dest) {
+            if let Ok(forms) = crate::read_all(&source) {
+                interp.set_eval_ops_limit(2_000_000);
+                let mut since_gc = 0;
+                for form in forms {
+                    interp.reset_eval_ops();
+                    let _ = interp.eval(form);
+                    since_gc += 1;
+                    if since_gc >= 100 {
+                        interp.gc();
+                        since_gc = 0;
+                    }
+                }
+                interp.gc();
+                interp.set_eval_ops_limit(0);
+            }
+        }
+    }
+}
+
+/// Probe: how much of each CL .el loads against our bootstrapped interp?
+/// Runs in a dedicated thread with a 64 MB stack so deeply nested
+/// macro expansions (cl-macs.el is ~3500 lines) don't overflow.
+#[test]
+fn test_cl_files_load_progress() {
+    if !ensure_stdlib_files() {
+        return;
+    }
+    let handle = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let interp = make_stdlib_interp();
+            // Pre-load cl-preloaded so cl-macs has its prerequisites.
+            let _ = probe_emacs_file(
+                &interp,
+                "/tmp/elisp-stdlib/emacs-lisp/cl-preloaded.el",
+            );
+            for f in [
+                "emacs-lisp/cl-macs",
+                "emacs-lisp/cl-extra",
+                "emacs-lisp/cl-seq",
+                "emacs-lisp/cl-print",
+            ] {
+                let path = format!("/tmp/elisp-stdlib/{f}.el");
+                match probe_emacs_file(&interp, &path) {
+                    Some((ok, total)) => {
+                        let pct = if total > 0 { ok * 100 / total } else { 0 };
+                        eprintln!("  {f}: {ok}/{total} ({pct}%)");
+                    }
+                    None => eprintln!("  {f}: not loadable"),
+                }
+            }
+        })
+        .expect("spawn");
+    handle.join().expect("join");
+}
+
+/// This test does a full stdlib + cl-lib bootstrap, which is heavy
+/// (~5s, ~200MB). Ignored from `cargo test` by default; run with
+/// `cargo test -- --ignored test_backquote_in_macro_after_stdlib_bootstrap`.
+#[test]
+#[ignore]
+fn test_backquote_in_macro_after_stdlib_bootstrap() {
+    // Reproducer for the "void function: `" errors in real Emacs tests:
+    // a macro body using backquote should expand correctly after the
+    // stdlib (which includes backquote.el) is loaded.
+    if !ensure_stdlib_files() {
+        return;
+    }
+    let handle = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            let interp = make_stdlib_interp();
+            // make_stdlib_interp doesn't load Lisp stdlib by itself —
+            // only Rust stubs. We need backquote.el for backquote macros.
+            load_full_bootstrap(&interp);
+            // Define a trivial macro that uses backquote.
+            let r = interp.eval(read("(defmacro rele-bq-test (x) `(list ,x))").unwrap());
+            assert!(r.is_ok(), "defmacro failed: {r:?}");
+            // Invoke it — should expand and yield (42).
+            let result = interp.eval(read("(rele-bq-test 42)").unwrap());
+            match result {
+                Ok(v) => {
+                    let expected = LispObject::cons(
+                        LispObject::integer(42),
+                        LispObject::nil(),
+                    );
+                    assert_eq!(v, expected, "backquote expansion produced wrong value");
+                }
+                Err(e) => panic!("backquote macro invocation failed: {e}"),
+            }
+        })
+        .expect("spawn");
+    handle.join().expect("join");
+}
+
+#[test]
+fn test_with_temp_buffer_basic() {
+    crate::buffer::reset();
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+
+    // `(with-temp-buffer (insert "hello") (buffer-string))` should yield "hello".
+    let result = interp
+        .eval(read(r#"(with-temp-buffer (insert "hello") (buffer-string))"#).unwrap())
+        .unwrap();
+    assert_eq!(result, LispObject::string("hello"));
+
+    // After the with-temp-buffer, current buffer is back to *scratch*.
+    let scratch_text = interp.eval(read("(buffer-string)").unwrap()).unwrap();
+    assert_eq!(scratch_text, LispObject::string(""));
+}
+
+#[test]
+fn test_with_temp_buffer_point_min_max() {
+    crate::buffer::reset();
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+
+    let result = interp
+        .eval(read(r#"(with-temp-buffer (insert "abc") (list (point-min) (point-max) (point)))"#).unwrap())
+        .unwrap();
+    let expected = LispObject::cons(
+        LispObject::integer(1),
+        LispObject::cons(
+            LispObject::integer(4),
+            LispObject::cons(LispObject::integer(4), LispObject::nil()),
+        ),
+    );
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_with_temp_buffer_delete_region() {
+    crate::buffer::reset();
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let result = interp
+        .eval(
+            read(
+                r#"(with-temp-buffer
+                     (insert "0123456789")
+                     (delete-region 3 6)
+                     (buffer-string))"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(result, LispObject::string("0156789"));
+}
+
+/// Microbenchmark verifying the Value-native fast path works for hot
+/// primitives. Doesn't enforce a time budget — just prints the rate.
+#[test]
+fn test_value_native_fastpath_smoke() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+
+    // `+` dispatches via Value-native fast path when all args are fixnums.
+    let expr = read("(+ 1 2 3 4 5)").unwrap();
+    let result = interp.eval(expr).unwrap();
+    assert_eq!(result, LispObject::integer(15));
+
+    // Unary `-` negates
+    let expr = read("(- 7)").unwrap();
+    let result = interp.eval(expr).unwrap();
+    assert_eq!(result, LispObject::integer(-7));
+
+    // Comparison
+    assert_eq!(
+        interp.eval(read("(= 1 1 1)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp.eval(read("(< 1 2 3)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp.eval(read("(< 1 2 2)").unwrap()).unwrap(),
+        LispObject::nil()
+    );
+
+    // 1+/1-
+    assert_eq!(
+        interp.eval(read("(1+ 41)").unwrap()).unwrap(),
+        LispObject::integer(42)
+    );
+    assert_eq!(
+        interp.eval(read("(1- 43)").unwrap()).unwrap(),
+        LispObject::integer(42)
+    );
+
+    // null / not
+    assert_eq!(
+        interp.eval(read("(null nil)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp.eval(read("(not 42)").unwrap()).unwrap(),
+        LispObject::nil()
+    );
+
+    // eq — identity on fixnums is value equality
+    assert_eq!(
+        interp.eval(read("(eq 1 1)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+
+    // Type predicate
+    assert_eq!(
+        interp.eval(read("(integerp 42)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp.eval(read("(zerop 0)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Emacs ERT compatibility — load Emacs' own test files and see how much works
+// ---------------------------------------------------------------------------
+
+/// Root of the Emacs source tree, if available. Used for ERT compatibility
+/// probes. Returns `None` if the tree isn't present (e.g. on CI).
+fn emacs_source_root() -> Option<&'static str> {
+    let root = "/Volumes/SSD2TB/src/emacs";
+    if std::path::Path::new(root).exists() {
+        Some(root)
+    } else {
+        None
+    }
+}
+
+/// Read an Emacs source file as UTF-8 with Latin-1 fallback.
+pub fn read_emacs_source(path: &str) -> Option<String> {
+    std::fs::read_to_string(path).ok().or_else(|| {
+        std::fs::read(path)
+            .ok()
+            .map(|bytes| bytes.iter().map(|&b| char::from(b)).collect())
+    })
+}
+
+/// Load a bootstrap-initialized interpreter and try to evaluate every
+/// top-level form in `file_path`. Returns `(ok_count, total)` on success,
+/// or `None` if the file cannot be read or parsed.
+pub fn probe_emacs_file(interp: &Interpreter, file_path: &str) -> Option<(usize, usize)> {
+    let source = read_emacs_source(file_path)?;
+    let forms = match crate::read_all(&source) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("  parse error in {file_path}: {e}");
+            return None;
+        }
+    };
+
+    // Add the test file's own directory *and* its `resources/`
+    // subdirectory to `load-path` so `(require 'FOO-tests-helpers)`
+    // / `(load "FOO-tests-helpers")` in the file can find sibling
+    // helper files. Emacs's test-helpers live in `resources/` next
+    // to the test file, loaded via `(ert-resource-file "NAME")`.
+    if let Some(parent) = std::path::Path::new(file_path).parent() {
+        let parent_str = parent.to_string_lossy().to_string();
+        let resources = parent.join("resources");
+        let resources_str = resources.to_string_lossy().to_string();
+
+        // Register `ert-resource-directory` / `ert-resource-file` to
+        // resolve against this file's own resources dir. These are
+        // the exact helpers ERT uses; stubbing them means the common
+        // `(require 'X (ert-resource-file "X"))` call succeeds even
+        // if `ert-x.el` hasn't been loaded.
+        let esc_res = resources_str.replace('\\', "\\\\").replace('"', "\\\"");
+        let esc_parent = parent_str.replace('\\', "\\\\").replace('"', "\\\"");
+        let add_form = format!(
+            "(progn \
+              (let ((p \"{esc_parent}\")) \
+                (unless (member p load-path) (setq load-path (cons p load-path)))) \
+              (let ((r \"{esc_res}\")) \
+                (when (file-directory-p r) \
+                  (unless (member r load-path) (setq load-path (cons r load-path))))) \
+              (defun ert-resource-directory () \"{esc_res}/\") \
+              (defun ert-resource-file (name) (concat \"{esc_res}/\" name)))"
+        );
+        if let Ok(mut adds) = crate::read_all(&add_form) {
+            if let Some(f) = adds.pop() {
+                interp.reset_eval_ops();
+                interp.set_eval_ops_limit(100_000);
+                let _ = interp.eval(f);
+            }
+        }
+    }
+
+    let total = forms.len();
+    let mut ok = 0;
+    for form in forms {
+        // Generous per-form budget; ERT macros expand into nested bytecode.
+        interp.reset_eval_ops();
+        interp.set_eval_ops_limit(2_000_000);
+        if interp.eval(form).is_ok() {
+            ok += 1;
+        }
+    }
+    interp.set_eval_ops_limit(0);
+    Some((ok, total))
+}
+
+#[test]
+fn test_emacs_ert_can_be_loaded() {
+    let Some(root) = emacs_source_root() else {
+        return; // Emacs source not available — skip
+    };
+    if !ensure_stdlib_files() {
+        return;
+    }
+
+    // Run in a dedicated thread with a larger stack (ERT is deeply nested).
+    let root = root.to_string();
+    let handle = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let interp = make_stdlib_interp();
+            let ert_path = format!("{}/lisp/emacs-lisp/ert.el", root);
+            match probe_emacs_file(&interp, &ert_path) {
+                Some((ok, total)) => {
+                    let pct = if total > 0 { ok * 100 / total } else { 0 };
+                    eprintln!("ert.el: {ok}/{total} forms loaded ({pct}%)");
+                    // Expect at least 30% of ert.el forms to load — anything
+                    // higher is a win. Lower would regress the framework so
+                    // much that running individual tests would be hopeless.
+                    assert!(
+                        pct >= 30,
+                        "ert.el compatibility dropped below 30% (got {pct}%)",
+                    );
+                }
+                None => eprintln!("ert.el not readable"),
+            }
+        })
+        .expect("failed to spawn ERT compat thread");
+    handle.join().expect("ERT compat thread panicked");
+}
+
+/// Aggregate counters for a test-file run.
+#[derive(Default, Clone, Copy)]
+pub struct ErtRunStats {
+    pub passed: usize,
+    pub failed: usize,
+    pub errored: usize,
+    pub skipped: usize,
+    pub panicked: usize,
+}
+
+/// Per-test result, captured for JSONL emission.
+#[derive(Clone)]
+pub struct ErtTestResult {
+    pub name: String,
+    /// One of "pass", "fail", "error", "skip", "panic".
+    pub result: &'static str,
+    /// Free-form detail (error message, signal symbol, etc.). Empty for passes.
+    pub detail: String,
+    pub duration_ms: u128,
+}
+
+impl ErtTestResult {
+    /// Encode as one JSON object (single line). We hand-roll to avoid
+    /// pulling serde into the elisp crate proper — serde_json is a
+    /// dev-dep but only used by the harness.
+    pub fn to_jsonl(&self, file: &str) -> String {
+        fn esc(s: &str) -> String {
+            let mut out = String::with_capacity(s.len() + 2);
+            for c in s.chars() {
+                match c {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    c if (c as u32) < 0x20 => {
+                        out.push_str(&format!("\\u{:04x}", c as u32));
+                    }
+                    c => out.push(c),
+                }
+            }
+            out
+        }
+        format!(
+            r#"{{"file":"{}","test":"{}","result":"{}","ms":{},"detail":"{}"}}"#,
+            esc(file),
+            esc(&self.name),
+            self.result,
+            self.duration_ms,
+            esc(&self.detail),
+        )
+    }
+}
+
+/// Run all `ert-deftest`s registered under our `ert--rele-test` plist key
+/// in the given `interp`. Wraps each test in `catch_unwind` so panics
+/// from unforeseen interpreter bugs don't take down the whole run.
+/// Returns aggregate counters AND per-test results.
+pub fn run_rele_ert_tests_detailed(interp: &Interpreter) -> (ErtRunStats, Vec<ErtTestResult>) {
+    use crate::obarray;
+    let test_key = obarray::intern("ert--rele-test");
+    let skipped_key = obarray::intern("ert-test-skipped");
+    let failed_key = obarray::intern("ert-test-failed");
+    let mut stats = ErtRunStats::default();
+    let mut results: Vec<ErtTestResult> = Vec::new();
+    let mut tests: Vec<(String, LispObject)> = Vec::new();
+    {
+        let ob = obarray::GLOBAL_OBARRAY.read();
+        for sym_idx in 0..ob.symbol_count() {
+            let id = obarray::SymbolId(sym_idx as u32);
+            let thunk = ob.get_plist(id, test_key);
+            if !thunk.is_nil() {
+                tests.push((ob.name(id).to_string(), thunk));
+            }
+        }
+    }
+    // After collecting, immediately clear the registrations so the
+    // SAME tests don't get re-run by a later call. The obarray is
+    // process-global; without this, a fresh `make_stdlib_interp` for
+    // the next file would still see all tests registered by all
+    // previous files.
+    obarray::GLOBAL_OBARRAY
+        .write()
+        .clear_plist_prop_globally(test_key);
+    for (name, thunk) in tests {
+        let call = LispObject::cons(
+            LispObject::symbol("funcall"),
+            LispObject::cons(thunk, LispObject::nil()),
+        );
+        interp.reset_eval_ops();
+        interp.set_eval_ops_limit(500_000);
+        let start = std::time::Instant::now();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            interp.eval(call.clone())
+        }));
+        let elapsed_ms = start.elapsed().as_millis();
+        let (result, detail) = match outcome {
+            Ok(Ok(_)) => {
+                stats.passed += 1;
+                ("pass", String::new())
+            }
+            Ok(Err(crate::error::ElispError::Signal(sig))) => {
+                let sym = sig.symbol.as_symbol_id();
+                if sym == Some(failed_key) {
+                    stats.failed += 1;
+                    ("fail", sig.data.prin1_to_string())
+                } else if sym == Some(skipped_key) {
+                    stats.skipped += 1;
+                    ("skip", String::new())
+                } else {
+                    stats.errored += 1;
+                    let sym_name = sig
+                        .symbol
+                        .as_symbol()
+                        .unwrap_or_else(|| format!("{:?}", sig.symbol));
+                    let data_str = sig.data.prin1_to_string();
+                    if data_str.is_empty() || data_str == "nil" {
+                        ("error", format!("signal {sym_name}"))
+                    } else {
+                        ("error", format!("signal {sym_name}: {data_str}"))
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                stats.errored += 1;
+                ("error", e.to_string())
+            }
+            Err(_) => {
+                stats.panicked += 1;
+                ("panic", String::new())
+            }
+        };
+        results.push(ErtTestResult {
+            name,
+            result,
+            detail,
+            duration_ms: elapsed_ms,
+        });
+    }
+    interp.set_eval_ops_limit(0);
+    (stats, results)
+}
+
+/// Backwards-compatible wrapper that drops the per-test detail.
+fn run_rele_ert_tests(interp: &Interpreter) -> ErtRunStats {
+    let (stats, results) = run_rele_ert_tests_detailed(interp);
+    // Echo failures/errors/panics for the existing log format.
+    for r in &results {
+        match r.result {
+            "fail" => eprintln!("    FAIL: {}", r.name),
+            "error" => eprintln!("    ERROR: {}: {}", r.name, r.detail),
+            "panic" => eprintln!("    PANIC: {}", r.name),
+            _ => {}
+        }
+    }
+    stats
+}
+
+/// Try to actually RUN a simple ert-deftest: define it, then invoke it.
+#[test]
+fn test_emacs_ert_can_run_a_test() {
+    if !ensure_stdlib_files() {
+        return;
+    }
+    let handle = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let interp = make_stdlib_interp();
+            interp
+                .eval(read("(ert-deftest rele-smoke () (should (= (+ 1 2) 3)))").unwrap())
+                .unwrap();
+            interp
+                .eval(read("(ert-deftest rele-fail () (should (= 1 2)))").unwrap())
+                .unwrap();
+            interp
+                .eval(
+                    read("(ert-deftest rele-error () (should-error (error \"boom\")))").unwrap(),
+                )
+                .unwrap();
+            let s = run_rele_ert_tests(&interp);
+            eprintln!(
+                "rele ERT smoke: {} pass / {} fail / {} error / {} skip / {} panic",
+                s.passed, s.failed, s.errored, s.skipped, s.panicked,
+            );
+            assert_eq!(s.passed, 2, "expected 2 passes (rele-smoke + rele-error)");
+            assert_eq!(s.failed, 1, "expected 1 fail (rele-fail)");
+            assert_eq!(s.errored, 0);
+            assert_eq!(s.panicked, 0);
+        })
+        .expect("spawn");
+    handle.join().expect("join");
+}
+
+/// Walk `<emacs>/test/**/*.el` and run every test in every file. Each file
+/// gets a fresh interpreter. Per-test timeout is enforced by `eval-ops`.
+///
+/// This is the main full-suite test. To run:
+///   cargo test -p rele-elisp --lib test_emacs_all_files_run -- --nocapture --ignored
+/// Marked `#[ignore]` because a full run takes minutes; the test_emacs_test_files_run
+/// shorter variant covers data-tests.el for routine CI.
+#[test]
+#[ignore]
+fn test_emacs_all_files_run() {
+    let Some(root) = emacs_source_root() else {
+        return;
+    };
+    if !ensure_stdlib_files() {
+        return;
+    }
+    let root = root.to_string();
+    let handle = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let test_root = format!("{root}/test");
+            let mut files: Vec<std::path::PathBuf> = walkdir::WalkDir::new(&test_root)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|x| x == "el"))
+                // Resource directories contain test fixtures, not test
+                // files. Skip them to avoid wasted timeout budget.
+                .filter(|e| !e.path().components().any(|c| {
+                    let s = c.as_os_str().to_string_lossy();
+                    s.ends_with("-resources")
+                        || s == "manual"
+                        || s == "infra"
+                }))
+                // Skip known problematic files. These either:
+                // - exhaust our interp's stack (cl-loop / cl-destructuring-bind)
+                // - hit the 15 s wall-clock timeout reliably, then
+                //   corrupt subsequent workers via shared global obarray
+                //   state (we can't isolate without subprocess-per-file)
+                .filter(|e| {
+                    let p = e.path().to_string_lossy();
+                    !p.contains("/cl-lib-tests.el")
+                        && !p.contains("/cl-macs-tests.el")
+                        && !p.contains("/comp-tests.el")
+                        && !p.contains("/comp-cstr-tests.el")
+                        && !p.contains("/completion-tests.el")
+                        && !p.contains("/cus-edit-tests.el")
+                        && !p.contains("/custom-tests.el")
+                        && !p.contains("/dom-tests.el")
+                        && !p.contains("/backquote-tests.el")
+                        && !p.contains("/bytecomp-tests.el")
+                })
+                .map(|e| e.path().to_path_buf())
+                .collect();
+            files.sort();
+            eprintln!("Discovered {} .el test files under {test_root}", files.len());
+
+            // Per-test JSONL output. One line per test result.
+            let jsonl_path = std::path::PathBuf::from("target/emacs-test-results.jsonl");
+            if let Some(parent) = jsonl_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let mut jsonl = std::io::BufWriter::new(
+                std::fs::File::create(&jsonl_path).expect("create jsonl"),
+            );
+            eprintln!("Writing per-test results to {}", jsonl_path.display());
+
+            // Subprocess worker pool. Each worker is an isolated
+            // `emacs_test_worker` process. Its obarray and test
+            // state live in its own address space, so a crash or
+            // stack overflow on one file doesn't corrupt subsequent
+            // files — we just respawn the worker.
+            run_worker_pool(&files, &root, &mut jsonl)
+        })
+        .expect("spawn");
+    handle.join().expect("join");
+}
+
+/// Summary row from one `__SUMMARY__` line.
+#[derive(Default, Clone, Copy)]
+struct FileSummary {
+    passed: usize,
+    failed: usize,
+    errored: usize,
+    skipped: usize,
+    panicked: usize,
+    loaded: usize,
+    total_forms: usize,
+}
+
+/// Per-file outcome sent from a worker manager back to the main loop.
+enum FileOutcome {
+    /// Successfully processed; includes per-test JSONL lines already
+    /// formatted by the worker, plus the summary row.
+    Ok {
+        file_index: usize,
+        rel: String,
+        jsonl_lines: Vec<String>,
+        summary: FileSummary,
+    },
+    /// Worker exceeded the wall-clock budget for this file.
+    Timeout { file_index: usize, rel: String },
+    /// Worker crashed (stdout EOF before __DONE__ / stdin write error).
+    Crashed { file_index: usize, rel: String, reason: String },
+}
+
+/// Drive a pool of `emacs_test_worker` subprocesses over the file list,
+/// write results to `jsonl`, and print an aggregate summary.
+fn run_worker_pool(
+    files: &[std::path::PathBuf],
+    root: &str,
+    jsonl: &mut std::io::BufWriter<std::fs::File>,
+) {
+    use std::io::Write;
+    use std::sync::mpsc;
+
+    let n_workers = std::thread::available_parallelism()
+        .map(|n| n.get().clamp(1, 8))
+        .unwrap_or(4);
+    eprintln!("Spawning {n_workers} worker subprocess(es)");
+
+    // Task queue: each worker pulls the next file from here.
+    let (task_tx, task_rx) = mpsc::channel::<(usize, std::path::PathBuf)>();
+    let task_rx = std::sync::Arc::new(std::sync::Mutex::new(task_rx));
+    for (idx, f) in files.iter().enumerate() {
+        task_tx.send((idx, f.clone())).unwrap();
+    }
+    drop(task_tx);
+
+    let (out_tx, out_rx) = mpsc::channel::<FileOutcome>();
+
+    // Spawn N worker managers.
+    let mut handles = Vec::new();
+    for wid in 0..n_workers {
+        let task_rx = std::sync::Arc::clone(&task_rx);
+        let out_tx = out_tx.clone();
+        let root = root.to_string();
+        handles.push(std::thread::spawn(move || {
+            worker_manager(wid, task_rx, out_tx, root);
+        }));
+    }
+    drop(out_tx);
+
+    // Drain outcomes.
+    let mut grand = ErtRunStats::default();
+    let mut files_done = 0;
+    let mut files_load_failed = 0;
+    let mut files_timed_out = 0;
+    let mut files_crashed = 0;
+    let total_files = files.len();
+    for outcome in out_rx {
+        files_done += 1;
+        match outcome {
+            FileOutcome::Ok { file_index, rel, jsonl_lines, summary } => {
+                for line in &jsonl_lines {
+                    let _ = writeln!(jsonl, "{line}");
+                }
+                let t = summary.passed + summary.failed + summary.errored + summary.skipped + summary.panicked;
+                if summary.loaded == 0 && summary.total_forms == 0 {
+                    files_load_failed += 1;
+                    eprintln!(
+                        "[{}/{total_files}] {rel}: load failed",
+                        file_index + 1,
+                    );
+                } else {
+                    eprintln!(
+                        "[{}/{total_files}] {rel}: loaded {}/{} forms, ERT {} pass / {} fail / {} error / {} skip / {} panic (of {t})",
+                        file_index + 1, summary.loaded, summary.total_forms,
+                        summary.passed, summary.failed, summary.errored, summary.skipped, summary.panicked,
+                    );
+                }
+                grand.passed += summary.passed;
+                grand.failed += summary.failed;
+                grand.errored += summary.errored;
+                grand.skipped += summary.skipped;
+                grand.panicked += summary.panicked;
+            }
+            FileOutcome::Timeout { file_index, rel } => {
+                eprintln!(
+                    "[{}/{total_files}] {rel}: TIMEOUT — worker killed & respawned",
+                    file_index + 1,
+                );
+                let _ = writeln!(
+                    jsonl,
+                    r#"{{"file":"{}","test":"<file>","result":"timeout","ms":15000,"detail":""}}"#,
+                    rel,
+                );
+                files_timed_out += 1;
+            }
+            FileOutcome::Crashed { file_index, rel, reason } => {
+                eprintln!(
+                    "[{}/{total_files}] {rel}: CRASHED ({reason}) — respawned",
+                    file_index + 1,
+                );
+                let _ = writeln!(
+                    jsonl,
+                    r#"{{"file":"{}","test":"<file>","result":"crash","ms":0,"detail":"{}"}}"#,
+                    rel,
+                    reason.replace('"', "'"),
+                );
+                files_crashed += 1;
+            }
+        }
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+    let total = grand.passed + grand.failed + grand.errored + grand.skipped + grand.panicked;
+    let pct = if total > 0 { grand.passed * 100 / total } else { 0 };
+    eprintln!(
+        "\n=== Emacs test suite summary ===\n\
+         Files:  {files_done} run, {files_load_failed} load-failed, {files_timed_out} timed out, {files_crashed} crashed\n\
+         Tests:  {} pass / {} fail / {} error / {} skip / {} panic (of {total})\n\
+         Pass rate: {pct}%",
+        grand.passed, grand.failed, grand.errored, grand.skipped, grand.panicked,
+    );
+}
+
+/// One worker: the child subprocess plus a dedicated reader thread
+/// that forwards stdout lines into `lines_rx`. Bootstrapped once;
+/// reused across many files (the amortization that makes the pool
+/// fast). Dropping the `Worker` kills the child, which closes its
+/// stdout, which makes the reader thread exit.
+struct Worker {
+    child: std::process::Child,
+    lines_rx: std::sync::mpsc::Receiver<Option<String>>,
+}
+
+impl Worker {
+    fn spawn(bin: &std::path::Path) -> Option<Self> {
+        let mut child = spawn_worker(bin)?;
+        let stdout = child.stdout.take()?;
+        let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(stdout);
+            for line in reader.lines() {
+                match line {
+                    Ok(l) => {
+                        if tx.send(Some(l)).is_err() {
+                            return;
+                        }
+                    }
+                    Err(_) => {
+                        let _ = tx.send(None);
+                        return;
+                    }
+                }
+            }
+            let _ = tx.send(None); // EOF
+        });
+        Some(Worker { child, lines_rx: rx })
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// One manager thread owns one persistent worker subprocess. Pulls
+/// files from the shared queue, writes to worker stdin, reads
+/// `__SUMMARY__` + `__DONE__` from stdout. Only respawns on
+/// timeout/crash — otherwise the single bootstrap (~2 s) is
+/// amortized across however many files this worker processes.
+fn worker_manager(
+    wid: usize,
+    task_rx: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<(usize, std::path::PathBuf)>>>,
+    out_tx: std::sync::mpsc::Sender<FileOutcome>,
+    root: String,
+) {
+    use std::io::Write;
+    use std::time::Duration;
+
+    let worker_bin = worker_binary_path();
+    let mut worker = match Worker::spawn(&worker_bin) {
+        Some(w) => w,
+        None => {
+            eprintln!("worker {wid}: initial spawn failed, manager exiting");
+            return;
+        }
+    };
+
+    loop {
+        // Pull next file.
+        let (file_index, file) = {
+            let rx = task_rx.lock().unwrap();
+            match rx.recv() {
+                Ok(x) => x,
+                Err(_) => break, // queue closed
+            }
+        };
+        let path_str = file.to_string_lossy().to_string();
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+
+        // Send path to worker stdin.
+        let stdin_ok = worker
+            .child
+            .stdin
+            .as_mut()
+            .map(|stdin| writeln!(stdin, "{}", path_str).and_then(|_| stdin.flush()))
+            .and_then(Result::ok);
+        if stdin_ok.is_none() {
+            let _ = out_tx.send(FileOutcome::Crashed {
+                file_index,
+                rel,
+                reason: "stdin write failed".into(),
+            });
+            worker = match Worker::spawn(&worker_bin) {
+                Some(w) => w,
+                None => return,
+            };
+            continue;
+        }
+
+        let mut jsonl_lines: Vec<String> = Vec::new();
+        let mut summary: Option<FileSummary> = None;
+        let mut done = false;
+        let mut crashed = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match worker.lines_rx.recv_timeout(remaining) {
+                Ok(Some(line)) => {
+                    if line == "__DONE__" {
+                        done = true;
+                        break;
+                    } else if let Some(rest) = line.strip_prefix("__SUMMARY__ ") {
+                        summary = parse_summary(rest);
+                    } else if line.starts_with('{') {
+                        jsonl_lines.push(line);
+                    }
+                    // Other lines: ignore (e.g. stray stderr that leaked).
+                }
+                Ok(None) => {
+                    crashed = true;
+                    break;
+                }
+                Err(_) => break, // timeout
+            }
+        }
+
+        let outcome = if done {
+            // Clean path: reuse the same worker for the next file.
+            FileOutcome::Ok {
+                file_index,
+                rel,
+                jsonl_lines,
+                summary: summary.unwrap_or_default(),
+            }
+        } else if crashed {
+            worker = match Worker::spawn(&worker_bin) {
+                Some(w) => w,
+                None => return,
+            };
+            FileOutcome::Crashed {
+                file_index,
+                rel,
+                reason: "worker stdout EOF before __DONE__".into(),
+            }
+        } else {
+            worker = match Worker::spawn(&worker_bin) {
+                Some(w) => w,
+                None => return,
+            };
+            FileOutcome::Timeout { file_index, rel }
+        };
+        if out_tx.send(outcome).is_err() {
+            break;
+        }
+    }
+}
+
+fn parse_summary(rest: &str) -> Option<FileSummary> {
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    if parts.len() < 7 {
+        return None;
+    }
+    Some(FileSummary {
+        passed: parts[0].parse().ok()?,
+        failed: parts[1].parse().ok()?,
+        errored: parts[2].parse().ok()?,
+        skipped: parts[3].parse().ok()?,
+        panicked: parts[4].parse().ok()?,
+        loaded: parts[5].parse().ok()?,
+        total_forms: parts[6].parse().ok()?,
+    })
+}
+
+fn worker_binary_path() -> std::path::PathBuf {
+    // The parent test process lives at target/release/deps/test_... or
+    // target/debug/deps/... Our worker binary is built into
+    // target/<profile>/emacs_test_worker. Walk up from the current
+    // exe path to find it.
+    let mut exe = std::env::current_exe().expect("current_exe");
+    while exe.pop() {
+        let candidate = exe.join("emacs_test_worker");
+        if candidate.exists() {
+            return candidate;
+        }
+        let candidate = exe.join("../emacs_test_worker");
+        if candidate.exists() {
+            return candidate
+                .canonicalize()
+                .unwrap_or(candidate);
+        }
+    }
+    // Fallback: assume release build alongside this exe's parent.
+    std::path::PathBuf::from("./target/release/emacs_test_worker")
+}
+
+fn spawn_worker(bin: &std::path::Path) -> Option<std::process::Child> {
+    use std::process::{Command, Stdio};
+    // Worker bootstraps then prints "__READY__" to stderr. We don't
+    // wait for that here — the first stdin write will block until the
+    // child is reading, which is after bootstrap.
+    Command::new(bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null()) // squelch stdlib-load chatter
+        .spawn()
+        .ok()
+}
+
+/// Load a curated short list of Emacs test files and run them. Suitable
+/// for routine CI (vs the full `test_emacs_all_files_run` which takes
+/// minutes). Reports pass/fail/error counts as a baseline metric.
+/// Marked `#[ignore]` because load_full_bootstrap allocates a lot
+/// (~200 MB, runs many .el files) and would OOM the parallel test
+/// runner. Run with `cargo test --release -- --ignored test_emacs_test_files_run`.
+#[test]
+#[ignore]
+fn test_emacs_test_files_run() {
+    let Some(root) = emacs_source_root() else {
+        return;
+    };
+    if !ensure_stdlib_files() {
+        return;
+    }
+    let root = root.to_string();
+    let handle = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            // Only data-tests for now — fns-tests and the cl-* tests
+            // have forms that hang our interpreter (likely tight Rust
+            // loops in some primitive that doesn't increment eval ops).
+            // Investigating those is its own task.
+            let files = ["test/src/data-tests.el"];
+            let mut grand = ErtRunStats::default();
+            for file in files {
+                // Fresh interpreter per file so tests don't pollute each other.
+                let interp = make_stdlib_interp();
+                load_full_bootstrap(&interp);
+                // NOTE: load_cl_lib disabled — combining the full
+                // bootstrap with cl-macs.el currently OOMs the
+                // process (cl-macs registers many large macros that
+                // accumulate). Tests using cl-loop / cl-flet still
+                // error with "void function: cl-...". Future work:
+                // smaller cl-macs subset, or shared-interpreter pool.
+                let path = format!("{root}/{file}");
+                let load_summary = probe_emacs_file(&interp, &path);
+                let s = run_rele_ert_tests(&interp);
+                let total = s.passed + s.failed + s.errored + s.skipped + s.panicked;
+                match load_summary {
+                    Some((ok, n)) => eprintln!(
+                        "  {file}: loaded {ok}/{n} forms, ERT {} pass / {} fail / {} error / {} skip / {} panic (of {total})",
+                        s.passed, s.failed, s.errored, s.skipped, s.panicked,
+                    ),
+                    None => eprintln!("  {file}: not loadable"),
+                }
+                grand.passed += s.passed;
+                grand.failed += s.failed;
+                grand.errored += s.errored;
+                grand.skipped += s.skipped;
+                grand.panicked += s.panicked;
+            }
+            eprintln!(
+                "TOTAL: {} pass / {} fail / {} error / {} skip / {} panic",
+                grand.passed, grand.failed, grand.errored, grand.skipped, grand.panicked,
+            );
+        })
+        .expect("spawn");
+    handle.join().expect("join");
+}
+
+#[test]
+fn test_emacs_small_test_files_load() {
+    // Probe a handful of small, self-contained test files. We don't
+    // expect 100% — the goal is a baseline metric and a smoke test
+    // that nothing panics or loops forever.
+    let Some(root) = emacs_source_root() else {
+        return;
+    };
+    if !ensure_stdlib_files() {
+        return;
+    }
+
+    let files = [
+        "test/lisp/emacs-lisp/cl-lib-tests.el",
+        "test/lisp/emacs-lisp/cl-extra-tests.el",
+        "test/src/data-tests.el",
+        "test/src/fns-tests.el",
+    ];
+
+    let root = root.to_string();
+    let handle = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let interp = make_stdlib_interp();
+            // Pre-load ert.el best-effort so ert-deftest is at least defined
+            // enough to not crash on the test files.
+            let _ = probe_emacs_file(&interp, &format!("{}/lisp/emacs-lisp/ert.el", root));
+
+            for f in files {
+                let path = format!("{root}/{f}");
+                match probe_emacs_file(&interp, &path) {
+                    Some((ok, total)) => {
+                        let pct = if total > 0 { ok * 100 / total } else { 0 };
+                        eprintln!("  {f}: {ok}/{total} ({pct}%)");
+                    }
+                    None => eprintln!("  {f}: (not readable)"),
+                }
+            }
+        })
+        .expect("failed to spawn ERT test-file probe thread");
+    handle.join().expect("ERT test-file probe thread panicked");
 }

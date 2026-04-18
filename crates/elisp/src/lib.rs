@@ -1,10 +1,16 @@
+pub mod buffer;
+pub mod emacs;
 mod error;
-mod eval;
+pub mod eval;
 pub mod gc;
 pub mod jit;
 pub mod obarray;
 mod object;
 mod primitives;
+mod primitives_buffer;
+mod primitives_file;
+mod primitives_value;
+mod primitives_window;
 mod reader;
 pub mod value;
 pub mod vm;
@@ -15,14 +21,67 @@ pub use object::{global_cons_count, BytecodeFunction, LispObject};
 pub use primitives::add_primitives;
 pub use reader::{detect_lexical_binding, read, read_all};
 
+/// Bridge between the elisp interpreter and whatever client owns the
+/// buffer/cursor (the TUI's `TuiAppState`, the GPUI client's
+/// `MdAppState`, …).
+///
+/// Methods come in three groups:
+/// - **Queries** (`point`, `buffer_string`, …): pure reads, no side
+///   effects.
+/// - **Mutations** (`insert`, `delete_char`, …): modify the buffer.
+///   These must keep the document's change journal consistent so LSP
+///   and tree-sitter see the edits.
+/// - **Navigation** (`forward_char`, `forward_line`,
+///   `move_beginning_of_line`, …): move the cursor. Counts are
+///   signed — negative goes backward — so elisp can map both
+///   `forward-char` and `backward-char` onto the same primitive.
+///
+/// Default implementations exist for the post-initial-landing methods
+/// so embedders can migrate at their own pace without the trait
+/// breaking compilation.
 pub trait EditorCallbacks: Send + Sync {
+    // ---- Queries ----
     fn buffer_string(&self) -> String;
     fn buffer_size(&self) -> usize;
     fn point(&self) -> usize;
+    /// The smallest valid position in the buffer. Emacs convention is
+    /// 1; we currently use 0 — conversions live in the elisp layer.
+    fn point_min(&self) -> usize {
+        0
+    }
+    /// One past the last valid position. Equivalent to `buffer_size`.
+    fn point_max(&self) -> usize {
+        self.buffer_size()
+    }
+
+    // ---- Mutations ----
     fn insert(&mut self, text: &str);
     fn delete_char(&mut self, n: i64);
-    fn goto_char(&mut self, pos: usize);
-    fn forward_char(&mut self, n: i64);
     fn find_file(&mut self, path: &str) -> bool;
     fn save_buffer(&mut self) -> bool;
+
+    // ---- Navigation ----
+    fn goto_char(&mut self, pos: usize);
+    fn forward_char(&mut self, n: i64);
+    /// Move forward `n` lines (negative = backward), preserving the
+    /// preferred column for vertical movement.
+    fn forward_line(&mut self, _n: i64) {
+        // Default: no-op. Real clients override.
+    }
+    /// Move to the start of the current line.
+    fn move_beginning_of_line(&mut self) {}
+    /// Move to the end of the current line (before the newline).
+    fn move_end_of_line(&mut self) {}
+    /// Move to the start of the buffer.
+    fn move_beginning_of_buffer(&mut self) {
+        self.goto_char(self.point_min());
+    }
+    /// Move to the end of the buffer.
+    fn move_end_of_buffer(&mut self) {
+        self.goto_char(self.point_max());
+    }
+
+    // ---- Edit history ----
+    fn undo(&mut self) {}
+    fn redo(&mut self) {}
 }

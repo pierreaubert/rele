@@ -367,7 +367,10 @@ pub(super) fn eval_format(
 
     let mut result = String::new();
     let mut arg_idx = 0;
-    let chars: Vec<char> = fmt_str.chars().collect();
+    // Cap format-string length: even with bounded inner loops, an
+    // adversarial format string can be very expensive to walk.
+    const MAX_FMT_CHARS: usize = 64 * 1024;
+    let chars: Vec<char> = fmt_str.chars().take(MAX_FMT_CHARS).collect();
     let mut i = 0;
     while i < chars.len() {
         if chars[i] == '%' && i + 1 < chars.len() {

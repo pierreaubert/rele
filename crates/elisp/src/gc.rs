@@ -687,7 +687,7 @@ impl Heap {
 
     /// Walk the all_objects list and free every unmarked object.
     /// Marked objects have their flag cleared for the next cycle.
-    fn sweep(&mut self) {
+    fn sweep	(&mut self) {
         let mut prev: *mut *mut GcHeader = &mut self.all_objects;
 
         // SAFETY: we only dereference pointers that were registered via

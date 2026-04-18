@@ -24,3 +24,17 @@ cranelift-frontend = { workspace = true, optional = true }
 cranelift-module = { workspace = true, optional = true }
 cranelift-jit = { workspace = true, optional = true }
 cranelift-native = { workspace = true, optional = true }
+
+[dev-dependencies]
+walkdir = "2"
+serde_json = { workspace = true }
+
+# Harness subprocess worker. Used by cargo test test_emacs_all_files_run
+# (which relies on a pool of these to isolate each test file in its own
+# process). Not user-facing.
+[[bin]]
+name = "emacs_test_worker"
+path = "src/bin/emacs_test_worker.rs"
+# Only built when test code is also built (so we don't pollute release
+# builds of the library).
+required-features = []

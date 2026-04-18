@@ -32,6 +32,7 @@ fn is_symbol_char(c: char) -> bool {
                 | '@'
                 | '~'
                 | '^'
+                | '|'
         )
 }
 
@@ -56,6 +57,7 @@ fn is_symbol_initial(c: char) -> bool {
                 | '@'
                 | '~'
                 | '^'
+                | '|'
         )
 }
 
@@ -318,20 +320,58 @@ impl Reader {
                 self.advance();
                 self.read_radix_number(2)
             }
+            '&' => {
+                // #&LEN"BITS" — bool-vector literal (Emacs internal .elc
+                // format). We don't implement bool-vectors; skip the length
+                // digits and the quoted string, return nil.
+                self.advance(); // consume '&'
+                while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+                    self.advance();
+                }
+                if self.peek() == Some('"') {
+                    self.advance();
+                    while let Some(c) = self.advance() {
+                        if c == '\\' {
+                            self.advance(); // skip escaped char
+                        } else if c == '"' {
+                            break;
+                        }
+                    }
+                }
+                Ok(LispObject::nil())
+            }
+            '#' => {
+                // ## — uninterned empty symbol (also written ||). Emacs's
+                // print/read pair for a symbol with no name.
+                self.advance(); // consume second '#'
+                Ok(LispObject::symbol(""))
+            }
             's' => {
                 self.advance();
-                // #s(hash-table ...) — read as tagged form for now
+                // #s(TYPE ...) — record/struct literal.
+                // #s(hash-table ...) for hash tables, #s(cl-struct-type ...)
+                // for cl-defstruct records. Read as a tagged list.
                 if self.peek() == Some('(') {
                     self.advance();
                     let inner = self.read_list_to_vec()?;
-                    let mut list = LispObject::nil();
-                    for e in inner.into_iter().rev() {
-                        list = LispObject::cons(e, list);
+                    // Distinguish hash-table from struct records
+                    let tag = inner.first().and_then(|o| o.as_symbol().map(|s| s.to_string()));
+                    if tag.as_deref() == Some("hash-table") {
+                        let mut list = LispObject::nil();
+                        for e in inner.into_iter().rev() {
+                            list = LispObject::cons(e, list);
+                        }
+                        Ok(LispObject::cons(
+                            LispObject::symbol("hash-table-literal"),
+                            list,
+                        ))
+                    } else {
+                        // CL struct record: return as a vector (Emacs records
+                        // are vector-like). The first element is the type tag.
+                        Ok(LispObject::Vector(std::sync::Arc::new(
+                            parking_lot::Mutex::new(inner),
+                        )))
                     }
-                    Ok(LispObject::cons(
-                        LispObject::symbol("hash-table-literal"),
-                        list,
-                    ))
                 } else {
                     Err(ElispError::ReaderError("expected ( after #s".to_string()))
                 }
@@ -395,6 +435,27 @@ impl Reader {
                         "expected [ after #^".to_string(),
                     ))
                 }
+            }
+            '(' => {
+                // #(STRING PROPS...) — string with text properties.
+                // We don't preserve properties; just return the string.
+                self.advance(); // consume '('
+                let first = self.read()?;
+                // Skip the rest of the list
+                loop {
+                    self.skip_whitespace();
+                    if self.peek() == Some(')') {
+                        self.advance();
+                        break;
+                    }
+                    if self.peek().is_none() {
+                        return Err(ElispError::ReaderError(
+                            "unterminated #(...) string-with-properties".to_string(),
+                        ));
+                    }
+                    let _ = self.read()?;
+                }
+                Ok(first)
             }
             ':' => {
                 // #:name — uninterned symbol. We don't track intern status,
@@ -840,6 +901,26 @@ impl Reader {
                         self.advance();
                     }
                 }
+                // Emacs accepts INF / NaN as exponent mantissas, e.g. 1.0e+INF.
+                // Rust's f64::parse doesn't, so detect and substitute.
+                let rest_is_inf = self.peek().map(|c| matches!(c, 'I' | 'i')).unwrap_or(false);
+                let rest_is_nan = self.peek().map(|c| matches!(c, 'N' | 'n')).unwrap_or(false);
+                if rest_is_inf || rest_is_nan {
+                    // Consume the 3 letters (INF or NaN).
+                    for _ in 0..3 {
+                        if let Some(ch) = self.peek() {
+                            if ch.is_ascii_alphabetic() {
+                                self.advance();
+                            }
+                        }
+                    }
+                    let sign_is_negative = s.trim_start().starts_with('-');
+                    return Ok(LispObject::float(if rest_is_inf {
+                        if sign_is_negative { f64::NEG_INFINITY } else { f64::INFINITY }
+                    } else {
+                        f64::NAN
+                    }));
+                }
             } else {
                 break;
             }
@@ -890,11 +971,24 @@ impl Reader {
                 s
             )));
         }
-        let n = i64::from_str_radix(digits, radix).map_err(|_| {
-            ElispError::ReaderError(format!("invalid radix-{} number: {}", radix, s))
-        })?;
+        // Parse as i64; on overflow, fall back to wrapping u128 → i64 so
+        // huge literals in test files don't break the reader. Emacs itself
+        // promotes these to bignums, but our bignum path is heap-side and
+        // overkill for literals that rarely matter at runtime.
+        let n = match i64::from_str_radix(digits, radix) {
+            Ok(v) => v,
+            Err(_) => match u128::from_str_radix(digits, radix) {
+                Ok(v) => v as i64,
+                Err(_) => {
+                    return Err(ElispError::ReaderError(format!(
+                        "invalid radix-{} number: {}",
+                        radix, s
+                    )));
+                }
+            },
+        };
         let n = if has_sign && s.starts_with('-') {
-            -n
+            n.wrapping_neg()
         } else {
             n
         };

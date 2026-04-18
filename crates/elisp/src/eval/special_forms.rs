@@ -148,6 +148,12 @@ pub(super) fn expand_macro(
     // `&optional` flips subsequent names to optional (nil-padded if
     // no arg is provided); `&rest` captures the remaining args as a
     // list bound to the single following name.
+    // Use a sentinel for destructuring patterns we don't support (e.g.
+    // sub-lists like `()` or `(a b)`): we still consume one positional
+    // slot, but bind nothing. This is what `cl-defmacro` arg lists use
+    // for fixed-shape arg patterns (e.g. `ert-deftest NAME () BODY...`
+    // requires the second positional slot to BE the empty list).
+    const SKIP: &str = "";
     let mut positional: Vec<String> = Vec::new();
     let mut optional: Vec<String> = Vec::new();
     let mut rest_name: Option<String> = None;
@@ -159,7 +165,9 @@ pub(super) fn expand_macro(
                 if let Some(s) = car.as_symbol() {
                     match s.as_str() {
                         "&optional" => mode = 1,
-                        "&rest" => mode = 2,
+                        // `&body` is a CL extension synonym for `&rest`.
+                        // Used heavily in `cl-defmacro` (e.g. ert-deftest).
+                        "&rest" | "&body" => mode = 2,
                         _ => match mode {
                             0 => positional.push(s),
                             1 => optional.push(s),
@@ -172,7 +180,22 @@ pub(super) fn expand_macro(
                     }
                     cur = Some(tail);
                 } else {
-                    break;
+                    // Non-symbol param entry — typically a destructuring
+                    // pattern like `()` or `(name &optional default)`.
+                    // We don't implement destructuring; consume one slot
+                    // with the SKIP sentinel so subsequent args still
+                    // line up correctly.
+                    match mode {
+                        0 => positional.push(SKIP.to_string()),
+                        1 => optional.push(SKIP.to_string()),
+                        2 => {
+                            // `&rest` followed by a non-symbol shouldn't
+                            // happen in well-formed code; just stop.
+                            break;
+                        }
+                        _ => unreachable!(),
+                    }
+                    cur = Some(tail);
                 }
             }
             None => break,
@@ -210,6 +233,9 @@ pub(super) fn expand_macro(
     let temp_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
 
     for (name, value) in bindings {
+        if name.is_empty() {
+            continue; // skip the SKIP sentinel from destructuring patterns
+        }
         temp_env.write().define(&name, value);
     }
 
@@ -325,6 +351,10 @@ pub(super) fn eval_loop(
     state: &InterpreterState,
 ) -> ElispResult<Value> {
     loop {
+        // Charge an op per iteration so an unbounded `(loop ...)` can be
+        // killed by the eval-ops budget. Without this, a malformed body
+        // that signals nothing would hang forever.
+        state.charge(1)?;
         eval_progn(body, env, editor, macros, state)?;
     }
 }
@@ -399,6 +429,84 @@ pub(super) fn eval_let_star(
     let result = eval_progn(obj_to_value(body), &new_env, editor, macros, state);
 
     unwind_specpdl(state, specpdl_depth);
+
+    result
+}
+/// `(dlet BINDINGS BODY...)` — always-dynamic let, regardless of
+/// `lexical-binding`. Mirrors Emacs's definition `(progn (defvar x) ... (let
+/// ((x ...) ...) body))`: each bound symbol is promoted to a special variable
+/// for the duration of the body, its prior global value saved and restored on
+/// exit. Binding values are evaluated in the *outer* environment (parallel
+/// semantics, like `let`).
+pub(super) fn eval_dlet(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    use crate::obarray::SymbolId;
+
+    let args_obj = value_to_obj(args);
+    let bindings = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let body = args_obj.rest().ok_or(ElispError::WrongNumberOfArguments)?;
+
+    // Evaluate every binding value in the outer env *before* we install any
+    // of them — `dlet` uses parallel semantics.
+    let mut pairs: Vec<(SymbolId, LispObject)> = Vec::new();
+    let mut bindings_list = bindings;
+    while let Some((binding, rest)) = bindings_list.destructure_cons() {
+        let (id, value) = if let Some(id) = binding.as_symbol_id() {
+            (id, LispObject::nil())
+        } else if let Some((binding_name, binding_val_wrapper)) = binding.destructure_cons() {
+            let binding_id = binding_name
+                .as_symbol_id()
+                .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+            let binding_val = binding_val_wrapper.first().unwrap_or(LispObject::nil());
+            let binding_val =
+                value_to_obj(eval(obj_to_value(binding_val), env, editor, macros, state)?);
+            (binding_id, binding_val)
+        } else {
+            return Err(ElispError::WrongTypeArgument("symbol or list".to_string()));
+        };
+        pairs.push((id, value));
+        bindings_list = rest;
+    }
+
+    // Snapshot old globals & special-ness so we can restore on exit, then
+    // promote each binding to special + write its new global value.
+    let mut saved: Vec<(SymbolId, Option<LispObject>, bool)> = Vec::with_capacity(pairs.len());
+    {
+        let mut special = state.special_vars.write();
+        let mut global = state.global_env.write();
+        for (id, val) in &pairs {
+            let was_special = special.contains(id);
+            let old = global.get_id_local(*id);
+            saved.push((*id, old, was_special));
+            if !was_special {
+                special.insert(*id);
+            }
+            global.set_id(*id, val.clone());
+        }
+    }
+
+    let result = eval_progn(obj_to_value(body), env, editor, macros, state);
+
+    // Restore in reverse order so shadowed re-bindings of the same symbol
+    // within `pairs` are unwound correctly.
+    {
+        let mut special = state.special_vars.write();
+        let mut global = state.global_env.write();
+        for (id, old, was_special) in saved.into_iter().rev() {
+            match old {
+                Some(v) => global.set_id(id, v),
+                None => global.unset_id(id),
+            }
+            if !was_special {
+                special.remove(&id);
+            }
+        }
+    }
 
     result
 }

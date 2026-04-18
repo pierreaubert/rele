@@ -70,6 +70,22 @@ impl SymbolTable {
         &self.symbols[id.0 as usize].name
     }
 
+    /// Total number of interned symbols. Useful for iterating the
+    /// obarray (id 0..symbol_count()) — caller must use the read lock
+    /// to keep the count valid.
+    pub fn symbol_count(&self) -> usize {
+        self.symbols.len()
+    }
+
+    /// Remove all plist entries for `prop` across every symbol in the
+    /// obarray. Used by the test harness to wipe ert-deftest registrations
+    /// between test files (the obarray is process-global).
+    pub fn clear_plist_prop_globally(&mut self, prop: SymbolId) {
+        for data in self.symbols.iter_mut() {
+            data.plist.retain(|(k, _)| *k != prop);
+        }
+    }
+
     pub fn flags(&self, id: SymbolId) -> &SymbolFlags {
         &self.symbols[id.0 as usize].flags
     }
