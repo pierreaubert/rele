@@ -329,6 +329,35 @@ thread_local! {
     };
 }
 
+/// RAII guard for `FALLBACK_STACK`. Pushes the name on construction
+/// and pops on drop — so the stack unwinds correctly even if the
+/// evaluation panics inside `catch_unwind` (leaving a stale entry
+/// would poison that name for the rest of the interpreter's life).
+struct FallbackFrame {
+    name: String,
+}
+
+impl FallbackFrame {
+    fn new(name: &str) -> Self {
+        FALLBACK_STACK.with(|st| st.borrow_mut().push(name.to_string()));
+        Self { name: name.to_string() }
+    }
+}
+
+impl Drop for FallbackFrame {
+    fn drop(&mut self) {
+        FALLBACK_STACK.with(|st| {
+            let mut stack = st.borrow_mut();
+            // Pop the frame for `self.name`. In normal operation this
+            // is always the top; but if earlier frames leaked we still
+            // want to purge our own entry.
+            if let Some(pos) = stack.iter().rposition(|n| n == &self.name) {
+                stack.remove(pos);
+            }
+        });
+    }
+}
+
 fn source_level_fallback(
     name: &str,
     args: &LispObject,
@@ -361,12 +390,9 @@ fn source_level_fallback(
     }
     let form = LispObject::cons(LispObject::symbol(name), arg_list);
 
-    FALLBACK_STACK.with(|st| st.borrow_mut().push(name.to_string()));
-    let res = eval(obj_to_value(form), env, editor, macros, state);
-    FALLBACK_STACK.with(|st| {
-        st.borrow_mut().pop();
-    });
-    res
+    // RAII: the frame is popped even if `eval` panics.
+    let _guard = FallbackFrame::new(name);
+    eval(obj_to_value(form), env, editor, macros, state)
 }
 
 /// `(make-closure PROTOTYPE &rest CLOSURE-VARS)` — Emacs byte-compiled
@@ -941,5 +967,77 @@ pub fn call_function(
             source_level_fallback(&name, &args_obj, env, editor, macros, state)
         }
         _ => Err(ElispError::WrongTypeArgument("function".to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: R3. Previously the FALLBACK_STACK was pushed/popped
+    /// by explicit method calls. If the `eval` inside the fallback
+    /// panicked, the pop never ran and the name stayed on the stack
+    /// forever — poisoning every subsequent call to that name with a
+    /// spurious VoidFunction error. The RAII `FallbackFrame` guard
+    /// ensures the pop happens on unwind too.
+    #[test]
+    fn fallback_frame_pops_on_panic() {
+        // Baseline: stack is empty.
+        FALLBACK_STACK.with(|st| assert!(st.borrow().is_empty()));
+
+        // Simulate a panic inside a fallback call.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = FallbackFrame::new("r3-poisoned");
+            // Verify the frame was pushed.
+            FALLBACK_STACK.with(|st| {
+                assert_eq!(st.borrow().as_slice(), &["r3-poisoned".to_string()]);
+            });
+            panic!("simulated panic inside fallback");
+        }));
+        assert!(result.is_err(), "panic must propagate");
+
+        // After the unwind, the stack must be empty again.
+        FALLBACK_STACK.with(|st| {
+            assert!(
+                st.borrow().is_empty(),
+                "FallbackFrame must pop even on panic; saw: {:?}",
+                st.borrow()
+            );
+        });
+    }
+
+    /// Normal drop (no panic) also pops.
+    #[test]
+    fn fallback_frame_pops_on_normal_return() {
+        FALLBACK_STACK.with(|st| st.borrow_mut().clear());
+        {
+            let _guard = FallbackFrame::new("r3-normal");
+            FALLBACK_STACK.with(|st| {
+                assert_eq!(st.borrow().len(), 1);
+            });
+        }
+        FALLBACK_STACK.with(|st| assert!(st.borrow().is_empty()));
+    }
+
+    /// Nested frames pop in reverse order.
+    #[test]
+    fn nested_fallback_frames() {
+        FALLBACK_STACK.with(|st| st.borrow_mut().clear());
+        {
+            let _outer = FallbackFrame::new("outer");
+            {
+                let _inner = FallbackFrame::new("inner");
+                FALLBACK_STACK.with(|st| {
+                    assert_eq!(
+                        st.borrow().as_slice(),
+                        &["outer".to_string(), "inner".to_string()]
+                    );
+                });
+            }
+            FALLBACK_STACK.with(|st| {
+                assert_eq!(st.borrow().as_slice(), &["outer".to_string()]);
+            });
+        }
+        FALLBACK_STACK.with(|st| assert!(st.borrow().is_empty()));
     }
 }

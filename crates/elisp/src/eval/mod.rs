@@ -1806,29 +1806,47 @@ fn eval_inner(
                             None => break,
                         };
                         if let Some(slot_name) = slot_name_obj.as_symbol() {
-                            // Look for :initform in the rest.
+                            // Look for :initform and :initarg in the
+                            // rest. Other keywords (:accessor, :reader,
+                            // :documentation, :type, :allocation,
+                            // :custom, :printer, :protection…) are
+                            // silently consumed.
                             let mut initform = LispObject::nil();
+                            let mut initarg: Option<String> = None;
                             let mut walk = spec_rest;
                             while let Some((k, vs)) = walk.destructure_cons() {
-                                if k.as_symbol().as_deref() == Some(":initform") {
-                                    if let Some((v, rest2)) = vs.destructure_cons() {
-                                        // Evaluate the initform now — in
-                                        // real Emacs this is re-evaluated
-                                        // per make-instance, but for tests
-                                        // that mostly use literals it's
-                                        // fine to freeze.
-                                        if let Ok(evaled) = eval(
-                                            obj_to_value(v),
-                                            env,
-                                            editor,
-                                            macros,
-                                            state,
-                                        ) {
-                                            initform = value_to_obj(evaled);
+                                let key = k.as_symbol();
+                                match key.as_deref() {
+                                    Some(":initform") => {
+                                        if let Some((v, rest2)) = vs.destructure_cons() {
+                                            // Evaluate the initform now — in
+                                            // real Emacs this is re-evaluated
+                                            // per make-instance; freezing is
+                                            // fine for common literal defaults.
+                                            if let Ok(evaled) = eval(
+                                                obj_to_value(v),
+                                                env,
+                                                editor,
+                                                macros,
+                                                state,
+                                            ) {
+                                                initform = value_to_obj(evaled);
+                                            }
+                                            walk = rest2;
+                                            continue;
                                         }
-                                        walk = rest2;
-                                        continue;
                                     }
+                                    Some(":initarg") => {
+                                        if let Some((v, rest2)) = vs.destructure_cons() {
+                                            if let Some(k2) = v.as_symbol() {
+                                                initarg =
+                                                    Some(k2.strip_prefix(':').unwrap_or(&k2).to_string());
+                                            }
+                                            walk = rest2;
+                                            continue;
+                                        }
+                                    }
+                                    _ => {}
                                 }
                                 // Skip unknown key + value pair.
                                 if let Some((_, rest2)) = vs.destructure_cons() {
@@ -1839,6 +1857,7 @@ fn eval_inner(
                             }
                             slots.push(crate::primitives_eieio::Slot {
                                 name: slot_name,
+                                initarg,
                                 default: initform,
                             });
                         }

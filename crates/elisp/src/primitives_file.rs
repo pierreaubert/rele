@@ -555,19 +555,60 @@ pub fn prim_getenv(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_setenv(args: &LispObject) -> ElispResult<LispObject> {
     let name = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
-    match str_arg(args, 1) {
+    let value = str_arg(args, 1);
+
+    match value.as_deref() {
         Some(v) => {
-            // SAFETY: setenv is safe in single-threaded test subprocess
+            // SAFETY: setenv mutates process-global env. Safe in
+            // single-threaded worker subprocesses; elisp calls are
+            // serialized by the Mutex around the interpreter heap.
             #[allow(unsafe_code)]
-            unsafe { std::env::set_var(&name, &v) };
-            Ok(LispObject::string(&v))
+            unsafe { std::env::set_var(&name, v) };
         }
         None => {
             #[allow(unsafe_code)]
             unsafe { std::env::remove_var(&name) };
-            Ok(LispObject::nil())
         }
     }
+    update_process_environment(&name, value.as_deref());
+    match value {
+        Some(v) => Ok(LispObject::string(&v)),
+        None => Ok(LispObject::nil()),
+    }
+}
+
+/// Keep the `process-environment` lisp list in sync with the OS env.
+/// Drops any existing entry prefixed `"NAME="` and, if `new_value` is
+/// `Some`, prepends `"NAME=VALUE"`. Emacs relies on this list for
+/// `getenv-internal` lookups ahead of the real OS env, so tests that
+/// `(setenv X v)` then `(member "X=v" process-environment)` must see
+/// the update.
+fn update_process_environment(name: &str, new_value: Option<&str>) {
+    let sym = crate::obarray::intern("process-environment");
+    let current = crate::obarray::get_value_cell(sym).unwrap_or(LispObject::nil());
+
+    // Walk the list; keep entries whose prefix doesn't match `NAME=`.
+    let prefix = format!("{name}=");
+    let mut kept: Vec<LispObject> = Vec::new();
+    let mut cur = current;
+    while let Some((car, cdr)) = cur.destructure_cons() {
+        let matches_name = car
+            .as_string()
+            .map(|s| s.starts_with(&prefix))
+            .unwrap_or(false);
+        if !matches_name {
+            kept.push(car);
+        }
+        cur = cdr;
+    }
+    let mut rebuilt = LispObject::nil();
+    for item in kept.into_iter().rev() {
+        rebuilt = LispObject::cons(item, rebuilt);
+    }
+    if let Some(v) = new_value {
+        rebuilt = LispObject::cons(LispObject::string(&format!("{name}={v}")), rebuilt);
+    }
+    crate::obarray::set_value_cell(sym, rebuilt);
 }
 
 pub fn prim_getenv_internal(args: &LispObject) -> ElispResult<LispObject> {
@@ -740,3 +781,83 @@ pub const FILE_PRIMITIVE_NAMES: &[&str] = &[
     "current-time",
     "float-time",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: R2. `setenv` used to only touch `std::env`, leaving
+    /// the `process-environment` lisp list untouched. Elisp code that
+    /// inspects `process-environment` (or `getenv-internal`, which
+    /// prefers it over the OS env) would miss the update.
+    #[test]
+    fn setenv_updates_process_environment_list() {
+        // Seed the list with one unrelated entry.
+        let sym = crate::obarray::intern("process-environment");
+        crate::obarray::set_value_cell(
+            sym,
+            LispObject::cons(LispObject::string("UNRELATED=1"), LispObject::nil()),
+        );
+
+        // Call setenv("R2_TEST_KEY", "r2-test-value").
+        let args = LispObject::cons(
+            LispObject::string("R2_TEST_KEY"),
+            LispObject::cons(LispObject::string("r2-test-value"), LispObject::nil()),
+        );
+        prim_setenv(&args).expect("setenv ok");
+
+        // Walk process-environment; expect the new entry at the head.
+        let list = crate::obarray::get_value_cell(sym).unwrap();
+        let head = list.first().and_then(|v| v.as_string().map(|s| s.to_string()));
+        assert_eq!(head.as_deref(), Some("R2_TEST_KEY=r2-test-value"));
+
+        // Unrelated entry still present after the new head.
+        let second = list
+            .rest()
+            .and_then(|r| r.first())
+            .and_then(|v| v.as_string().map(|s| s.to_string()));
+        assert_eq!(second.as_deref(), Some("UNRELATED=1"));
+
+        // setenv(KEY, nil) removes the entry.
+        let remove_args = LispObject::cons(
+            LispObject::string("R2_TEST_KEY"),
+            LispObject::cons(LispObject::nil(), LispObject::nil()),
+        );
+        prim_setenv(&remove_args).expect("setenv remove ok");
+        let list = crate::obarray::get_value_cell(sym).unwrap();
+        let head = list.first().and_then(|v| v.as_string().map(|s| s.to_string()));
+        assert_eq!(head.as_deref(), Some("UNRELATED=1"));
+    }
+
+    /// Setenv applied to a name that's already in the list should
+    /// REPLACE the existing entry, not duplicate.
+    #[test]
+    fn setenv_replaces_existing_entry() {
+        let sym = crate::obarray::intern("process-environment");
+        crate::obarray::set_value_cell(
+            sym,
+            LispObject::cons(
+                LispObject::string("R2_DUP=old"),
+                LispObject::cons(LispObject::string("OTHER=x"), LispObject::nil()),
+            ),
+        );
+        let args = LispObject::cons(
+            LispObject::string("R2_DUP"),
+            LispObject::cons(LispObject::string("new"), LispObject::nil()),
+        );
+        prim_setenv(&args).unwrap();
+        let list = crate::obarray::get_value_cell(sym).unwrap();
+        // Count how many entries start with "R2_DUP=".
+        let mut count = 0;
+        let mut cur = list.clone();
+        while let Some((car, cdr)) = cur.destructure_cons() {
+            if car.as_string().map(|s| s.starts_with("R2_DUP=")).unwrap_or(false) {
+                count += 1;
+            }
+            cur = cdr;
+        }
+        assert_eq!(count, 1, "setenv must replace, not duplicate");
+        let head = list.first().and_then(|v| v.as_string().map(|s| s.to_string()));
+        assert_eq!(head.as_deref(), Some("R2_DUP=new"));
+    }
+}

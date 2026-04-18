@@ -10,8 +10,11 @@
 //! - Class: a `LispObject::Cons` `(eieio-class NAME PARENT SLOTS)` where
 //!   SLOTS is a list of `(SLOT-NAME DEFAULT)` pairs. Stored under the
 //!   symbol's `cl-struct-class` plist entry.
-//! - Instance: a vector `[TAG SLOT0 SLOT1 ...]` where TAG is the class
-//!   symbol — matches Emacs's own cl-struct record layout.
+//! - Instance: a vector `[#<instance-tag> CLASS-NAME SLOT0 SLOT1 ...]`.
+//!   The leading sentinel symbol (`eieio--instance-tag`) distinguishes
+//!   instances from plain vectors whose first element happens to be a
+//!   class name. All slot-access primitives check for the sentinel
+//!   before trusting the class name at index 1.
 //! - Methods: stored in a thread-local hashmap keyed by (name, first-
 //!   arg class name). `cl-call-next-method` walks the class hierarchy.
 //!
@@ -29,6 +32,9 @@ use crate::object::LispObject;
 #[derive(Debug, Clone)]
 pub struct Slot {
     pub name: String,
+    /// Keyword initarg (without the `:` prefix). Defaults to the slot
+    /// name if the class definition doesn't specify one.
+    pub initarg: Option<String>,
     pub default: LispObject,
 }
 
@@ -153,9 +159,8 @@ pub fn prim_make_instance(args: &LispObject) -> ElispResult<LispObject> {
         }))
     })?;
 
-    // Walk the initargs alist: either `(:slot value :slot2 value2 ...)`
-    // or just positional values matching slot order. We accept the
-    // keyword form first.
+    // Walk the initargs alist: `(:initarg value :initarg2 value2 ...)`.
+    // Keys are stored without the leading colon for easy comparison.
     let mut overrides: HashMap<String, LispObject> = HashMap::new();
     let mut cur = args.rest().unwrap_or(LispObject::nil());
     while let Some((k, rest)) = cur.destructure_cons() {
@@ -172,13 +177,23 @@ pub fn prim_make_instance(args: &LispObject) -> ElispResult<LispObject> {
         }
     }
 
-    // Build an instance vector: [class-symbol, slot0, slot1, ...].
-    let mut items: Vec<LispObject> = Vec::with_capacity(class.slots.len() + 1);
+    // Build an instance vector: [SENTINEL, class-symbol, slot0, ...].
+    // The leading sentinel discriminates instances from plain vectors.
+    // Resolution order for each slot value:
+    //   1. initarg explicitly passed and matching the slot's
+    //      `:initarg` declaration,
+    //   2. initarg explicitly passed and matching the slot NAME
+    //      (common when `:initarg` is omitted in `defclass`),
+    //   3. the slot's `:initform` default.
+    let mut items: Vec<LispObject> = Vec::with_capacity(class.slots.len() + 2);
+    items.push(LispObject::symbol(INSTANCE_TAG));
     items.push(LispObject::symbol(&class_name));
     for slot in &class.slots {
-        let val = overrides
-            .get(&slot.name)
-            .cloned()
+        let val = slot
+            .initarg
+            .as_ref()
+            .and_then(|k| overrides.get(k).cloned())
+            .or_else(|| overrides.get(&slot.name).cloned())
             .unwrap_or_else(|| slot.default.clone());
         items.push(val);
     }
@@ -187,7 +202,26 @@ pub fn prim_make_instance(args: &LispObject) -> ElispResult<LispObject> {
     )))
 }
 
-/// Helper: clone out the items of an instance vector, or None.
+/// Sentinel symbol that prefixes every EIEIO instance vector. Plain
+/// `(vector ...)` constructions can't forge this except by explicit
+/// intent (the symbol name is chosen to be unlikely to appear as the
+/// first element of a user vector).
+const INSTANCE_TAG: &str = "eieio--instance-tag";
+
+/// Return the class name of an instance, or None if `obj` is not an
+/// EIEIO instance (e.g. a plain vector). Checks that index 0 is the
+/// instance sentinel symbol.
+fn instance_class(items: &[LispObject]) -> Option<String> {
+    let tag = items.first()?.as_symbol()?;
+    if tag != INSTANCE_TAG {
+        return None;
+    }
+    items.get(1)?.as_symbol()
+}
+
+/// Helper: clone out the items of an instance vector, or None. Does
+/// not validate the instance tag — callers that need type safety
+/// combine this with [`instance_class`].
 fn as_items(obj: &LispObject) -> Option<Vec<LispObject>> {
     if let LispObject::Vector(v) = obj {
         Some(v.lock().clone())
@@ -205,10 +239,15 @@ pub fn prim_slot_value(args: &LispObject) -> ElispResult<LispObject> {
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
     let items = as_items(&instance)
         .ok_or_else(|| ElispError::WrongTypeArgument("vector".into()))?;
-    let class_name = items
-        .first()
-        .and_then(|t| t.as_symbol())
-        .ok_or_else(|| ElispError::WrongTypeArgument("eieio-instance".into()))?;
+    let class_name = instance_class(&items).ok_or_else(|| {
+        ElispError::Signal(Box::new(crate::error::SignalData {
+            symbol: LispObject::symbol("wrong-type-argument"),
+            data: LispObject::cons(
+                LispObject::symbol("eieio-object"),
+                LispObject::cons(instance.clone(), LispObject::nil()),
+            ),
+        }))
+    })?;
     let class = get_class(&class_name).ok_or_else(|| {
         ElispError::EvalError(format!("unknown class: {class_name}"))
     })?;
@@ -222,7 +261,8 @@ pub fn prim_slot_value(args: &LispObject) -> ElispResult<LispObject> {
                 data: LispObject::cons(slot, LispObject::nil()),
             }))
         })?;
-    Ok(items.get(idx + 1).cloned().unwrap_or(LispObject::nil()))
+    // Instance layout: [TAG, CLASS, slot0, slot1, ...] ⇒ slot N at idx + 2.
+    Ok(items.get(idx + 2).cloned().unwrap_or(LispObject::nil()))
 }
 
 pub fn prim_oref(args: &LispObject) -> ElispResult<LispObject> {
@@ -243,10 +283,15 @@ pub fn prim_set_slot_value(args: &LispObject) -> ElispResult<LispObject> {
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
     let mut items = as_items(&instance)
         .ok_or_else(|| ElispError::WrongTypeArgument("vector".into()))?;
-    let class_name = items
-        .first()
-        .and_then(|t| t.as_symbol())
-        .ok_or_else(|| ElispError::WrongTypeArgument("eieio-instance".into()))?;
+    let class_name = instance_class(&items).ok_or_else(|| {
+        ElispError::Signal(Box::new(crate::error::SignalData {
+            symbol: LispObject::symbol("wrong-type-argument"),
+            data: LispObject::cons(
+                LispObject::symbol("eieio-object"),
+                LispObject::cons(instance.clone(), LispObject::nil()),
+            ),
+        }))
+    })?;
     let class = get_class(&class_name).ok_or_else(|| {
         ElispError::EvalError(format!("unknown class: {class_name}"))
     })?;
@@ -260,7 +305,7 @@ pub fn prim_set_slot_value(args: &LispObject) -> ElispResult<LispObject> {
                 data: LispObject::cons(slot, LispObject::nil()),
             }))
         })?;
-    if let Some(slot) = items.get_mut(idx + 1) {
+    if let Some(slot) = items.get_mut(idx + 2) {
         *slot = value.clone();
     }
     // Mutate the vector in place via the Arc<Mutex>.
@@ -282,9 +327,12 @@ pub fn prim_slot_boundp(args: &LispObject) -> ElispResult<LispObject> {
     // All slots are always bound in our model (they default to their
     // defaults at construction). This differs from Emacs where an
     // unbound slot signals a specific error, but tests that care are
-    // rare.
+    // rare. We do require a real EIEIO instance, not a plain vector.
     let instance = args.first().unwrap_or(LispObject::nil());
-    Ok(LispObject::from(matches!(instance, LispObject::Vector(_))))
+    let is_inst = as_items(&instance)
+        .and_then(|items| instance_class(&items))
+        .is_some();
+    Ok(LispObject::from(is_inst))
 }
 
 pub fn prim_object_of_class_p(args: &LispObject) -> ElispResult<LispObject> {
@@ -299,7 +347,7 @@ pub fn prim_object_of_class_p(args: &LispObject) -> ElispResult<LispObject> {
     let Some(items) = as_items(&obj) else {
         return Ok(LispObject::nil());
     };
-    let Some(class_name) = items.first().and_then(|t| t.as_symbol()) else {
+    let Some(class_name) = instance_class(&items) else {
         return Ok(LispObject::nil());
     };
     let hierarchy = class_hierarchy(&class_name);
@@ -309,7 +357,7 @@ pub fn prim_object_of_class_p(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_eieio_object_p(args: &LispObject) -> ElispResult<LispObject> {
     let obj = args.first().unwrap_or(LispObject::nil());
     let is_inst = as_items(&obj)
-        .and_then(|v| v.first().and_then(|t| t.as_symbol()))
+        .and_then(|items| instance_class(&items))
         .map(|n| get_class(&n).is_some())
         .unwrap_or(false);
     Ok(LispObject::from(is_inst))
@@ -317,7 +365,7 @@ pub fn prim_eieio_object_p(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_eieio_object_class(args: &LispObject) -> ElispResult<LispObject> {
     let obj = args.first().unwrap_or(LispObject::nil());
-    let n = as_items(&obj).and_then(|v| v.first().and_then(|t| t.as_symbol()));
+    let n = as_items(&obj).and_then(|items| instance_class(&items));
     Ok(n.map(|s| LispObject::symbol(&s)).unwrap_or(LispObject::nil()))
 }
 
@@ -447,3 +495,203 @@ pub const EIEIO_PRIMITIVE_NAMES: &[&str] = &[
     "widget-apply",
     "widgetp",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reset_classes() {
+        CLASSES.with(|c| c.borrow_mut().clear());
+    }
+
+    fn symbol(s: &str) -> LispObject {
+        LispObject::symbol(s)
+    }
+
+    fn list(items: &[LispObject]) -> LispObject {
+        let mut out = LispObject::nil();
+        for item in items.iter().rev() {
+            out = LispObject::cons(item.clone(), out);
+        }
+        out
+    }
+
+    /// Regression: R9. Previously `make-instance` stripped the colon
+    /// off the initarg and used the rest as the slot NAME. If a
+    /// `defclass` declared `(slot-a :initarg :foo)` — slot name
+    /// `slot-a`, initarg `:foo` — then `(make-instance 'C :foo 42)`
+    /// looked up the slot named "foo" (not existing) instead of
+    /// matching by initarg.
+    #[test]
+    fn make_instance_matches_by_initarg() {
+        reset_classes();
+        register_class(Class {
+            name: "r9-class".into(),
+            parent: None,
+            slots: vec![
+                Slot {
+                    name: "slot-a".into(),
+                    initarg: Some("foo".into()),
+                    default: LispObject::integer(-1),
+                },
+                Slot {
+                    name: "slot-b".into(),
+                    initarg: None, // no initarg, must match slot name
+                    default: LispObject::integer(-2),
+                },
+            ],
+        });
+
+        // Pass by initarg :foo and by slot name slot-b.
+        let args = list(&[
+            symbol("r9-class"),
+            symbol(":foo"),
+            LispObject::integer(10),
+            symbol(":slot-b"),
+            LispObject::integer(20),
+        ]);
+        let instance = prim_make_instance(&args).expect("make-instance ok");
+
+        // slot-value slot-a → 10 (matched via :foo initarg).
+        let get_a = LispObject::cons(
+            instance.clone(),
+            LispObject::cons(symbol("slot-a"), LispObject::nil()),
+        );
+        assert_eq!(
+            prim_slot_value(&get_a).unwrap().as_integer(),
+            Some(10),
+            "slot-a must be filled via :foo initarg"
+        );
+
+        // slot-value slot-b → 20 (matched via slot name fallback).
+        let get_b = LispObject::cons(
+            instance,
+            LispObject::cons(symbol("slot-b"), LispObject::nil()),
+        );
+        assert_eq!(prim_slot_value(&get_b).unwrap().as_integer(), Some(20));
+    }
+
+    /// If the initarg is absent, the :initform default is used.
+    #[test]
+    fn make_instance_uses_default_when_initarg_absent() {
+        reset_classes();
+        register_class(Class {
+            name: "r9-defaults".into(),
+            parent: None,
+            slots: vec![Slot {
+                name: "x".into(),
+                initarg: Some("x-init".into()),
+                default: LispObject::integer(77),
+            }],
+        });
+        let args = list(&[symbol("r9-defaults")]); // no initargs
+        let instance = prim_make_instance(&args).unwrap();
+        let get = LispObject::cons(
+            instance,
+            LispObject::cons(symbol("x"), LispObject::nil()),
+        );
+        assert_eq!(prim_slot_value(&get).unwrap().as_integer(), Some(77));
+    }
+
+    /// Regression: R10. `slot-value` used to trust any vector whose
+    /// first element was a registered class symbol — so
+    /// `(slot-value (vector 'r10-class 1 2) 'x)` returned bogus slot
+    /// values from a non-instance. The instance tag fixes this:
+    /// only vectors actually produced by `make-instance` are accepted.
+    #[test]
+    fn slot_value_rejects_plain_vectors_masquerading_as_instances() {
+        reset_classes();
+        register_class(Class {
+            name: "r10-class".into(),
+            parent: None,
+            slots: vec![Slot {
+                name: "x".into(),
+                initarg: None,
+                default: LispObject::integer(0),
+            }],
+        });
+        // Forge a plain vector [class-symbol, 42] and try to slot-value it.
+        let fake = LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(vec![
+            symbol("r10-class"),
+            LispObject::integer(42),
+        ])));
+        let get = LispObject::cons(
+            fake.clone(),
+            LispObject::cons(symbol("x"), LispObject::nil()),
+        );
+        let err = prim_slot_value(&get)
+            .expect_err("forged vector must not masquerade as an instance");
+        match err {
+            ElispError::Signal(sig) => {
+                let sym = sig.symbol.as_symbol();
+                assert_eq!(
+                    sym.as_deref(),
+                    Some("wrong-type-argument"),
+                    "expected wrong-type-argument signal, got: {:?}",
+                    sig
+                );
+            }
+            _ => panic!("expected Signal error, got: {err:?}"),
+        }
+
+        // A real instance should still work.
+        let args = list(&[symbol("r10-class"), symbol(":x"), LispObject::integer(7)]);
+        let real_instance = prim_make_instance(&args).unwrap();
+        let get = LispObject::cons(
+            real_instance,
+            LispObject::cons(symbol("x"), LispObject::nil()),
+        );
+        assert_eq!(prim_slot_value(&get).unwrap().as_integer(), Some(7));
+    }
+
+    /// `eieio-object-p` must also reject plain vectors.
+    #[test]
+    fn eieio_object_p_rejects_plain_vectors() {
+        reset_classes();
+        register_class(Class {
+            name: "r10-plainreject".into(),
+            parent: None,
+            slots: vec![],
+        });
+        let fake = LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(vec![
+            symbol("r10-plainreject"),
+        ])));
+        let r = prim_eieio_object_p(&LispObject::cons(fake, LispObject::nil())).unwrap();
+        assert!(matches!(r, LispObject::Nil));
+    }
+
+    /// Using the SLOT NAME when an initarg is explicitly declared
+    /// should NOT override — but our resolution falls back to the
+    /// slot name when no initarg matches. Verify that if BOTH are
+    /// passed, the initarg wins (the documented resolution order).
+    #[test]
+    fn initarg_wins_over_slot_name() {
+        reset_classes();
+        register_class(Class {
+            name: "r9-pref".into(),
+            parent: None,
+            slots: vec![Slot {
+                name: "col".into(),
+                initarg: Some("color".into()),
+                default: LispObject::integer(0),
+            }],
+        });
+        let args = list(&[
+            symbol("r9-pref"),
+            symbol(":color"),
+            LispObject::integer(5),
+            symbol(":col"),
+            LispObject::integer(99),
+        ]);
+        let instance = prim_make_instance(&args).unwrap();
+        let get = LispObject::cons(
+            instance,
+            LispObject::cons(symbol("col"), LispObject::nil()),
+        );
+        assert_eq!(
+            prim_slot_value(&get).unwrap().as_integer(),
+            Some(5),
+            "initarg :color must win over slot-name :col"
+        );
+    }
+}

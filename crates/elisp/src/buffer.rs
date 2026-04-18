@@ -357,8 +357,24 @@ impl Registry {
         true
     }
 
+    /// Push a NEW current-buffer frame. Used only by
+    /// `with-temp-buffer` / `with-current-buffer` which need to
+    /// restore the previous buffer on exit. Regular `set-buffer`,
+    /// `switch-to-buffer`, `display-buffer` must go through
+    /// [`set_current`] instead so the stack stays bounded.
     pub fn push_stack(&mut self, id: BufferId) {
         self.stack.push(id);
+    }
+
+    /// Replace the top-of-stack buffer id. This is the correct
+    /// operation for `set-buffer` / `switch-to-buffer`, which change
+    /// `current-buffer` *in place* rather than layering a new frame.
+    pub fn set_current(&mut self, id: BufferId) {
+        if let Some(top) = self.stack.last_mut() {
+            *top = id;
+        } else {
+            self.stack.push(id);
+        }
     }
 
     pub fn pop_stack(&mut self) {
@@ -451,12 +467,14 @@ pub fn reset() {
 }
 
 /// Switch the current buffer to the named one, creating it if needed.
-/// Returns the old current-buffer name.
+/// Returns the old current-buffer name. Replaces the top-of-stack in
+/// place — to *save* the previous buffer use `push_stack` + callers'
+/// own unwind logic.
 pub fn set_current_by_name(name: &str) -> String {
     with_registry_mut(|r| {
         let id = r.create(name);
         let old = r.get(r.current_id()).map(|b| b.name.clone()).unwrap_or_default();
-        r.push_stack(id);
+        r.set_current(id);
         old
     })
 }
@@ -547,5 +565,45 @@ mod tests {
             with_registry(|r| r.lookup_by_name("renamed")),
             Some(id_a)
         );
+    }
+
+    /// Regression: R1. `set-buffer` (and `switch-to-buffer` /
+    /// `display-buffer`) used to `push_stack(id)` on every call,
+    /// growing the stack indefinitely. Each iteration of a loop that
+    /// uses `with-current-buffer` (expanded as `let saved + set-buffer
+    /// TARGET + unwind set-buffer saved`) leaked two entries. Here we
+    /// exercise the pattern directly against the Registry and assert
+    /// the stack stays bounded.
+    #[test]
+    fn set_current_does_not_grow_stack() {
+        reset();
+        let id_a = with_registry_mut(|r| r.create("a"));
+        let id_b = with_registry_mut(|r| r.create("b"));
+        let start_depth = with_registry(|r| r.stack.len());
+        // Simulate 100 `with-current-buffer` style alternations.
+        for _ in 0..100 {
+            with_registry_mut(|r| r.set_current(id_a));
+            with_registry_mut(|r| r.set_current(id_b));
+        }
+        assert_eq!(
+            with_registry(|r| r.stack.len()),
+            start_depth,
+            "set_current must not grow the stack",
+        );
+        assert_eq!(with_registry(|r| r.current_id()), id_b);
+    }
+
+    /// `push_stack` is still the right op for `with-temp-buffer` /
+    /// `with-current-buffer` so the previous buffer can be restored
+    /// on exit. Verify that push/pop round-trips.
+    #[test]
+    fn push_stack_still_works_for_scoped_forms() {
+        reset();
+        let id_a = with_registry_mut(|r| r.create("a"));
+        let initial = with_registry(|r| r.current_id());
+        with_registry_mut(|r| r.push_stack(id_a));
+        assert_eq!(with_registry(|r| r.current_id()), id_a);
+        with_registry_mut(|r| r.pop_stack());
+        assert_eq!(with_registry(|r| r.current_id()), initial);
     }
 }

@@ -139,9 +139,8 @@ pub fn prim_set_window_buffer(args: &LispObject) -> ElispResult<LispObject> {
         }
         _ => return Ok(LispObject::nil()),
     };
-    buffer::with_registry_mut(|r| {
-        r.push_stack(id);
-    });
+    // Replace the current buffer in place — push would leak a frame.
+    buffer::with_registry_mut(|r| r.set_current(id));
     Ok(LispObject::nil())
 }
 
@@ -235,7 +234,7 @@ pub fn prim_display_buffer(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::String(n) => buffer::with_registry(|r| r.lookup_by_name(n)),
         _ => None,
     } {
-        buffer::with_registry_mut(|r| r.push_stack(id));
+        buffer::with_registry_mut(|r| r.set_current(id));
     }
     Ok(window_obj())
 }
@@ -255,7 +254,7 @@ pub fn prim_switch_to_buffer(args: &LispObject) -> ElispResult<LispObject> {
         _ => None,
     };
     if let Some(id) = id {
-        buffer::with_registry_mut(|r| r.push_stack(id));
+        buffer::with_registry_mut(|r| r.set_current(id));
     }
     let name = buffer::with_registry(|r| r.get(r.current_id()).map(|b| b.name.clone()));
     Ok(name.map(|n| LispObject::string(&n)).unwrap_or(LispObject::nil()))
@@ -272,7 +271,7 @@ pub fn prim_set_buffer(args: &LispObject) -> ElispResult<LispObject> {
         _ => None,
     };
     if let Some(id) = id {
-        buffer::with_registry_mut(|r| r.push_stack(id));
+        buffer::with_registry_mut(|r| r.set_current(id));
         Ok(a)
     } else {
         Ok(LispObject::nil())
@@ -320,7 +319,9 @@ pub fn prim_set_window_configuration(args: &LispObject) -> ElispResult<LispObjec
                     buf.point = *pt;
                 }
             }
-            r.push_stack(cfg.current_buffer);
+            // Restore current-buffer by REPLACING the current frame,
+            // not pushing — we're restoring state, not wrapping it.
+            r.set_current(cfg.current_buffer);
         });
     }
     Ok(LispObject::t())

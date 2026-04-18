@@ -273,20 +273,40 @@ pub fn prim_goto_char(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_forward_char(args: &LispObject) -> ElispResult<LispObject> {
     let n = int_arg(args, 0, 1);
-    buffer::with_current_mut(|b| {
-        let new = (b.point as i64 + n).max(b.point_min() as i64).min(b.point_max() as i64);
-        b.point = new as usize;
+    let overshoot = buffer::with_current_mut(|b| {
+        let target = b.point as i64 + n;
+        let pmin = b.point_min() as i64;
+        let pmax = b.point_max() as i64;
+        if target < pmin {
+            b.point = pmin as usize;
+            Some(false) // hit BOB
+        } else if target > pmax {
+            b.point = pmax as usize;
+            Some(true) // hit EOB
+        } else {
+            b.point = target as usize;
+            None
+        }
     });
-    Ok(LispObject::nil())
+    match overshoot {
+        Some(true) => Err(ElispError::Signal(Box::new(crate::error::SignalData {
+            symbol: LispObject::symbol("end-of-buffer"),
+            data: LispObject::nil(),
+        }))),
+        Some(false) => Err(ElispError::Signal(Box::new(crate::error::SignalData {
+            symbol: LispObject::symbol("beginning-of-buffer"),
+            data: LispObject::nil(),
+        }))),
+        None => Ok(LispObject::nil()),
+    }
 }
 
 pub fn prim_backward_char(args: &LispObject) -> ElispResult<LispObject> {
+    // (backward-char N) ≡ (forward-char -N). Inherit the boundary
+    // signaling semantics from prim_forward_char.
     let n = int_arg(args, 0, 1);
-    buffer::with_current_mut(|b| {
-        let new = (b.point as i64 - n).max(b.point_min() as i64).min(b.point_max() as i64);
-        b.point = new as usize;
-    });
-    Ok(LispObject::nil())
+    let neg_args = LispObject::cons(LispObject::integer(-n), LispObject::nil());
+    prim_forward_char(&neg_args)
 }
 
 pub fn prim_forward_line(args: &LispObject) -> ElispResult<LispObject> {
@@ -383,8 +403,13 @@ pub fn prim_narrow_to_region(args: &LispObject) -> ElispResult<LispObject> {
     let b = int_arg(args, 1, 1) as usize;
     let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
     buffer::with_current_mut(|buf| {
-        let pmin = 1;
-        let pmax = buf.text.chars().count() + 1;
+        // Clamp to the CURRENT restriction (if any), not raw text.
+        // This ensures a nested narrow can only shrink, never expand,
+        // the visible region — matching Emacs's `save-restriction`
+        // semantics. A plain `widen` must come first to escape an
+        // outer narrowing.
+        let pmin = buf.point_min();
+        let pmax = buf.point_max();
         let lo = lo.clamp(pmin, pmax);
         let hi = hi.clamp(pmin, pmax);
         buf.restriction = Some((lo, hi));
@@ -672,8 +697,10 @@ pub fn prim_copy_marker(args: &LispObject) -> ElispResult<LispObject> {
     // Accept either an integer (treated as a position in current
     // buffer) or another marker.
     let (buf, pos) = if let Some(n) = a.as_integer() {
+        // Emacs clamps negative integers to 1. Without the clamp,
+        // `n as usize` wraps to a huge positive value.
         let cur = buffer::with_registry(|r| r.current_id());
-        (cur, Some(n as usize))
+        (cur, Some(n.max(1) as usize))
     } else if let Some(id) = marker_id(&a) {
         buffer::with_registry(|r| {
             r.markers
@@ -723,7 +750,8 @@ pub fn prim_marker_buffer(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_set_marker(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let id = marker_id(&a).ok_or_else(|| ElispError::WrongTypeArgument("marker".into()))?;
-    let pos = args.nth(1).and_then(|v| v.as_integer()).map(|n| n as usize);
+    // Clamp negative positions to 1 — same reason as `copy-marker`.
+    let pos = args.nth(1).and_then(|v| v.as_integer()).map(|n| n.max(1) as usize);
     let buffer_id = match args.nth(2) {
         Some(v) => resolve_buffer(&v).unwrap_or_else(|| buffer::with_registry(|r| r.current_id())),
         None => buffer::with_registry(|r| r.current_id()),
@@ -847,10 +875,26 @@ fn substring_chars(s: &str, a: usize, b: usize) -> String {
 
 // ---- Regex searches ---------------------------------------------------
 
-/// Translate an Emacs regex to Rust's `regex` crate dialect. Handles
-/// the most common constructs only (`\(`, `\)`, `\|`, `\{N,M\}`,
-/// `\b`, `\w`, `\s`, `\d` aren't all translated — for full fidelity
-/// we'd need a proper converter, but this covers typical tests).
+/// Translate an Emacs regex to Rust's `regex` crate dialect.
+///
+/// Covers the constructs that actually appear in Emacs ERT tests:
+///
+/// - Grouping / alternation / bracing / plus / question: Emacs uses
+///   `\(` `\)` `\|` `\{` `\}` `\+` `\?` for metas, Rust uses the bare
+///   forms. Swap both directions.
+/// - `\``  → `\A` (start of search), `\'` → `\z` (end of search).
+///   Emacs's buffer-edge anchors are the moral equivalent of
+///   "beginning/end of input".
+/// - Syntax class: `\sX` / `\SX` (whitespace, word, symbol,
+///   punct, open, close, string, comment, etc.). Emacs maps X to a
+///   syntax-table class; we translate to the closest POSIX character
+///   class Rust supports. Unknown X falls through to `.`.
+/// - Symbol boundary: `\_<` / `\_>` — approximate with `\b` (word
+///   boundary). Emacs's notion of "symbol" is syntax-table driven so
+///   a true translation needs buffer context we don't have.
+/// - Anything else escaped: preserved verbatim. Rust and Emacs agree
+///   on `\b`, `\B`, `\d`, `\D`, `\s` (Emacs's `\s` *without* suffix
+///   is rare), `\w`, `\W`, and backrefs `\1`–`\9`.
 fn emacs_re_to_rust(src: &str) -> String {
     let mut out = String::with_capacity(src.len() + 8);
     let chars: Vec<char> = src.chars().collect();
@@ -860,22 +904,41 @@ fn emacs_re_to_rust(src: &str) -> String {
         if c == '\\' && i + 1 < chars.len() {
             let n = chars[i + 1];
             match n {
-                // Emacs: \( \) \| \{ \} \? are metachars.
-                // Rust: ( ) | { } ? are metachars.
+                // Emacs metachars that are bare in Rust.
                 '(' | ')' | '|' | '{' | '}' | '?' | '+' => {
                     out.push(n);
                     i += 2;
                 }
-                // \` and \' anchor to buffer start/end; approximate.
+                // Buffer-edge anchors.
                 '`' => {
-                    out.push('^');
+                    out.push_str("\\A");
                     i += 2;
                 }
                 '\'' => {
-                    out.push('$');
+                    out.push_str("\\z");
                     i += 2;
                 }
-                // Literal char.
+                // Syntax class prefix: \sX consumes X and emits the
+                // equivalent POSIX character class.
+                's' | 'S' if i + 2 < chars.len() => {
+                    let x = chars[i + 2];
+                    let negate = n == 'S';
+                    let class = emacs_syntax_to_rust_class(x);
+                    if negate {
+                        // `\SX` = "not of syntax class X". Build an
+                        // inverted character-class set.
+                        out.push_str(&negate_posix_class(class));
+                    } else {
+                        out.push_str(class);
+                    }
+                    i += 3;
+                }
+                // Symbol boundaries — approximate with word boundary.
+                '_' if i + 2 < chars.len() && (chars[i + 2] == '<' || chars[i + 2] == '>') => {
+                    out.push_str("\\b");
+                    i += 3;
+                }
+                // Anything else escaped: preserve as-is.
                 _ => {
                     out.push('\\');
                     out.push(n);
@@ -893,6 +956,62 @@ fn emacs_re_to_rust(src: &str) -> String {
         }
     }
     out
+}
+
+/// Map an Emacs syntax-class letter to a Rust regex character class.
+///
+/// Emacs syntax-table letters (from `syntax.h`):
+///   -   whitespace              `[[:space:]]`
+///   w   word                    `\w`
+///   _   symbol constituent      `[\w]` (approx — Emacs is richer)
+///   .   punctuation             `[[:punct:]]`
+///   (   open paren              `[(\[{]`
+///   )   close paren             `[)\]}]`
+///   "   string quote            `["']`
+///   '   expression prefix       `['`~,@]`
+///   <   comment start           `[;#]`
+///   >   comment end             `[\n\r]`
+///   \\  escape                  `\\`
+///   /   char-quote              `\\`
+///   |   gen. string delimiter   `["]`
+///   $   paired delimiter        `[$]`
+///
+/// Returns a Rust regex fragment. Unknown classes fall through to `.`
+/// (match any), which is the safest over-approximation for search.
+fn emacs_syntax_to_rust_class(c: char) -> &'static str {
+    match c {
+        '-' | ' ' => r"[[:space:]]",
+        'w' => r"\w",
+        '_' => r"\w",
+        '.' => r"[[:punct:]]",
+        '(' => r"[(\[{]",
+        ')' => r"[)\]}]",
+        '"' | '|' => r#"[""]"#,
+        '\'' => r"[\'`,@]",
+        '<' => r"[;#]",
+        '>' => r"[\n\r]",
+        '\\' | '/' => r"\\",
+        _ => r".",
+    }
+}
+
+/// Turn a POSIX-ish character class produced by
+/// `emacs_syntax_to_rust_class` into its negation. Only handles the
+/// shapes we actually emit.
+fn negate_posix_class(cls: &str) -> String {
+    if let Some(inner) = cls.strip_prefix("[[:").and_then(|s| s.strip_suffix(":]]")) {
+        format!("[^[:{inner}:]]")
+    } else if let Some(inner) = cls.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        format!("[^{inner}]")
+    } else if cls == r"\w" {
+        r"\W".into()
+    } else if cls == r"\\" {
+        r"[^\\]".into()
+    } else {
+        // Fallback — match any single char (same as the positive
+        // class's permissive default of `.`).
+        r".".into()
+    }
 }
 
 pub fn prim_string_match(args: &LispObject) -> ElispResult<LispObject> {
@@ -1329,3 +1448,256 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "search-backward",
     "replace-match",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buffer;
+
+    /// Regression: R4. `(copy-marker -1)` used to `n as usize` on a
+    /// negative integer, wrapping to `usize::MAX - 0`. That violated
+    /// every downstream bounds check and could cause subsequent
+    /// `marker-position` to return nonsense. Emacs clamps negatives
+    /// to point-min (1).
+    #[test]
+    fn copy_marker_negative_clamps() {
+        buffer::reset();
+        let args = LispObject::cons(LispObject::integer(-5), LispObject::nil());
+        let marker = prim_copy_marker(&args).expect("copy-marker ok");
+        // Check the stored position is 1, not usize::MAX.
+        let pos_args = LispObject::cons(marker, LispObject::nil());
+        let pos = prim_marker_position(&pos_args).expect("marker-position ok");
+        assert_eq!(pos.as_integer(), Some(1), "negative marker must clamp to 1");
+    }
+
+    /// `copy-marker 0` likewise should clamp — Emacs rejects 0 as a
+    /// position (point-min = 1).
+    #[test]
+    fn copy_marker_zero_clamps() {
+        buffer::reset();
+        let args = LispObject::cons(LispObject::integer(0), LispObject::nil());
+        let marker = prim_copy_marker(&args).expect("copy-marker ok");
+        let pos_args = LispObject::cons(marker, LispObject::nil());
+        let pos = prim_marker_position(&pos_args).expect("marker-position ok");
+        assert_eq!(pos.as_integer(), Some(1));
+    }
+
+    /// Regression: R5. Emacs's `\sX` / `\SX` / `\_<` / `\_>`
+    /// syntax-class escapes used to be copied verbatim, producing
+    /// Rust regexes that either failed to compile (for `\sw`) or
+    /// matched the wrong thing.
+    #[test]
+    fn regex_syntax_class_translation_compiles() {
+        // `\sw` (word syntax) — previously produced the invalid
+        // Rust regex `\sw`. Should now translate to `\w`.
+        let rust_re = emacs_re_to_rust(r"\sw");
+        regex::Regex::new(&rust_re).expect("\\sw must translate to valid Rust regex");
+
+        // `\s-` (whitespace) — previously `\s-` would compile in Rust
+        // as "whitespace followed by literal -" but semantics differ.
+        let rust_re = emacs_re_to_rust(r"\s-");
+        let re = regex::Regex::new(&rust_re).expect("\\s- valid");
+        assert!(re.is_match(" "));
+        assert!(re.is_match("\t"));
+        assert!(!re.is_match("a"));
+
+        // `\SW` (not word) — the negation.
+        let rust_re = emacs_re_to_rust(r"\Sw");
+        let re = regex::Regex::new(&rust_re).expect("\\Sw valid");
+        assert!(re.is_match(" "));
+        assert!(!re.is_match("a"));
+
+        // `\s.` (punctuation).
+        let rust_re = emacs_re_to_rust(r"\s.");
+        let re = regex::Regex::new(&rust_re).expect("\\s. valid");
+        assert!(re.is_match("."));
+        assert!(!re.is_match("a"));
+    }
+
+    /// Regression: R11. `forward-char` at EOB used to clamp silently;
+    /// Emacs signals `end-of-buffer` (and `beginning-of-buffer` when
+    /// going past point-min). Tests that `condition-case` on these
+    /// signals never fired under the silent clamp.
+    #[test]
+    fn forward_char_at_eob_signals() {
+        buffer::reset();
+        buffer::with_current_mut(|b| {
+            b.insert("hi");
+            b.point = b.point_max();
+        });
+        let args = LispObject::cons(LispObject::integer(10), LispObject::nil());
+        let err = prim_forward_char(&args).expect_err("forward-char past EOB must signal");
+        match err {
+            ElispError::Signal(sig) => {
+                assert_eq!(
+                    sig.symbol.as_symbol().as_deref(),
+                    Some("end-of-buffer")
+                );
+            }
+            _ => panic!("expected Signal end-of-buffer, got {err:?}"),
+        }
+        // Point must have clamped to point-max.
+        let pmax = buffer::with_current(|b| b.point_max());
+        assert_eq!(buffer::with_current(|b| b.point), pmax);
+    }
+
+    #[test]
+    fn backward_char_at_bob_signals() {
+        buffer::reset();
+        buffer::with_current_mut(|b| {
+            b.insert("hi");
+            b.point = 1;
+        });
+        let args = LispObject::cons(LispObject::integer(10), LispObject::nil());
+        let err = prim_backward_char(&args).expect_err("backward-char past BOB must signal");
+        match err {
+            ElispError::Signal(sig) => {
+                assert_eq!(
+                    sig.symbol.as_symbol().as_deref(),
+                    Some("beginning-of-buffer")
+                );
+            }
+            _ => panic!("expected Signal beginning-of-buffer, got {err:?}"),
+        }
+        assert_eq!(buffer::with_current(|b| b.point), 1);
+    }
+
+    /// In-bounds motion must NOT signal.
+    #[test]
+    fn forward_char_in_bounds_does_not_signal() {
+        buffer::reset();
+        buffer::with_current_mut(|b| {
+            b.insert("hello");
+            b.point = 1;
+        });
+        let args = LispObject::cons(LispObject::integer(2), LispObject::nil());
+        prim_forward_char(&args).expect("in-bounds must not signal");
+        assert_eq!(buffer::with_current(|b| b.point), 3);
+    }
+
+    /// Regression: R8. Previously `narrow-to-region` used raw text
+    /// length for clamping, so nested narrowing could expand past an
+    /// outer restriction. Now it clamps to the current `point_min`
+    /// / `point_max`, so nested narrow can only shrink.
+    #[test]
+    fn narrow_to_region_nested_respects_outer() {
+        buffer::reset();
+        buffer::with_current_mut(|b| b.insert("0123456789"));
+        // Outer narrow: positions 3..7 (chars "2345")
+        let outer = LispObject::cons(
+            LispObject::integer(3),
+            LispObject::cons(LispObject::integer(7), LispObject::nil()),
+        );
+        prim_narrow_to_region(&outer).unwrap();
+        assert_eq!(buffer::with_current(|b| b.point_min()), 3);
+        assert_eq!(buffer::with_current(|b| b.point_max()), 7);
+
+        // Inner narrow that TRIES to expand to 1..10: must clamp
+        // into the outer 3..7 window.
+        let inner = LispObject::cons(
+            LispObject::integer(1),
+            LispObject::cons(LispObject::integer(10), LispObject::nil()),
+        );
+        prim_narrow_to_region(&inner).unwrap();
+        assert_eq!(
+            buffer::with_current(|b| b.point_min()),
+            3,
+            "inner narrow must not escape outer point_min"
+        );
+        assert_eq!(
+            buffer::with_current(|b| b.point_max()),
+            7,
+            "inner narrow must not escape outer point_max"
+        );
+
+        // Inner narrow inside the outer: 4..6 ("34").
+        let inner_valid = LispObject::cons(
+            LispObject::integer(4),
+            LispObject::cons(LispObject::integer(6), LispObject::nil()),
+        );
+        prim_narrow_to_region(&inner_valid).unwrap();
+        assert_eq!(buffer::with_current(|b| b.point_min()), 4);
+        assert_eq!(buffer::with_current(|b| b.point_max()), 6);
+    }
+
+    /// Regression: R7. `prim_other_buffer` used to pattern-match
+    /// HashMap entries with `find(|(&id, _)| ...)`, which implicitly
+    /// borrowed the entry and wouldn't compile under stricter lints.
+    /// The pattern was fixed to `|&(&id, _)|`. The test exercises the
+    /// codepath against a registry with multiple buffers to confirm
+    /// the iter->find chain works.
+    #[test]
+    fn other_buffer_iter_pattern_works() {
+        buffer::reset();
+        let _a = buffer::with_registry_mut(|r| r.create("a"));
+        let _b = buffer::with_registry_mut(|r| r.create("b"));
+        let _c = buffer::with_registry_mut(|r| r.create("c"));
+        let result = prim_other_buffer(&LispObject::nil()).unwrap();
+        // Must return *some* buffer name (not nil, not the current).
+        let name = result.as_string().map(|s| s.to_string());
+        assert!(name.is_some());
+        assert_ne!(
+            name.as_deref(),
+            Some("*scratch*"),
+            "other-buffer must not return the current buffer"
+        );
+    }
+
+    /// Regression: R6. Emacs `\`` and `\'` are buffer-edge anchors.
+    /// Previously translated to `^` and `$`, which in Rust's default
+    /// (single-line) mode mean start/end of the whole input — so
+    /// the *behavior* matched for search-across-whole-buffer, but
+    /// broke under multiline mode. Now translated to `\A` / `\z`
+    /// which unambiguously anchor the whole-input extents.
+    #[test]
+    fn regex_buffer_anchor_translation() {
+        let rust_re = emacs_re_to_rust(r"\`foo");
+        assert!(
+            rust_re.contains(r"\A"),
+            "buffer-start must become \\A, got: {rust_re:?}"
+        );
+        let re = regex::Regex::new(&rust_re).unwrap();
+        assert!(re.is_match("foo bar"));
+        assert!(!re.is_match("xfoo"));
+
+        let rust_re = emacs_re_to_rust(r"foo\'");
+        assert!(
+            rust_re.contains(r"\z"),
+            "buffer-end must become \\z, got: {rust_re:?}"
+        );
+        let re = regex::Regex::new(&rust_re).unwrap();
+        assert!(re.is_match("bar foo"));
+        assert!(!re.is_match("foox"));
+        // Multiline input: \` matches only the very start, not line
+        // starts.
+        let re = regex::Regex::new(&emacs_re_to_rust(r"\`foo")).unwrap();
+        assert!(!re.is_match("bar\nfoo"));
+    }
+
+    /// Regression: R5 (continued). `\_<` / `\_>` are Emacs symbol
+    /// boundaries. Previously copied verbatim, producing invalid Rust
+    /// regex. Approximated with `\b`.
+    #[test]
+    fn regex_symbol_boundary_translation() {
+        let rust_re = emacs_re_to_rust(r"\_<foo\_>");
+        let re = regex::Regex::new(&rust_re).expect("symbol boundaries must translate");
+        assert!(re.is_match("foo"));
+        assert!(re.is_match("x foo y"));
+    }
+
+    /// `set-marker` with a negative integer position must clamp too.
+    #[test]
+    fn set_marker_negative_clamps() {
+        buffer::reset();
+        // Create a marker.
+        let marker = prim_make_marker(&LispObject::nil()).unwrap();
+        // set-marker to -42.
+        let args = LispObject::cons(
+            marker.clone(),
+            LispObject::cons(LispObject::integer(-42), LispObject::nil()),
+        );
+        prim_set_marker(&args).unwrap();
+        let pos = prim_marker_position(&LispObject::cons(marker, LispObject::nil())).unwrap();
+        assert_eq!(pos.as_integer(), Some(1));
+    }
+}
