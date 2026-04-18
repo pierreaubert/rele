@@ -9,6 +9,9 @@ lean_version := "v4.29.1"
 # Quint version to install via npm
 quint_version := "0.23.0"
 
+# Apalache version to install (JVM-based; no Homebrew formula, falls back to tarball)
+apalache_version := "0.56.1"
+
 # ─── Default ──────────────────────────────────────────────────────────────────
 
 # Show available recipes
@@ -110,6 +113,11 @@ quint-verify:
     quint verify --invariant safeExecution spec/quint/jit_runtime.qnt
     quint verify --invariant noStaleKeepsRunning spec/quint/jit_runtime.qnt
 
+# Regenerate an ITF trace under spec/quint/traces/<name>.itf.json (example: just quint-trace deopt_cycle 42 80)
+quint-trace name seed="1" max-steps="40":
+    mkdir -p spec/quint/traces
+    quint run --seed={{seed}} --max-steps {{max-steps}} --out-itf spec/quint/traces/{{name}}.itf.json spec/quint/jit_runtime.qnt
+
 # ─── Install tooling ─────────────────────────────────────────────────────────
 
 # Install elan (Lean version manager) and the project's Lean toolchain
@@ -144,8 +152,44 @@ install-quint:
         echo "quint $(quint --version) ready."
     fi
 
-# Install all external tooling (Lean + Quint)
-install-tools: install-lean install-quint
+# Install Apalache (TLA+ model checker used by `quint verify`); uses Homebrew if a formula is available, else the pinned GitHub release tarball
+install-apalache:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v apalache-mc &>/dev/null; then
+        echo "apalache-mc already installed: $(apalache-mc version 2>&1 | head -1)"
+        exit 0
+    fi
+    # Apalache needs a JVM on PATH.
+    if ! command -v java &>/dev/null; then
+        echo "java not found — install a JDK first (e.g. 'brew install --cask temurin')." >&2
+        exit 1
+    fi
+    # Prefer Homebrew if a formula/cask ever lands.
+    if command -v brew &>/dev/null && brew info apalache &>/dev/null; then
+        echo "Installing apalache via Homebrew..."
+        brew install apalache
+        echo "apalache-mc $(apalache-mc version 2>&1 | head -1) ready."
+        exit 0
+    fi
+    # Fallback: download the pinned release tarball.
+    install_dir="$HOME/.apalache"
+    mkdir -p "$install_dir"
+    url="https://github.com/apalache-mc/apalache/releases/download/v{{apalache_version}}/apalache-{{apalache_version}}.tgz"
+    echo "Downloading $url ..."
+    tmp=$(mktemp -d)
+    curl -sSfL "$url" -o "$tmp/apalache.tgz"
+    tar -xzf "$tmp/apalache.tgz" -C "$install_dir"
+    rm -rf "$tmp"
+    # The tarball extracts to apalache-<version>/; symlink 'current' for stable paths.
+    ln -sfn "$install_dir/apalache-{{apalache_version}}" "$install_dir/current"
+    echo "apalache-mc v{{apalache_version}} installed to $install_dir/current"
+    echo ""
+    echo "To use apalache-mc in your shell, add to your profile:"
+    echo '  export PATH="$HOME/.apalache/current/bin:$PATH"'
+
+# Install all external tooling (Lean + Quint + Apalache)
+install-tools: install-lean install-quint install-apalache
 
 # ─── Full spec pipeline ──────────────────────────────────────────────────────
 

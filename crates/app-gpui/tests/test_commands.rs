@@ -88,11 +88,42 @@ fn toggle_preview_command_flips_flag() {
 
 #[test]
 fn undo_command_reverts_edit() {
-    let mut state = MdAppState::new();
+    // `undo` is a defun in commands.el that delegates to
+    // `primitive-undo`. Another test in this binary may have called
+    // `install_elisp_editor_callbacks` which globally populated the
+    // obarray with the defun; without the bridge installed here the
+    // defun's `primitive-undo` call would hit the stub editor. Pin
+    // the state and install callbacks so dispatch works regardless
+    // of test ordering.
+    let mut state = Box::new(MdAppState::new());
+    state.install_elisp_editor_callbacks();
     state.document.set_text("initial");
     state.cursor.position = 7;
     state.insert_text(" more");
     assert_eq!(state.document.text(), "initial more");
     state.run_command_by_name("undo");
     assert_eq!(state.document.text(), "initial");
+}
+
+/// Regression: `run_command_by_name` used to early-return when the
+/// name wasn't in the Rust registry, even if the user had defined a
+/// matching elisp defun. That made elisp-only commands unreachable
+/// via M-x. The dispatch path now also consults the obarray.
+#[test]
+fn run_command_by_name_dispatches_elisp_only_defun() {
+    let mut state = MdAppState::new();
+    state.install_elisp_editor_callbacks();
+    state.document.set_text("abc");
+    state.cursor.position = 0;
+
+    state
+        .elisp
+        .eval_source("(defun gpui-elisp-only-jump (&optional _n) (goto-char 2))")
+        .expect("defun eval");
+
+    // Name is NOT in the Rust registry.
+    assert!(state.commands.get("gpui-elisp-only-jump").is_none());
+
+    state.run_command_by_name("gpui-elisp-only-jump");
+    assert_eq!(state.cursor.position, 2);
 }

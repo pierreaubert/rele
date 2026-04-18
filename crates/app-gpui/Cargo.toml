@@ -66,6 +66,7 @@ reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+tempfile = "3"
 
 [lib]
 name = "gpui_md"

@@ -92,11 +92,12 @@ CTAGS
 .qwen
 .worktrees
 
-.tokensave
+/.tokensave
 
 # Lean 4
-spec/lean/.lake/
-spec/lean/build/
+/spec/lean/.lake/
+/spec/lean/build/
 
 # Quint traces (generated)
-spec/quint/traces/
+/spec/quint/traces/
+/_apalache-out/

@@ -21,7 +21,6 @@ pub struct Command {
 /// Registry of all available commands.
 pub struct CommandRegistry {
     commands: HashMap<String, Command>,
-    #[allow(dead_code)]
     order: Vec<String>,
 }
 
@@ -62,10 +61,21 @@ impl CommandRegistry {
         self.commands.get(name)
     }
 
-    #[allow(dead_code)]
+    /// All registered command names, in registration order.
+    /// Used by `M-x` to populate the minibuffer's candidate list.
     pub fn names(&self) -> &[String] {
         &self.order
     }
+}
+
+/// Lines to jump per "page" for C-v / M-v / PageUp / PageDown.
+/// Uses the viewport height from the last render, with a two-line
+/// overlap (Emacs convention — keeps context visible across page
+/// boundaries) and a conservative fallback when the height hasn't been
+/// measured yet (e.g. the very first keystroke before any draw).
+fn page_size(state: &TuiAppState) -> usize {
+    let h = state.last_viewport_height;
+    if h > 2 { h - 2 } else { 20 }
 }
 
 /// Register all builtin Emacs-style commands.
@@ -208,27 +218,114 @@ pub fn register_builtin_commands(registry: &mut CommandRegistry) {
         "Save current buffer to file",
         File,
         InteractiveSpec::None,
-        |s, _| s.save_file(),
+        |s, _| {
+            // Drop the Result — save_file already sets a message for
+            // both success and failure; the interactive save command
+            // has no caller to surface the error to.
+            let _ = s.save_file();
+        },
     );
 
     // ---- View ----
 
+    // Emacs semantics:
+    //   scroll-up-command   = display scrolls UP   = cursor moves DOWN a page  (C-v, PageDown)
+    //   scroll-down-command = display scrolls DOWN = cursor moves UP   a page  (M-v, PageUp)
+    //
+    // We implement "page" as the last known viewport height minus two
+    // lines of context overlap (the same convention Emacs uses) and
+    // actually move the cursor — otherwise `ensure_cursor_visible`
+    // immediately pulls the viewport back to wherever the cursor is,
+    // defeating the scroll.
     registry.register_fn(
         "scroll-up-command",
-        "Scroll up one page",
+        "Move forward one screenful (C-v)",
         View,
         InteractiveSpec::None,
-        |s, _| {
-            s.scroll_line = s.scroll_line.saturating_sub(20);
+        |s, args| {
+            let page = page_size(s);
+            let n = args.count() * page;
+            for _ in 0..n {
+                s.move_down(false);
+            }
         },
     );
     registry.register_fn(
         "scroll-down-command",
-        "Scroll down one page",
+        "Move backward one screenful (M-v)",
+        View,
+        InteractiveSpec::None,
+        |s, args| {
+            let page = page_size(s);
+            let n = args.count() * page;
+            for _ in 0..n {
+                s.move_up(false);
+            }
+        },
+    );
+
+    // ---- Window management ----
+    registry.register_fn(
+        "split-window-below",
+        "Split current window into top+bottom (C-x 2)",
+        View,
+        InteractiveSpec::None,
+        |s, _| s.split_window_below(),
+    );
+    registry.register_fn(
+        "split-window-right",
+        "Split current window into left+right (C-x 3)",
+        View,
+        InteractiveSpec::None,
+        |s, _| s.split_window_right(),
+    );
+    registry.register_fn(
+        "delete-window",
+        "Delete the current window (C-x 0)",
+        View,
+        InteractiveSpec::None,
+        |s, _| s.delete_window(),
+    );
+    registry.register_fn(
+        "delete-other-windows",
+        "Make the current window fill the frame (C-x 1)",
+        View,
+        InteractiveSpec::None,
+        |s, _| s.delete_other_windows(),
+    );
+    registry.register_fn(
+        "other-window",
+        "Move focus to the next window (C-x o)",
+        View,
+        InteractiveSpec::None,
+        |s, _| s.focus_next_window(),
+    );
+
+    // ---- LSP diagnostic navigation ----
+    //
+    // Moves the cursor to the next / previous diagnostic in the
+    // current buffer, wrapping. Echo-area shows the message
+    // automatically (see `draw_message_line` priority order in ui.rs).
+    registry.register_fn(
+        "lsp-next-diagnostic",
+        "Move cursor to next LSP diagnostic (M-g n)",
         View,
         InteractiveSpec::None,
         |s, _| {
-            s.scroll_line = s.scroll_line.saturating_add(20);
+            if !s.goto_next_diagnostic() {
+                s.message = Some("No diagnostics".to_string());
+            }
+        },
+    );
+    registry.register_fn(
+        "lsp-prev-diagnostic",
+        "Move cursor to previous LSP diagnostic (M-g p)",
+        View,
+        InteractiveSpec::None,
+        |s, _| {
+            if !s.goto_prev_diagnostic() {
+                s.message = Some("No diagnostics".to_string());
+            }
         },
     );
 
@@ -240,8 +337,12 @@ pub fn register_builtin_commands(registry: &mut CommandRegistry) {
         Buffer,
         InteractiveSpec::None,
         |s, _| {
-            s.save_file();
-            s.should_quit = true;
+            // Don't quit on save failure — the user would silently
+            // lose edits otherwise. save_file sets a descriptive
+            // error message on `state.message`.
+            if s.save_file().is_ok() {
+                s.should_quit = true;
+            }
         },
     );
     registry.register_fn(

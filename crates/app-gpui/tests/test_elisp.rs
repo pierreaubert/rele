@@ -189,6 +189,108 @@ fn elisp_goto_char_moves_cursor() {
     assert_eq!(s.cursor.position, 5);
 }
 
+/// Regression: `ElispEditorCallbacks::save_buffer` in the GPUI
+/// client wrote the buffer to disk via `fs::write` but skipped
+/// `mark_clean` and `lsp_did_save`. After a save-through-elisp the
+/// document still showed as dirty and the language server never
+/// learned the save happened.
+/// Regression: `init_elisp` used to run during `MdAppState::new()`,
+/// *before* `install_elisp_editor_callbacks` wired up the editor
+/// bridge. Any form in `~/.gpui-md.el` that touched the buffer
+/// (`(insert ...)`, `(find-file ...)`, `(goto-char ...)`) silently
+/// no-opped against the stub editor — nothing visibly wrong at
+/// startup, just a dead init file.
+///
+/// The fix: user init now runs as part of
+/// `install_elisp_editor_callbacks`, so editor-using forms take
+/// effect. This test drives the testable helper
+/// `load_user_init_source` directly so it doesn't depend on
+/// `$HOME`.
+#[test]
+fn init_elisp_forms_can_manipulate_the_buffer() {
+    let mut s = state_with("hello");
+    // Precondition: cursor at 0.
+    assert_eq!(s.cursor.position, 0);
+
+    // Simulate a user init snippet that uses the editor.
+    s.load_user_init_source("(goto-char 4)");
+
+    assert_eq!(
+        s.cursor.position, 4,
+        "user init forms must run with the editor bridge attached"
+    );
+}
+
+#[test]
+fn elisp_save_buffer_marks_clean_and_returns_true_on_success() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("ok.md");
+
+    let mut s = state_with("hello");
+    s.document.set_file_path(path.clone());
+    // `set_file_path` doesn't touch the dirty flag; pre-condition:
+    // we just wrote content, so the buffer is clean already. Make
+    // it dirty explicitly so the test can observe mark_clean.
+    s.document.insert(s.document.len_chars(), " world");
+    assert!(s.document.is_dirty());
+
+    s.elisp
+        .eval(rele_elisp::read("(save-buffer)").unwrap())
+        .expect("save-buffer eval");
+
+    assert!(
+        !s.document.is_dirty(),
+        "save-buffer must mark the document clean after a successful write"
+    );
+}
+
+#[test]
+fn elisp_save_buffer_returns_nil_on_write_failure() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // Non-existent subdirectory — fs::write will fail.
+    let bogus = dir.path().join("no-such-dir").join("file.md");
+
+    let mut s = state_with("content");
+    s.document.set_file_path(bogus);
+    s.document.insert(0, "x");
+
+    // save-buffer should still report failure (returns nil in elisp
+    // for the failure path).
+    let result = s
+        .elisp
+        .eval(rele_elisp::read("(save-buffer)").unwrap())
+        .expect("save-buffer eval should not error");
+    assert_eq!(
+        result,
+        rele_elisp::LispObject::nil(),
+        "save-buffer must return nil when the write fails"
+    );
+    assert!(
+        s.document.is_dirty(),
+        "failed save must not mark the document clean"
+    );
+}
+
+/// Regression: `ElispEditorCallbacks::goto_char` in the GPUI client
+/// used to assign `self.cursor.position = pos` without clamping to
+/// the buffer length. A subsequent rope query would panic on the
+/// out-of-bounds index.
+#[test]
+fn elisp_goto_char_past_end_clamps_without_panic() {
+    let mut s = state_with("hello"); // 5 chars
+    s.elisp
+        .eval(rele_elisp::read("(goto-char 9999)").unwrap())
+        .expect("goto-char past end must not error");
+    assert!(
+        s.cursor.position <= s.document.len_chars(),
+        "cursor should be clamped to buffer length, got {} for len {}",
+        s.cursor.position,
+        s.document.len_chars(),
+    );
+    // Following rope queries must not panic.
+    let _ = s.document.char_to_line(s.cursor.position);
+}
+
 #[test]
 fn elisp_cl_defstruct_works_in_gpui_md() {
     // Verify the new cl-defstruct implementation works in the integrated env.

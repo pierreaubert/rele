@@ -63,8 +63,12 @@ impl EditorCallbacks for ElispEditorCallbacks {
 
     fn goto_char(&mut self, pos: usize) {
         unsafe {
-            (*self.state).cursor.position = pos;
-            (*self.state).cursor.clear_selection();
+            let s = &mut *self.state;
+            // Clamp to buffer length so subsequent rope queries
+            // (char_to_line etc.) don't panic when callers pass a
+            // position past EOF — matches the TUI's behaviour.
+            s.cursor.position = pos.min(s.document.len_chars());
+            s.cursor.clear_selection();
         }
     }
 
@@ -95,14 +99,48 @@ impl EditorCallbacks for ElispEditorCallbacks {
     }
 
     fn save_buffer(&mut self) -> bool {
+        unsafe { (*self.state).save_file_from_elisp() }
+    }
+
+    // ---- Navigation primitives used by elisp defuns ----
+    // (These are what new elisp-defined navigation commands call
+    //  instead of the hardcoded Rust command-registry closures.)
+    fn point_min(&self) -> usize {
+        0
+    }
+    fn point_max(&self) -> usize {
+        unsafe { (*self.state).document.len_chars() }
+    }
+    fn forward_line(&mut self, n: i64) {
         unsafe {
-            if let Some(path) = (*self.state).document.file_path() {
-                let content = (*self.state).document.text();
-                std::fs::write(path, content).is_ok()
-            } else {
-                false
+            if n > 0 {
+                for _ in 0..n as usize {
+                    (*self.state).move_down(false);
+                }
+            } else if n < 0 {
+                for _ in 0..(-n) as usize {
+                    (*self.state).move_up(false);
+                }
             }
         }
+    }
+    fn move_beginning_of_line(&mut self) {
+        unsafe { (*self.state).move_to_line_start(false) }
+    }
+    fn move_end_of_line(&mut self) {
+        unsafe { (*self.state).move_to_line_end(false) }
+    }
+    fn move_beginning_of_buffer(&mut self) {
+        unsafe { (*self.state).move_to_doc_start(false) }
+    }
+    fn move_end_of_buffer(&mut self) {
+        unsafe { (*self.state).move_to_doc_end(false) }
+    }
+    fn undo(&mut self) {
+        unsafe { (*self.state).undo() }
+    }
+    fn redo(&mut self) {
+        unsafe { (*self.state).redo() }
     }
 }
 
@@ -498,13 +536,10 @@ impl MdAppState {
         //
         // The caller must pin the state in stable storage (Box, GPUI
         // Entity, etc.) and then call `install_elisp_editor_callbacks()`
-        // to wire the callbacks up with a valid pointer.
-        //
-        // `init_elisp` runs here because it only evaluates forms that don't
-        // need the editor callbacks (e.g. `~/.gpui-md.el` is usually
-        // configuration, not buffer manipulation).
-        Self::init_elisp(&mut state.elisp);
-
+        // to wire the callbacks up with a valid pointer. The user's
+        // `~/.gpui-md.el` is evaluated from inside
+        // `install_elisp_editor_callbacks` so init forms that touch
+        // the buffer actually take effect.
         state
     }
 
@@ -523,29 +558,92 @@ impl MdAppState {
             state: self as *mut MdAppState,
         });
         self.elisp.set_editor(callbacks);
+        // Load the shared elisp command definitions — same `.el`
+        // file as the TUI so both clients run identical logic for
+        // navigation / editing / undo wrappers. Errors from the
+        // shipped source are surfaced in the log; they should never
+        // reach a user build.
+        if let Err(e) = self.load_builtin_elisp() {
+            log::error!("builtin elisp init failed: {e:?}");
+        }
+        // User init runs last — after the editor bridge is attached
+        // and after built-in commands are defined, so `(find-file)`,
+        // `(global-set-key)`, and other editor-aware forms work the
+        // way users expect.
+        self.load_user_init_file();
     }
 
-    fn init_elisp(interp: &mut Interpreter) {
-        if let Some(home) = dirs::home_dir() {
-            let init_path = home.join(".gpui-md.el");
-            if init_path.exists() {
-                match std::fs::read_to_string(&init_path) {
-                    Ok(content) => match rele_elisp::read_all(&content) {
-                        Ok(exprs) => {
-                            for expr in exprs {
-                                if let Err(e) = interp.eval(expr) {
-                                    log::error!("Error in {}: {:?}", init_path.display(), e);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Failed to parse {}: {:?}", init_path.display(), e);
-                        }
-                    },
-                    Err(e) => {
-                        log::error!("Failed to read {}: {:?}", init_path.display(), e);
+    fn load_builtin_elisp(&mut self) -> Result<(), rele_elisp::ElispError> {
+        let forms = rele_elisp::read_all(rele_server::BUILTIN_COMMANDS_EL)?;
+        for form in forms {
+            self.elisp.eval(form)?;
+        }
+        Ok(())
+    }
+
+    /// Save the active buffer to its backing file, matching the main
+    /// UI save path (mark_clean + lsp_did_save). Returns true on
+    /// success, false when the buffer has no file path or the write
+    /// fails. Used by `ElispEditorCallbacks::save_buffer`, which
+    /// previously open-coded an `fs::write` that skipped both
+    /// bookkeeping steps.
+    #[allow(clippy::disallowed_methods)] // TODO(perf): move off UI thread
+    pub fn save_file_from_elisp(&mut self) -> bool {
+        let Some(path) = self.document.file_path().cloned() else {
+            return false;
+        };
+        let content = self.document.text();
+        match std::fs::write(&path, &content) {
+            Ok(()) => {
+                self.document.mark_clean();
+                self.lsp_did_save();
+                true
+            }
+            Err(e) => {
+                log::error!("save-buffer: {}: {}", path.display(), e);
+                false
+            }
+        }
+    }
+
+    /// Evaluate user init source in the live interpreter.
+    ///
+    /// Separated from the `$HOME/.gpui-md.el` lookup path so tests
+    /// can exercise the post-callback-install ordering without
+    /// touching the real home directory. Errors per-form are
+    /// logged; one bad form doesn't abort the rest of the file.
+    pub fn load_user_init_source(&mut self, source: &str) {
+        match rele_elisp::read_all(source) {
+            Ok(forms) => {
+                for form in forms {
+                    if let Err(e) = self.elisp.eval(form) {
+                        log::error!("user init error: {e:?}");
                     }
                 }
+            }
+            Err(e) => {
+                log::error!("user init parse error: {e:?}");
+            }
+        }
+    }
+
+    /// Read and evaluate `~/.gpui-md.el` if it exists. Called from
+    /// `install_elisp_editor_callbacks` so user init forms run with
+    /// the editor bridge attached — forms like `(find-file ...)` or
+    /// `(insert ...)` then actually affect the buffer.
+    #[allow(clippy::disallowed_methods)] // TODO(perf): move off UI thread
+    fn load_user_init_file(&mut self) {
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+        let init_path = home.join(".gpui-md.el");
+        if !init_path.exists() {
+            return;
+        }
+        match std::fs::read_to_string(&init_path) {
+            Ok(content) => self.load_user_init_source(&content),
+            Err(e) => {
+                log::error!("Failed to read {}: {:?}", init_path.display(), e);
             }
         }
     }
@@ -1207,9 +1305,20 @@ impl MdAppState {
     /// Run a command by name. If the command is interactive (needs input),
     /// opens the mini-buffer and defers execution until submit.
     pub fn run_command_by_name(&mut self, name: &str) {
+        // A user-authored elisp defun with no Rust registry entry
+        // still needs to be runnable. When no Rust command owns the
+        // name but an elisp function cell does, skip the
+        // interactive-spec dispatcher (elisp defuns don't carry
+        // one) and go straight to `run_command_direct`, which knows
+        // how to route through the interpreter.
         let interactive = match self.commands.get(name) {
             Some(c) => c.interactive.clone(),
-            None => return,
+            None => {
+                if rele_elisp::is_user_defined_elisp_function(name) {
+                    self.run_command_direct(name, CommandArgs::default());
+                }
+                return;
+            }
         };
         match interactive {
             InteractiveSpec::None => {
@@ -1269,7 +1378,30 @@ impl MdAppState {
     /// Run a command directly by cloning the handler Rc out of the registry
     /// and invoking it. This avoids holding a borrow of the registry during
     /// dispatch so the handler can mutate `self.commands` freely.
+    ///
+    /// Elisp defuns (loaded from `rele_server::BUILTIN_COMMANDS_EL`)
+    /// take precedence: if a function cell is bound for `name`, we
+    /// eval `(name count)` in the interpreter and skip the Rust
+    /// registry. This keeps TUI and GPUI on the same dispatch path.
     pub fn run_command_direct(&mut self, name: &str, args: CommandArgs) {
+        // Route through elisp only when a user-authored defun owns the
+        // name — primitives like `forward-char` also have function
+        // cells (populated by `add_primitives`) and those must run via
+        // the Rust handler.
+        if rele_elisp::is_user_defined_elisp_function(name) {
+            let call = rele_elisp::LispObject::cons(
+                rele_elisp::LispObject::symbol(name),
+                rele_elisp::LispObject::cons(
+                    rele_elisp::LispObject::integer(args.count() as i64),
+                    rele_elisp::LispObject::nil(),
+                ),
+            );
+            if let Err(e) = self.elisp.eval(call) {
+                log::error!("elisp error in {name}: {e:?}");
+            }
+            return;
+        }
+
         let handler = self.commands.get(name).map(|c| c.handler.clone());
         if let Some(h) = handler {
             h(self, args);

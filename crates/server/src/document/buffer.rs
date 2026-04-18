@@ -196,7 +196,13 @@ impl DocumentBuffer {
     }
 
     /// Insert text at a character offset.
+    ///
+    /// `char_idx` is clamped to `len_chars()` so callers that pass a
+    /// computed position past EOF (for example, elisp callbacks that
+    /// operate on snapshots of the cursor position taken before
+    /// concurrent edits) get an append rather than a panic.
     pub fn insert(&mut self, char_idx: usize, text: &str) {
+        let char_idx = char_idx.min(self.rope.len_chars());
         // Record the change BEFORE mutating the rope. We compute both the
         // LSP positions (UTF-16 line/col) and the tree-sitter positions
         // (absolute byte + byte col within line) in the same pass, since
@@ -534,6 +540,27 @@ mod tests {
         assert_eq!(c.start_byte_col, 6);
         // UTF-16 col: a=1, emoji=2, b=1 -> col 4.
         assert_eq!(c.start_character, 4);
+    }
+
+    /// Regression: `insert` used to call `rope.char_to_line(char_idx)`
+    /// directly, which panics when `char_idx` is past `len_chars`.
+    /// `remove` already clamps; for consistency (and because elisp
+    /// callers occasionally pass computed offsets that overshoot),
+    /// `insert` should clamp too.
+    #[test]
+    fn insert_past_end_clamps_to_buffer_length() {
+        let mut buf = DocumentBuffer::from_text("hello"); // 5 chars
+        // Previously this would panic in char_to_line.
+        buf.insert(9999, "!");
+        // The `!` landed at end-of-buffer, not at position 9999.
+        assert_eq!(buf.text(), "hello!");
+        // And the change journal reports the clamped position.
+        let (changes, _) = buf.drain_changes();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].new_text, "!");
+        // start_character for a 1-line buffer of "hello" is col 5.
+        assert_eq!(changes[0].start_line, 0);
+        assert_eq!(changes[0].start_character, 5);
     }
 
     #[test]

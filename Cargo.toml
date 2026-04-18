@@ -35,7 +35,7 @@ clap = { version = "4", features = ["derive"] }
 
 # Async and runtime
 anyhow = "1.0"
-tokio = { version = "1", features = ["rt-multi-thread", "fs", "macros", "io-util", "process", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "macros", "io-util", "process", "signal", "sync"] }
 signal-hook = "0.4"
 parking_lot = { version = "0.12", features = ["deadlock_detection"] }
 
@@ -51,6 +51,16 @@ thiserror = "2.0.17"
 
 # File dialogs
 rfd = "0.14"
+
+# LSP protocol
+lsp-types = "0.97"
+url = "2"
+
+# Tree-sitter (syntactic parsing for highlighting)
+tree-sitter = "0.26"
+tree-sitter-highlight = "0.26"
+tree-sitter-md = { version = "0.5", features = ["parser"] }
+tree-sitter-rust = "0.24"
 
 # Document model
 ropey = "1.6"

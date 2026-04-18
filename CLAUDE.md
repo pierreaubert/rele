@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Performance — required reading before touching editor paths
+
+See [`PERFORMANCE.md`](./PERFORMANCE.md) for the 10 durable rules this
+project follows to stay fast. In short:
+
+1. Never block the UI thread.
+2. Don't clone the whole buffer (avoid `document.text()` outside save/export).
+3. Cache buffer-derived data, key it on `DocumentBuffer::version()`.
+4. Respect viewport virtualization — do per-line work only for visible lines.
+5. Cap pathological inputs at render time (long lines).
+6. Edit paths must be O(log n); no whole-buffer scans per keystroke.
+7. Long-running work must be cancellable via the shared cancellation flag.
+8. Performance-sensitive changes need a bench before/after.
+9. Parse once, query many (cache parse trees, not just text).
+10. Views observe minimally — prefer dirty flags / narrow entities over
+    god-state observers.
+
+Clippy lints in `clippy.toml` enforce rule 1.
+
 ## Project Overview
 
 **rele** (Rust Emacs-Lisp Editor) — a multi-client markdown editor with Emacs semantics. The workspace has three published crates plus a vendored toolkit:
