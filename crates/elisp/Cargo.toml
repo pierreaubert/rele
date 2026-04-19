@@ -28,6 +28,7 @@ cranelift-native = { workspace = true, optional = true }
 [dev-dependencies]
 walkdir = "2"
 serde_json = { workspace = true }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 # Harness subprocess worker. Used by cargo test test_emacs_all_files_run
 # (which relies on a pool of these to isolate each test file in its own
@@ -38,3 +39,13 @@ path = "src/bin/emacs_test_worker.rs"
 # Only built when test code is also built (so we don't pollute release
 # builds of the library).
 required-features = []
+
+# Microbenchmarks for hot eval paths. Run with
+# `cargo bench -p rele-elisp --bench eval_dispatch` (or value_fastpath).
+[[bench]]
+name = "eval_dispatch"
+harness = false
+
+[[bench]]
+name = "value_fastpath"
+harness = false

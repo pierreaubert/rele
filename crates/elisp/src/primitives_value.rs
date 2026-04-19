@@ -194,7 +194,210 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
             }
         }
 
+        // Cons accessors — pure raw-pointer read, no alloc, no lock.
+        // Both `car` and `cdr` accept nil (returning nil) to match Emacs.
+        "car" | "car-safe" => {
+            let v = one_arg(args)?;
+            if v.is_nil() {
+                return Some(Ok(Value::nil()));
+            }
+            let ptr = v.as_heap_ptr()? as *const crate::gc::GcHeader;
+            // SAFETY: heap pointer was just validated.
+            let tag = unsafe { (*ptr).tag };
+            if tag != crate::gc::ObjectTag::Cons {
+                return None; // ConsArc / other — slow path.
+            }
+            let cell = ptr as *const crate::gc::ConsCell;
+            Some(Ok(Value::from_raw(unsafe { (*cell).car })))
+        }
+        "cdr" | "cdr-safe" => {
+            let v = one_arg(args)?;
+            if v.is_nil() {
+                return Some(Ok(Value::nil()));
+            }
+            let ptr = v.as_heap_ptr()? as *const crate::gc::GcHeader;
+            let tag = unsafe { (*ptr).tag };
+            if tag != crate::gc::ObjectTag::Cons {
+                return None;
+            }
+            let cell = ptr as *const crate::gc::ConsCell;
+            Some(Ok(Value::from_raw(unsafe { (*cell).cdr })))
+        }
+
+        // Type predicates — cheap tag-bit reads on Value. Each accepts
+        // ANY Value (no args-arity fast-fail) since predicates are
+        // total functions.
+        "consp" => {
+            let v = one_arg(args)?;
+            if v.is_nil() {
+                return Some(Ok(Value::nil()));
+            }
+            // Heap-tagged pointer whose inner object is Cons or ConsArc.
+            let Some(ptr) = v.as_heap_ptr() else {
+                return Some(Ok(Value::nil()));
+            };
+            let tag = unsafe { (*(ptr as *const crate::gc::GcHeader)).tag };
+            let is_cons = matches!(
+                tag,
+                crate::gc::ObjectTag::Cons | crate::gc::ObjectTag::ConsArc
+            );
+            Some(Ok(if is_cons { Value::t() } else { Value::nil() }))
+        }
+        "listp" => {
+            let v = one_arg(args)?;
+            if v.is_nil() {
+                return Some(Ok(Value::t()));
+            }
+            let Some(ptr) = v.as_heap_ptr() else {
+                return Some(Ok(Value::nil()));
+            };
+            let tag = unsafe { (*(ptr as *const crate::gc::GcHeader)).tag };
+            let is_list = matches!(
+                tag,
+                crate::gc::ObjectTag::Cons | crate::gc::ObjectTag::ConsArc
+            );
+            Some(Ok(if is_list { Value::t() } else { Value::nil() }))
+        }
+        "atom" => {
+            let v = one_arg(args)?;
+            // atom = not cons. Nil is an atom (empty list is both).
+            if v.is_nil() {
+                return Some(Ok(Value::t()));
+            }
+            let Some(ptr) = v.as_heap_ptr() else {
+                return Some(Ok(Value::t()));
+            };
+            let tag = unsafe { (*(ptr as *const crate::gc::GcHeader)).tag };
+            let is_cons = matches!(
+                tag,
+                crate::gc::ObjectTag::Cons | crate::gc::ObjectTag::ConsArc
+            );
+            Some(Ok(if is_cons { Value::nil() } else { Value::t() }))
+        }
+        "stringp" => {
+            let v = one_arg(args)?;
+            if v.is_nil() {
+                return Some(Ok(Value::nil()));
+            }
+            let Some(ptr) = v.as_heap_ptr() else {
+                return Some(Ok(Value::nil()));
+            };
+            let tag = unsafe { (*(ptr as *const crate::gc::GcHeader)).tag };
+            Some(Ok(if tag == crate::gc::ObjectTag::String {
+                Value::t()
+            } else {
+                Value::nil()
+            }))
+        }
+        "symbolp" => {
+            let v = one_arg(args)?;
+            // NaN-boxed symbols have TAG_SYMBOL directly. nil / t
+            // also count as symbols in Emacs semantics.
+            let is_sym = v.is_symbol() || v.is_nil() || v.is_t();
+            Some(Ok(if is_sym { Value::t() } else { Value::nil() }))
+        }
+        "numberp" => {
+            let v = one_arg(args)?;
+            let is_num = v.is_fixnum() || v.is_float();
+            Some(Ok(if is_num { Value::t() } else { Value::nil() }))
+        }
+        "floatp" => {
+            let v = one_arg(args)?;
+            Some(Ok(if v.is_float() { Value::t() } else { Value::nil() }))
+        }
+        "characterp" => {
+            let v = one_arg(args)?;
+            // Emacs characters are non-negative integers < 0x3fffff.
+            let is_char = v.is_char()
+                || v.as_fixnum().is_some_and(|n| (0..=0x3fffff).contains(&n));
+            Some(Ok(if is_char { Value::t() } else { Value::nil() }))
+        }
+
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod accessor_tests {
+    use super::*;
+
+    // Build a `(car . cdr)` cons on a private heap so we can read back
+    // through the same raw ConsCell layout the fast path uses.
+    // The heap is leaked to give the returned `Value` a `'static`-ish
+    // lifetime for the duration of the test — acceptable in unit tests.
+    fn cons_value(car: Value, cdr: Value) -> Value {
+        let heap = Box::leak(Box::new(crate::gc::Heap::new()));
+        let ptr = heap.cons(car.raw(), cdr.raw());
+        Value::heap_ptr(ptr as *const u8)
+    }
+
+    #[test]
+    fn car_cdr_on_fixnum_cons() {
+        let c = cons_value(Value::fixnum(1), Value::fixnum(2));
+        let args = cons_value(c, Value::nil());
+        let car = try_call_primitive_value("car", args).unwrap().unwrap();
+        assert_eq!(car.as_fixnum(), Some(1));
+        let cdr = try_call_primitive_value("cdr", args).unwrap().unwrap();
+        assert_eq!(cdr.as_fixnum(), Some(2));
+    }
+
+    #[test]
+    fn car_cdr_of_nil_is_nil() {
+        let args = cons_value(Value::nil(), Value::nil());
+        let car = try_call_primitive_value("car", args).unwrap().unwrap();
+        assert!(car.is_nil());
+        let cdr = try_call_primitive_value("cdr", args).unwrap().unwrap();
+        assert!(cdr.is_nil());
+    }
+
+    #[test]
+    fn consp_listp_atom_predicates() {
+        // Cons → consp=t, listp=t, atom=nil.
+        let c = cons_value(Value::fixnum(1), Value::nil());
+        let args = cons_value(c, Value::nil());
+        assert!(try_call_primitive_value("consp", args).unwrap().unwrap().is_t());
+        assert!(try_call_primitive_value("listp", args).unwrap().unwrap().is_t());
+        assert!(try_call_primitive_value("atom", args).unwrap().unwrap().is_nil());
+
+        // Nil → consp=nil, listp=t (nil is the empty list), atom=t.
+        let args = cons_value(Value::nil(), Value::nil());
+        assert!(try_call_primitive_value("consp", args).unwrap().unwrap().is_nil());
+        assert!(try_call_primitive_value("listp", args).unwrap().unwrap().is_t());
+        assert!(try_call_primitive_value("atom", args).unwrap().unwrap().is_t());
+
+        // Fixnum → consp=nil, listp=nil, atom=t.
+        let args = cons_value(Value::fixnum(42), Value::nil());
+        assert!(try_call_primitive_value("consp", args).unwrap().unwrap().is_nil());
+        assert!(try_call_primitive_value("listp", args).unwrap().unwrap().is_nil());
+        assert!(try_call_primitive_value("atom", args).unwrap().unwrap().is_t());
+    }
+
+    #[test]
+    fn number_and_symbol_predicates() {
+        // Fixnum passes numberp/integerp; fails symbolp/stringp/floatp.
+        let args = cons_value(Value::fixnum(5), Value::nil());
+        assert!(try_call_primitive_value("numberp", args).unwrap().unwrap().is_t());
+        assert!(try_call_primitive_value("integerp", args).unwrap().unwrap().is_t());
+        assert!(try_call_primitive_value("floatp", args).unwrap().unwrap().is_nil());
+        assert!(try_call_primitive_value("symbolp", args).unwrap().unwrap().is_nil());
+
+        // nil is a symbol.
+        let args = cons_value(Value::nil(), Value::nil());
+        assert!(try_call_primitive_value("symbolp", args).unwrap().unwrap().is_t());
+
+        // t is a symbol.
+        let args = cons_value(Value::t(), Value::nil());
+        assert!(try_call_primitive_value("symbolp", args).unwrap().unwrap().is_t());
+
+        // Characters pass characterp.
+        let args = cons_value(Value::character('A'), Value::nil());
+        assert!(try_call_primitive_value("characterp", args).unwrap().unwrap().is_t());
+        // So do small non-negative fixnums.
+        let args = cons_value(Value::fixnum(65), Value::nil());
+        assert!(try_call_primitive_value("characterp", args).unwrap().unwrap().is_t());
+        // But not negative integers.
+        let args = cons_value(Value::fixnum(-1), Value::nil());
+        assert!(try_call_primitive_value("characterp", args).unwrap().unwrap().is_nil());
     }
 }
 

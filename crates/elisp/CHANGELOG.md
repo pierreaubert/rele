@@ -1,5 +1,272 @@
 # Unreleased
 
+## Public `Interpreter::jit_compile(name)` API
+
+Adds the eager-compile method the original plan called for, with a
+proper error type so callers can distinguish "function doesn't
+exist" from "function exists but isn't bytecode" from "JIT was
+compiled out".
+
+### API
+
+```rust
+pub fn jit_compile(&self, name: &str) -> Result<(), JitError>;
+
+pub enum JitError {
+    UnknownFunction(String),
+    NotBytecode(String),
+    UnsupportedOpcode,
+    JitDisabled,
+}
+```
+
+Implementation: resolves `name` through `obarray::intern`, reads
+the function cell, snapshots the current `def_version`, calls
+`compile_with_version` from the Phase D+ API. Stale entries are
+invalidated automatically on the next call via the version check.
+
+### Why
+
+Until now there was no way to:
+- Force-compile a function ahead of the profiler threshold (useful
+  for warm-up paths and JIT-unit tests that don't want to call
+  the function 1,000 times).
+- Discriminate between the JIT being absent and the function
+  being unsupported — `jit_tier` returned `Interp` for both.
+
+### Regression tests
+
+Three new tests in `eval::tests`:
+- `test_jit_compile_unknown_returns_unknown_function` — undefined
+  name returns `JitError::UnknownFunction`. Without the `jit`
+  feature, returns `JitError::JitDisabled`.
+- `test_jit_compile_lambda_returns_not_bytecode` — `(defun f () 1)`
+  installs a `lambda`-shaped LispObject; `jit_compile` rejects with
+  `NotBytecode`.
+- `test_jit_compile_bytecode_succeeds` (jit-only) — install a real
+  `BytecodeFunction` directly into the function cell, eager-compile,
+  verify `jit_stats().compiled_count >= 1`.
+
+Lib suite: 430 default (+2) / 453 with `--features jit` (+3).
+
+## JIT version-checked compile + lookup (Phase D+)
+
+Follow-up to the Phase D `def_version` plumbing. The JIT compiler
+gains three new entry points so that version safety can be
+enforced by any caller that knows the current version of a
+function:
+
+- `compile_with_version(func_id, func, version)` — snapshot the
+  version alongside the compiled entry.
+- `compiled_version(func_id) -> Option<u64>` — read back the
+  snapshot.
+- `get_compiled_checked(func_id, current_version) -> Option<id>`
+  — look up the compiled entry only if the snapshot matches; on
+  mismatch, drop the entry so the next profiler hit triggers a
+  fresh compile. This codifies the `safeExecution` invariant from
+  `spec/quint/jit_runtime.qnt` directly in the compiler API.
+
+`invalidate(func_id)` now also clears the version slot, matching
+the spec's `noStaleKeepsRunning` invariant.
+
+### Note on the call-site wire-through
+
+A first iteration of this patch tried to auto-invalidate at
+`eval/functions.rs`'s JIT call site by looking up the SymbolId
+from the bytecode pointer. That scheme can't work reliably:
+`BytecodeFunction` has value semantics (not `Arc`-wrapped), so
+each `LispObject::Clone::clone` gives a new address. The raw
+pointer tracked in `set_function_cell` would be stale within one
+call. The note in `obarray::set_function_cell` documents the
+workaround: Rust's move semantics already give the safety we need
+(a redefined function lands at a new address, so the old
+compiled entry is orphaned and never re-matched). The explicit
+version-checked API is available when a caller DOES know the
+SymbolId (e.g. future tooling or the planned `jit_compile(name)`
+method).
+
+### Regression tests
+
+Three new unit tests in `jit::compiler::tests`:
+
+- `test_compile_with_version_round_trips` — compile at v7,
+  retrieve cached version, call via matching version.
+- `test_get_compiled_checked_invalidates_on_mismatch` —
+  compile at v1, query at v2, entry is dropped.
+- `test_invalidate_clears_version_slot` — explicit invalidate
+  clears both the compiled entry and the version slot.
+
+Lib suite: 428 default / 450 with `--features jit` (+3 new tests).
+
+## def_version tracking + public JIT API (Phase D)
+
+Wires the Quint-modelled `def_version` invariant into the real
+interpreter. Each write to a symbol's function cell (via
+`obarray::set_function_cell`) now bumps a per-symbol counter; the
+counter is readable via `obarray::def_version(sym)`.
+
+This is the foundation for the `safeExecution` invariant from
+`spec/quint/jit_runtime.qnt`: "if a function is running as
+Compiled, the cached version MUST match the current definition
+version". Previously the invariant was only modeled in the
+spec-test replay harness; now the underlying counter is live and
+callers (future JIT deopt paths) have something to compare against.
+
+Centralization was the main risk from the plan's Risk 3: if the
+bump lived inside `eval_defun` we'd miss `defalias`, `fset`, and
+any direct-cell write path. By bumping inside
+`obarray::set_function_cell` itself, all 11 call sites across
+`mod.rs` / `special_forms.rs` / `functions.rs` now participate
+automatically.
+
+### New public API on `Interpreter`
+
+- `Interpreter::jit_tier(name) -> Tier` — returns `Compiled` iff
+  the named symbol has a bytecode function cell AND the profiler
+  counts it as hot; otherwise `Interp`. Without the `jit` feature,
+  always `Interp`.
+- `Interpreter::jit_stats() -> JitStats` — snapshot with
+  `total_calls`, `hot_count`, `compiled_count`. The compiled
+  count is an upper bound (equal to `hot_count` today; once the
+  JIT gains selective compilation it'll narrow).
+
+Two new types in `jit::mod`: `Tier { Interp, Compiled }` and
+`JitStats { total_calls, hot_count, compiled_count }`. Both mirror
+the shapes in `elisp-spec-tests/src/replay.rs` so the spec-driven
+replay harness can be retargeted at the real runtime in a future
+phase.
+
+### Regression tests
+
+Three new tests (lib suite 423 → 428, `--features jit` 442 → 447):
+
+- `obarray::def_version_tests::def_version_bumps_on_set_function_cell`
+- `obarray::def_version_tests::def_version_of_untouched_symbol_is_zero`
+- `eval::tests::test_def_version_bumps_on_defun` — end-to-end:
+  `(defun foo () 1)` must bump `foo`'s version through the
+  interpreter path.
+- `eval::tests::test_jit_tier_reports_interp_for_untouched_name`
+- `eval::tests::test_jit_stats_starts_zero_for_fresh_interpreter`
+
+## JIT opcode coverage — 7 new opcodes (Phase C)
+
+Expand `crates/elisp/src/jit/compiler.rs` from 13 to 20 supported
+Emacs 30 bytecode opcodes. Each new opcode either fully inlines
+(tag-bit ops) or uses the same fixnum-guard/deopt pattern as the
+existing arithmetic arms.
+
+### New opcodes
+
+- **`Beq` (61)**: raw `u64` identity equality. No type guard
+  needed — Value equality is bitwise identity on all tags.
+- **`Bnot` (63)**: `t` when TOS is nil, else `nil`. Pure tag-bit.
+- **`Bnegate` (91)**: fixnum negation with sign-extend, mask,
+  retag. Deopts on non-fixnum.
+- **`Bmax` (93)** / **`Bmin` (94)**: binary min/max via signed
+  payload compare, selecting the full (tagged) Value to preserve
+  the box.
+- **`Bgoto_if_nil_else_pop` (133)**: peek TOS; branch if nil
+  (leaving TOS as the block's result value), else pop and
+  fall through. Matches the Emacs bytecomp contract that
+  `or`/`and` lower to.
+- **`Bgoto_if_not_nil_else_pop` (134)**: inverse.
+
+### Tests
+
+Five new unit tests in `jit::compiler::tests`:
+
+- `test_jit_eq_identical_fixnums` — `(eq 7 7) → t`.
+- `test_jit_not` — round-trip nil ↔ t; non-nil → nil.
+- `test_jit_negate` — 3 → -3 and -17 → 17 (sign preservation).
+- `test_jit_max_min` — `(max 3 7) → 7`, `(min 3 7) → 3`.
+- `test_jit_goto_if_nil_else_pop` — covers both branches
+  (nil input produces nil result; non-nil input falls through
+  to the constant-42 path).
+
+Lib suite with `--features jit` goes from 437 to 442.
+
+## Special-form SymbolId pre-check (Phase A)
+
+Before: every cons-headed `eval_inner` call did
+`obarray::symbol_name(id).to_string()` (one heap allocation) followed
+by a 200+-arm `match` on `&str`.
+
+After: a new `crates/elisp/src/eval/dispatch.rs` module caches the
+`SymbolId` of the 27 most frequent special-form names in `OnceLock`s.
+`hot_form_name(id)` probes them and returns `Some("quote")` etc. — a
+`&'static str` literal the existing `match` accepts verbatim, with no
+allocation. On a miss (~200 rare forms) we fall through to the
+original `symbol_name()` call. Behaviour is unchanged; the allocation
+just disappears for the common case.
+
+The hot form list covers `quote`, `if`, `progn`, `setq`, `let`,
+`let*`, `lambda`, `function`, `cond`, `and`, `or`, `when`, `unless`,
+`while`, `prog1`, `prog2`, `funcall`, `apply`, `save-excursion`,
+`save-restriction`, `` ` ``, `defun`, `defvar`, `defmacro`,
+`defconst`, `condition-case`, `unwind-protect`.
+
+### Bench delta (unoptimised Linux/x86_64, `--quick` run — noisy)
+
+| bench                          | before  | after   | delta |
+|--------------------------------|---------|---------|-------|
+| eval_dispatch/quote            | 288 ns  | 267 ns  | -7%   |
+| eval_dispatch/if_true          | 397 ns  | 390 ns  | -2%   |
+| eval_dispatch/progn_three      | 427 ns  | 404 ns  | -5%   |
+| eval_dispatch/let_one          | 933 ns  | 891 ns  | -4%   |
+| eval_dispatch/cond_match_first | 521 ns  | 478 ns  | -8%   |
+
+The `value_fastpath/*` numbers move within noise.
+
+## Value-native fast-path expansion + criterion benches (Phase B + E)
+
+Extend `try_call_primitive_value` (crates/elisp/src/primitives_value.rs)
+from the original 17 arms to also cover:
+
+- **Cons accessors**: `car`, `car-safe`, `cdr`, `cdr-safe`. Raw
+  pointer reads off `ConsCell`; `nil` short-circuits to `nil` to
+  match Emacs semantics. `ConsArc` values fall through to the slow
+  path (the raw-pointer layout only applies to `ConsCell`).
+- **Type predicates**: `consp`, `listp`, `atom`, `stringp`,
+  `symbolp`, `numberp`, `floatp`, `characterp`. Pure NaN-box
+  tag-bit reads. `nil`/`t` are treated as symbols; small
+  non-negative fixnums pass `characterp` to match Emacs's
+  char-integer identity.
+
+Criterion benches in `crates/elisp/benches/` so further phases can
+point at concrete before/after numbers:
+
+- `eval_dispatch.rs` — `quote`, `if t 1 2`, `progn`, `let`, `cond`.
+- `value_fastpath.rs` — arithmetic, comparison, type predicates,
+  and the new `car`/`cdr`/`consp`/`symbolp` arms.
+
+### Baseline numbers (unoptimised build on Linux/x86_64, rustc 1.95.0)
+
+| bench                            | time    |
+|----------------------------------|---------|
+| eval_dispatch/quote              | 288 ns  |
+| eval_dispatch/if_true            | 397 ns  |
+| eval_dispatch/progn_three        | 427 ns  |
+| eval_dispatch/let_one            | 933 ns  |
+| eval_dispatch/cond_match_first   | 521 ns  |
+| value_fastpath/arith_plus        | 878 ns  |
+| value_fastpath/cmp_lt            | 958 ns  |
+| value_fastpath/type_integerp     | 774 ns  |
+| value_fastpath/car               | 1.19 µs |
+| value_fastpath/cdr               | 1.17 µs |
+| value_fastpath/consp             | 892 ns  |
+| value_fastpath/symbolp           | 951 ns  |
+
+Phase A (dispatch-table refactor) should compress the `eval_dispatch/*`
+column; Phase C (JIT opcode coverage) targets the `value_fastpath/*`
+column once the JIT can emit the matching opcodes inline.
+
+### Regression tests
+
+`primitives_value::accessor_tests` (4 tests, 420 lib total) exercise:
+- `car`/`cdr` on a fixnum cons and on nil.
+- `consp` / `listp` / `atom` on cons, nil, and fixnum.
+- `symbolp` / `characterp` / `floatp` on each value shape.
+
 ## cl-* complete + call_function dispatch fixes
 
 Round out the native Rust cl-lib coverage and fix a dispatch bug that

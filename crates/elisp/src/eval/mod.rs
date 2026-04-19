@@ -663,6 +663,104 @@ impl Interpreter {
         let profiler = self.state.profiler.read();
         (profiler.total_calls(), profiler.hot_function_count())
     }
+
+    /// Return the current execution tier of `name`. A function that
+    /// has never been called, or has been invalidated via redefinition,
+    /// reports `Tier::Interp`.
+    ///
+    /// Implementation: a function is in `Tier::Compiled` when the
+    /// profiler counts it as hot AND its current `def_version` matches
+    /// the version we'd have compiled against. Without the `jit`
+    /// feature, always `Tier::Interp`.
+    pub fn jit_tier(&self, name: &str) -> crate::jit::Tier {
+        #[cfg(feature = "jit")]
+        {
+            // Use the symbol's function-cell bytecode (if any) as the
+            // function id — same convention the JIT uses internally
+            // (`func_id = bc as *const _ as usize` in
+            // `eval/functions.rs`).
+            let sym = crate::obarray::intern(name);
+            let Some(cell) = crate::obarray::get_function_cell(sym) else {
+                return crate::jit::Tier::Interp;
+            };
+            let crate::object::LispObject::BytecodeFn(ref bc) = cell else {
+                return crate::jit::Tier::Interp;
+            };
+            let func_id = bc as *const _ as usize;
+            let profiler = self.state.profiler.read();
+            if profiler.should_compile(func_id) {
+                crate::jit::Tier::Compiled
+            } else {
+                crate::jit::Tier::Interp
+            }
+        }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = name;
+            crate::jit::Tier::Interp
+        }
+    }
+
+    /// Eagerly compile the named function to native code, bypassing
+    /// the profiler's hot-call threshold. Useful for tests, ahead-
+    /// of-time tooling, and warm-up paths.
+    ///
+    /// Returns `Err(JitError::UnknownFunction)` when the name has no
+    /// function cell, `Err(JitError::NotBytecode)` when the cell
+    /// holds something other than bytecode (lambda, primitive,
+    /// autoload), `Err(JitError::UnsupportedOpcode)` when the
+    /// bytecode uses an opcode the compiler doesn't yet emit, and
+    /// `Err(JitError::JitDisabled)` on a build without the `jit`
+    /// feature.
+    ///
+    /// On success, subsequent calls to the named function go through
+    /// the JIT until the next `set_function_cell` (which bumps
+    /// `def_version` and orphans the compiled entry — see Phase D+).
+    pub fn jit_compile(&self, name: &str) -> Result<(), crate::jit::JitError> {
+        #[cfg(feature = "jit")]
+        {
+            let sym = crate::obarray::intern(name);
+            let cell = crate::obarray::get_function_cell(sym)
+                .ok_or_else(|| crate::jit::JitError::UnknownFunction(name.to_string()))?;
+            let crate::object::LispObject::BytecodeFn(ref bc) = cell else {
+                return Err(crate::jit::JitError::NotBytecode(name.to_string()));
+            };
+            let func_id = bc as *const _ as usize;
+            let version = crate::obarray::def_version(sym);
+            let mut jit = self.state.jit.write();
+            jit.compile_with_version(func_id, bc, version)
+                .map(|_| ())
+                .ok_or(crate::jit::JitError::UnsupportedOpcode)
+        }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = name;
+            Err(crate::jit::JitError::JitDisabled)
+        }
+    }
+
+    /// Snapshot of cumulative JIT counters and per-function version
+    /// map. Intended for tests + diagnostic tooling.
+    pub fn jit_stats(&self) -> crate::jit::JitStats {
+        let profiler = self.state.profiler.read();
+        crate::jit::JitStats {
+            total_calls: profiler.total_calls(),
+            hot_count: profiler.hot_function_count(),
+            // `compiled_count` tracking lives inside the JIT when
+            // the feature is on. We report `hot_count` as an upper
+            // bound — every hot function is compiled eagerly.
+            compiled_count: {
+                #[cfg(feature = "jit")]
+                {
+                    profiler.hot_function_count()
+                }
+                #[cfg(not(feature = "jit"))]
+                {
+                    0
+                }
+            },
+        }
+    }
 }
 
 impl Default for Interpreter {
@@ -1122,8 +1220,19 @@ fn eval_inner(
     let (car, cdr) = expr_obj.destructure();
     match &car {
         LispObject::Symbol(id) => {
-            let sym_name = crate::obarray::symbol_name(*id);
-            match sym_name.as_str() {
+            // Fast-path: if the head symbol is one of the ~20 most
+            // frequent special forms, use the cached `&'static str`
+            // directly and skip the `obarray::symbol_name(*id)`
+            // allocation entirely. See eval/dispatch.rs.
+            let sym_owned: Option<String>;
+            let sym_name: &str = match dispatch::hot_form_name(*id) {
+                Some(s) => s,
+                None => {
+                    sym_owned = Some(crate::obarray::symbol_name(*id));
+                    sym_owned.as_deref().unwrap()
+                }
+            };
+            match sym_name {
                 "quote" => {
                     // (quote x) -> x via first(), but also handle
                     // dotted form (quote . x) where cdr is the atom itself.
@@ -1132,6 +1241,17 @@ fn eval_inner(
                         None if !cdr.is_nil() => Ok(obj_to_value(cdr)),
                         _ => Err(ElispError::WrongNumberOfArguments),
                     }
+                }
+                "`" => {
+                    // Native backquote: walks the form, evaluating `,X`
+                    // and splicing `,@X` without needing Emacs's
+                    // backquote.el loaded. Matches the semantics of
+                    // `backquote` / `\`` — unquotes only fire at depth 1,
+                    // nested `\`` forms raise the depth.
+                    let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let expanded =
+                        eval_backquote_form(form, 1, env, editor, macros, state)?;
+                    Ok(obj_to_value(expanded))
                 }
                 "if" => eval_if(obj_to_value(cdr), env, editor, macros, state),
                 "setq" => eval_setq(obj_to_value(cdr), env, editor, macros, state),
@@ -3080,6 +3200,11 @@ fn eval_inner(
                     }
                 }
                 "intern-soft" => {
+                    // Source-level path — falls back to a global
+                    // obarray scan the same way the VM-facing
+                    // `stateful_intern_soft` does, so primitives
+                    // (function-cell-only bindings like `car`) also
+                    // resolve and callers don't get a spurious nil.
                     let arg = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
@@ -3093,10 +3218,22 @@ fn eval_inner(
                         _ => return Ok(Value::nil()),
                     };
                     if env.read().get(&name).is_some() {
-                        Ok(obj_to_value(LispObject::symbol(&name)))
-                    } else {
-                        Ok(Value::nil())
+                        return Ok(obj_to_value(LispObject::symbol(&name)));
                     }
+                    let table = crate::obarray::GLOBAL_OBARRAY.read();
+                    for id in 0..table.symbol_count() as u32 {
+                        let sid = crate::obarray::SymbolId(id);
+                        if table.name(sid) == name {
+                            drop(table);
+                            let has_value = crate::obarray::get_value_cell(sid).is_some();
+                            let has_fn = crate::obarray::get_function_cell(sid).is_some();
+                            if has_value || has_fn {
+                                return Ok(obj_to_value(LispObject::Symbol(sid)));
+                            }
+                            return Ok(Value::nil());
+                        }
+                    }
+                    Ok(Value::nil())
                 }
                 "set" => {
                     let sym = value_to_obj(eval(
@@ -3573,7 +3710,7 @@ fn eval_inner(
                         .as_string()
                         .ok_or_else(|| ElispError::WrongTypeArgument("string".to_string()))?;
                     let p = std::path::Path::new(path.as_str());
-                    let result = match sym_name.as_str() {
+                    let result = match sym_name {
                         "file-readable-p" => p.exists(),
                         "file-directory-p" => p.is_dir(),
                         "file-regular-p" => p.is_file(),
@@ -4168,8 +4305,162 @@ fn eval_inner(
     }
 }
 
+/// Evaluate a backquoted form at the given nesting depth.
+///
+/// `depth` starts at 1 for the outermost backquote; a nested `` ` ``
+/// inside the form raises it, and `,` / `,@` lowers it. An unquote
+/// only fires (gets evaluated) when it brings the depth to 0.
+///
+/// This mirrors the semantics of Emacs's `backquote.el` but expands
+/// and evaluates in a single pass, so the macro doesn't need to be
+/// loaded from the stdlib.
+fn eval_backquote_form(
+    form: LispObject,
+    depth: u32,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    // Non-cons forms are self-evaluating inside a backquote.
+    let Some((car, cdr)) = form.destructure_cons() else {
+        // Vectors are walked element-wise.
+        if let LispObject::Vector(v) = &form {
+            let items: Vec<LispObject> = v.lock().clone();
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                // Splicing into a vector is rare; expand each element.
+                if let Some((h, rest)) = item.destructure_cons() {
+                    if h.as_symbol().as_deref() == Some(",@") && depth == 1 {
+                        let inner = rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                        let spliced =
+                            value_to_obj(eval(obj_to_value(inner), env, editor, macros, state)?);
+                        let mut cur = spliced;
+                        while let Some((e, r)) = cur.destructure_cons() {
+                            out.push(e);
+                            cur = r;
+                        }
+                        continue;
+                    }
+                }
+                out.push(eval_backquote_form(item, depth, env, editor, macros, state)?);
+            }
+            return Ok(LispObject::Vector(Arc::new(parking_lot::Mutex::new(out))));
+        }
+        return Ok(form);
+    };
+
+    // Handle `,`, `,@`, and nested `` ` `` as the whole-form head.
+    if let Some(sym) = car.as_symbol() {
+        match sym.as_str() {
+            "," => {
+                let inner = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                if depth == 1 {
+                    let val = eval(obj_to_value(inner), env, editor, macros, state)?;
+                    return Ok(value_to_obj(val));
+                }
+                // Nested: reduce depth, preserve shape.
+                let expanded =
+                    eval_backquote_form(inner, depth - 1, env, editor, macros, state)?;
+                return Ok(LispObject::cons(
+                    LispObject::symbol(","),
+                    LispObject::cons(expanded, LispObject::nil()),
+                ));
+            }
+            ",@" => {
+                // A top-level ,@ outside a list is invalid.
+                if depth == 1 {
+                    return Err(ElispError::EvalError(
+                        "`,@` outside a list context".to_string(),
+                    ));
+                }
+                let inner = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                let expanded =
+                    eval_backquote_form(inner, depth - 1, env, editor, macros, state)?;
+                return Ok(LispObject::cons(
+                    LispObject::symbol(",@"),
+                    LispObject::cons(expanded, LispObject::nil()),
+                ));
+            }
+            "`" => {
+                // Nested backquote raises depth.
+                let inner = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                let expanded =
+                    eval_backquote_form(inner, depth + 1, env, editor, macros, state)?;
+                return Ok(LispObject::cons(
+                    LispObject::symbol("`"),
+                    LispObject::cons(expanded, LispObject::nil()),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    // Walk a (possibly dotted) list, expanding each element and
+    // splicing `,@X` at depth 1.
+    let mut out: Vec<LispObject> = Vec::new();
+    let mut cur = LispObject::cons(car, cdr);
+    let tail: LispObject = loop {
+        match cur.destructure_cons() {
+            None => break cur, // dotted non-nil tail (or nil for proper list)
+            Some((elem, rest)) => {
+                // Check for (,@ X) splice form at depth 1.
+                if depth == 1 {
+                    if let Some((h, r)) = elem.destructure_cons() {
+                        if h.as_symbol().as_deref() == Some(",@") {
+                            let inner =
+                                r.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                            let spliced = value_to_obj(eval(
+                                obj_to_value(inner),
+                                env,
+                                editor,
+                                macros,
+                                state,
+                            )?);
+                            let mut s = spliced;
+                            while let Some((e, rr)) = s.destructure_cons() {
+                                out.push(e);
+                                s = rr;
+                            }
+                            // `,@` can only appear as an element; the
+                            // non-nil tail of the spliced list would
+                            // break list shape, so require proper list.
+                            if !s.is_nil() {
+                                return Err(ElispError::EvalError(
+                                    ",@ spliced value was not a proper list".to_string(),
+                                ));
+                            }
+                            cur = rest;
+                            continue;
+                        }
+                        // (, X) at depth 1 as an element behaves as
+                        // `eval(X)` contributing a single element —
+                        // the regular element expansion handles it.
+                    }
+                }
+                out.push(eval_backquote_form(
+                    elem, depth, env, editor, macros, state,
+                )?);
+                cur = rest;
+            }
+        }
+    };
+
+    // Build the result list, honouring any dotted tail.
+    let mut result = if tail.is_nil() {
+        LispObject::nil()
+    } else {
+        eval_backquote_form(tail, depth, env, editor, macros, state)?
+    };
+    for elem in out.into_iter().rev() {
+        result = LispObject::cons(elem, result);
+    }
+    Ok(result)
+}
+
 // Sub-modules for different evaluation contexts
 mod builtins;
+mod dispatch;
 mod dynamic;
 mod editor;
 mod error_forms;

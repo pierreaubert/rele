@@ -7,9 +7,10 @@
 //! sentinel when the operand is not a fixnum.
 //!
 //! Supported opcodes:
-//!   stack-ref (0-5), sub1, add1, eqlsign, gtr, lss, leq, geq,
-//!   diff, plus, mult, goto, goto-if-nil, goto-if-not-nil, return,
-//!   discard, dup, constant[N-192]
+//!   stack-ref (0-5), eq, not, sub1, add1, eqlsign, gtr, lss, leq,
+//!   geq, diff, negate, plus, max, min, mult, goto, goto-if-nil,
+//!   goto-if-not-nil, goto-if-nil-else-pop, goto-if-not-nil-else-pop,
+//!   return, discard, dup, constant[N-192]
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlags};
@@ -73,6 +74,12 @@ pub struct JitCompiler {
     compiled: HashMap<usize, CompiledFuncId>,
     /// Map from compiled handle to native code pointer.
     native_fns: HashMap<CompiledFuncId, *const u8>,
+    /// Per-compiled-function snapshot of the `def_version` the code
+    /// was compiled against. Used by `get_compiled_checked` to
+    /// enforce the `safeExecution` invariant from
+    /// `spec/quint/jit_runtime.qnt`: if the current version differs,
+    /// the compiled code is stale and must be invalidated.
+    compiled_versions: HashMap<usize, u64>,
     /// Monotonic counter for assigning `CompiledFuncId`s.
     next_id: u32,
 }
@@ -101,6 +108,7 @@ impl JitCompiler {
             _isa: isa,
             compiled: HashMap::new(),
             native_fns: HashMap::new(),
+            compiled_versions: HashMap::new(),
             next_id: 0,
         }
     }
@@ -125,6 +133,19 @@ impl JitCompiler {
     /// Returns the handle on success, or `None` if the function contains
     /// opcodes that are not yet supported by the JIT.
     pub fn compile(&mut self, func_id: usize, func: &BytecodeFunction) -> Option<CompiledFuncId> {
+        self.compile_with_version(func_id, func, 0)
+    }
+
+    /// Compile a bytecode function and record the `def_version` that
+    /// was current at compile time. Later calls compare the recorded
+    /// version to the live one; on mismatch the compiled code is
+    /// invalidated and the caller falls back to the VM.
+    pub fn compile_with_version(
+        &mut self,
+        func_id: usize,
+        func: &BytecodeFunction,
+        version: u64,
+    ) -> Option<CompiledFuncId> {
         if let Some(&id) = self.compiled.get(&func_id) {
             return Some(id);
         }
@@ -133,7 +154,34 @@ impl JitCompiler {
         let id = self.alloc_id();
         self.compiled.insert(func_id, id);
         self.native_fns.insert(id, code_ptr);
+        self.compiled_versions.insert(func_id, version);
         Some(id)
+    }
+
+    /// Look up the `def_version` the compiled code for `func_id` was
+    /// compiled against, if any. Returns `None` if not compiled.
+    pub fn compiled_version(&self, func_id: usize) -> Option<u64> {
+        self.compiled_versions.get(&func_id).copied()
+    }
+
+    /// Version-checked lookup. Returns `Some(id)` only if the compiled
+    /// entry's version matches `current_version` — otherwise returns
+    /// `None` AND invalidates the entry, so the caller's next
+    /// profiler hit will trigger a fresh compile.
+    pub fn get_compiled_checked(
+        &mut self,
+        func_id: usize,
+        current_version: u64,
+    ) -> Option<CompiledFuncId> {
+        let cached_version = self.compiled_versions.get(&func_id).copied()?;
+        if cached_version == current_version {
+            self.compiled.get(&func_id).copied()
+        } else {
+            // Stale — drop it so the next call through the compile
+            // path can try again with fresh bytecode.
+            self.invalidate(func_id);
+            None
+        }
     }
 
     /// Call a previously compiled function with the given NaN-boxed arguments.
@@ -187,6 +235,7 @@ impl JitCompiler {
         if let Some(id) = self.compiled.remove(&func_id) {
             self.native_fns.remove(&id);
         }
+        self.compiled_versions.remove(&func_id);
     }
 
     /// Allocate the next `CompiledFuncId`.
@@ -555,6 +604,124 @@ impl JitCompiler {
                         let val = builder.ins().iconst(types::I64, bits);
                         stack.push(val);
                     }
+                }
+
+                // --- eq (61): raw u64 equality (identity) ---
+                61 => {
+                    let b = stack.pop()?;
+                    let a = stack.pop()?;
+                    let cmp = builder.ins().icmp(IntCC::Equal, a, b);
+                    let result = Self::emit_bool_to_value(&mut builder, cmp);
+                    stack.push(result);
+                }
+
+                // --- not (63): pop → t if nil, else nil ---
+                63 => {
+                    let val = stack.pop()?;
+                    let nil_val = builder.ins().iconst(types::I64, NIL_BITS as i64);
+                    let is_nil = builder.ins().icmp(IntCC::Equal, val, nil_val);
+                    let result = Self::emit_bool_to_value(&mut builder, is_nil);
+                    stack.push(result);
+                }
+
+                // --- negate (91): numeric negation (fixnum only) ---
+                91 => {
+                    let val = stack.pop()?;
+                    Self::emit_fixnum_guard(&mut builder, val, deopt_block);
+                    let payload = Self::emit_extract_payload(&mut builder, val);
+                    // Sign-extend before negation so the result preserves sign.
+                    let sp = Self::emit_sign_extend_payload(&mut builder, payload);
+                    let zero = builder.ins().iconst(types::I64, 0);
+                    let negated = builder.ins().isub(zero, sp);
+                    let masked = Self::emit_mask_payload(&mut builder, negated);
+                    let tagged = Self::emit_tag_fixnum(&mut builder, masked);
+                    stack.push(tagged);
+                }
+
+                // --- max (93): binary max over fixnums ---
+                93 => {
+                    let b = stack.pop()?;
+                    let a = stack.pop()?;
+                    Self::emit_fixnum_guard(&mut builder, a, deopt_block);
+                    Self::emit_fixnum_guard(&mut builder, b, deopt_block);
+                    let pa = Self::emit_extract_payload(&mut builder, a);
+                    let pb = Self::emit_extract_payload(&mut builder, b);
+                    let sa = Self::emit_sign_extend_payload(&mut builder, pa);
+                    let sb = Self::emit_sign_extend_payload(&mut builder, pb);
+                    let a_ge_b = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, sa, sb);
+                    // Return the full Value (with NaN-box), not just the payload.
+                    let pick = builder.ins().select(a_ge_b, a, b);
+                    stack.push(pick);
+                }
+
+                // --- min (94): binary min over fixnums ---
+                94 => {
+                    let b = stack.pop()?;
+                    let a = stack.pop()?;
+                    Self::emit_fixnum_guard(&mut builder, a, deopt_block);
+                    Self::emit_fixnum_guard(&mut builder, b, deopt_block);
+                    let pa = Self::emit_extract_payload(&mut builder, a);
+                    let pb = Self::emit_extract_payload(&mut builder, b);
+                    let sa = Self::emit_sign_extend_payload(&mut builder, pa);
+                    let sb = Self::emit_sign_extend_payload(&mut builder, pb);
+                    let a_le_b = builder.ins().icmp(IntCC::SignedLessThanOrEqual, sa, sb);
+                    let pick = builder.ins().select(a_le_b, a, b);
+                    stack.push(pick);
+                }
+
+                // --- goto-if-nil-else-pop (133) ---
+                // If top is nil, branch + leave top on the stack (it IS the result).
+                // Otherwise pop it and fall through.
+                133 => {
+                    if pc + 1 >= bytecode.len() {
+                        return None;
+                    }
+                    let lo = bytecode[pc] as u16;
+                    let hi = bytecode[pc + 1] as u16;
+                    pc += 2;
+                    let target = (lo | (hi << 8)) as usize;
+                    let target_block = *offset_to_block.get(&target)?;
+
+                    // Peek — don't pop yet; the pop only happens on the
+                    // fallthrough branch.
+                    let val = *stack.last()?;
+                    let nil_val = builder.ins().iconst(types::I64, NIL_BITS as i64);
+                    let is_nil = builder.ins().icmp(IntCC::Equal, val, nil_val);
+
+                    let fall_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(is_nil, target_block, &[], fall_block, &[]);
+                    builder.switch_to_block(fall_block);
+                    builder.seal_block(fall_block);
+                    // Fallthrough discards the TOS.
+                    stack.pop();
+                }
+
+                // --- goto-if-not-nil-else-pop (134) ---
+                // If top is non-nil, branch + leave it on the stack.
+                // Otherwise pop and fall through.
+                134 => {
+                    if pc + 1 >= bytecode.len() {
+                        return None;
+                    }
+                    let lo = bytecode[pc] as u16;
+                    let hi = bytecode[pc + 1] as u16;
+                    pc += 2;
+                    let target = (lo | (hi << 8)) as usize;
+                    let target_block = *offset_to_block.get(&target)?;
+
+                    let val = *stack.last()?;
+                    let nil_val = builder.ins().iconst(types::I64, NIL_BITS as i64);
+                    let is_nil = builder.ins().icmp(IntCC::Equal, val, nil_val);
+
+                    let fall_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(is_nil, fall_block, &[], target_block, &[]);
+                    builder.switch_to_block(fall_block);
+                    builder.seal_block(fall_block);
+                    stack.pop();
                 }
 
                 // --- unsupported opcode: bail ---
@@ -1377,5 +1544,270 @@ mod tests {
             }
             NativeResult::Deoptimize => panic!("deopt"),
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Phase C — additional opcode coverage
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_jit_eq_identical_fixnums() {
+        // Bytecode for (eq a a) on a single arg:
+        //   stack-ref 0  -> push arg
+        //   stack-ref 1  -> push arg again (now at depth 1)
+        //   eq (61)
+        //   return (135)
+        let func = BytecodeFunction {
+            argdesc: 0x0101,
+            bytecode: vec![0, 1, 61, 135],
+            constants: vec![],
+            maxdepth: 3,
+            docstring: None,
+            interactive: None,
+        };
+        let mut jit = JitCompiler::new();
+        let id = jit.compile(100, &func).expect("should compile");
+        let a = fixnum_i64(7);
+        let r = jit.call(id, &[a]).expect("call");
+        match r {
+            NativeResult::Ok(bits) => assert_eq!(bits, T_BITS, "7 eq 7 → t"),
+            NativeResult::Deoptimize => panic!("deopt"),
+        }
+    }
+
+    #[test]
+    fn test_jit_not() {
+        // (not arg):
+        //   stack-ref 0, not (63), return
+        let func = BytecodeFunction {
+            argdesc: 0x0101,
+            bytecode: vec![0, 63, 135],
+            constants: vec![],
+            maxdepth: 2,
+            docstring: None,
+            interactive: None,
+        };
+        let mut jit = JitCompiler::new();
+        let id = jit.compile(101, &func).expect("should compile");
+
+        // (not nil) → t
+        let r = jit.call(id, &[NIL_BITS as i64]).expect("call");
+        match r {
+            NativeResult::Ok(bits) => assert_eq!(bits, T_BITS),
+            NativeResult::Deoptimize => panic!("deopt"),
+        }
+
+        // (not 5) → nil
+        let r = jit.call(id, &[fixnum_i64(5)]).expect("call");
+        match r {
+            NativeResult::Ok(bits) => assert_eq!(bits, NIL_BITS),
+            NativeResult::Deoptimize => panic!("deopt"),
+        }
+    }
+
+    #[test]
+    fn test_jit_negate() {
+        // (- x) through Bnegate:
+        //   stack-ref 0, negate (91), return
+        let func = BytecodeFunction {
+            argdesc: 0x0101,
+            bytecode: vec![0, 91, 135],
+            constants: vec![],
+            maxdepth: 2,
+            docstring: None,
+            interactive: None,
+        };
+        let mut jit = JitCompiler::new();
+        let id = jit.compile(102, &func).expect("should compile");
+
+        let r = jit.call(id, &[fixnum_i64(3)]).expect("call");
+        match r {
+            NativeResult::Ok(bits) => {
+                let n = i64_to_fixnum(bits as i64).expect("fixnum");
+                assert_eq!(n, -3);
+            }
+            NativeResult::Deoptimize => panic!("deopt"),
+        }
+
+        // Negate of a negative round-trips.
+        let r = jit.call(id, &[fixnum_i64(-17)]).expect("call");
+        match r {
+            NativeResult::Ok(bits) => {
+                let n = i64_to_fixnum(bits as i64).expect("fixnum");
+                assert_eq!(n, 17);
+            }
+            NativeResult::Deoptimize => panic!("deopt"),
+        }
+    }
+
+    #[test]
+    fn test_jit_max_min() {
+        // (max a b):
+        //   stack-ref 1, stack-ref 1, max (93), return
+        let max_func = BytecodeFunction {
+            argdesc: 0x0202,
+            bytecode: vec![1, 1, 93, 135],
+            constants: vec![],
+            maxdepth: 4,
+            docstring: None,
+            interactive: None,
+        };
+        let mut jit = JitCompiler::new();
+        let id = jit.compile(103, &max_func).expect("should compile");
+        let r = jit.call(id, &[fixnum_i64(3), fixnum_i64(7)]).expect("call");
+        match r {
+            NativeResult::Ok(bits) => {
+                assert_eq!(i64_to_fixnum(bits as i64), Some(7));
+            }
+            NativeResult::Deoptimize => panic!("deopt"),
+        }
+
+        // (min a b)
+        let min_func = BytecodeFunction {
+            argdesc: 0x0202,
+            bytecode: vec![1, 1, 94, 135],
+            constants: vec![],
+            maxdepth: 4,
+            docstring: None,
+            interactive: None,
+        };
+        let id = jit.compile(104, &min_func).expect("should compile");
+        let r = jit.call(id, &[fixnum_i64(3), fixnum_i64(7)]).expect("call");
+        match r {
+            NativeResult::Ok(bits) => {
+                assert_eq!(i64_to_fixnum(bits as i64), Some(3));
+            }
+            NativeResult::Deoptimize => panic!("deopt"),
+        }
+    }
+
+    #[test]
+    fn test_jit_goto_if_nil_else_pop() {
+        // (or nil 7) compiles roughly to:
+        //   constant nil  (push nil)         ; bc offset 0
+        //   goto-if-not-nil-else-pop end     ; bc offset 1 — not-nil branches
+        //   constant 7                       ; bc offset 4 — fallthrough
+        //   goto end                         ; bc offset 5
+        // end:
+        //   return                           ; bc offset 8
+        //
+        // We build a bytecode that uses goto-if-nil-else-pop (133)
+        // as the simpler single-branch form:
+        //   constant N            (push N)
+        //   goto-if-nil-else-pop end  (if nil: keep nil, branch; else pop)
+        //   constant "fell-through"
+        // end: return
+        //
+        // When N is nil, we branch → return nil.
+        // When N is 7, we pop, push "fell-through", return it.
+        let func = BytecodeFunction {
+            // No args, two constants.
+            argdesc: 0x0000,
+            bytecode: vec![
+                192,        // constant 0 (arg-from-outside is absent; arg pushed by caller)
+                // Actually we want a test that mirrors (or X 7). Use arg 0:
+            ],
+            constants: vec![LispObject::Integer(7)],
+            maxdepth: 2,
+            docstring: None,
+            interactive: None,
+        };
+        // Bytecode: stack-ref 0, goto-if-nil-else-pop 6, constant 0,
+        // return, return.  The target offset (6) is the final return.
+        // Layout: [0, 133, 6, 0, 192, 135, 135]
+        //          pc:0  1     4    5    6
+        // On nil TOS → branch to pc=6 (value kept on stack) → return nil.
+        // On non-nil TOS → pop, constant 42, return.
+        let func = BytecodeFunction {
+            argdesc: 0x0101,
+            bytecode: vec![
+                0,          // stack-ref 0  (push arg)
+                133, 6, 0,  // goto-if-nil-else-pop 6
+                192,        // constant 0 → 42
+                135,        // return
+                135,        // end: return (nil branch lands here)
+            ],
+            constants: vec![LispObject::Integer(42)],
+            maxdepth: 3,
+            docstring: None,
+            interactive: None,
+        };
+        let mut jit = JitCompiler::new();
+        let id = jit.compile(105, &func).expect("should compile");
+
+        // Pass nil → the goto fires, stack still has nil on top → return nil.
+        let r = jit.call(id, &[NIL_BITS as i64]).expect("call");
+        match r {
+            NativeResult::Ok(bits) => assert_eq!(bits, NIL_BITS),
+            NativeResult::Deoptimize => panic!("deopt"),
+        }
+        // Pass 5 → not-nil → pop, push 42, return 42.
+        let r = jit.call(id, &[fixnum_i64(5)]).expect("call");
+        match r {
+            NativeResult::Ok(bits) => {
+                assert_eq!(i64_to_fixnum(bits as i64), Some(42));
+            }
+            NativeResult::Deoptimize => panic!("deopt"),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Phase D+ — version-checked compile / call
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_compile_with_version_round_trips() {
+        // Compile at version 7, then retrieve the cached version back.
+        let func = BytecodeFunction {
+            argdesc: 0x0101,
+            bytecode: vec![0, 84, 135],
+            constants: vec![],
+            maxdepth: 2,
+            docstring: None,
+            interactive: None,
+        };
+        let mut jit = JitCompiler::new();
+        let id = jit
+            .compile_with_version(200, &func, 7)
+            .expect("should compile");
+        assert_eq!(jit.compiled_version(200), Some(7));
+        // Matching version returns the entry.
+        assert_eq!(jit.get_compiled_checked(200, 7), Some(id));
+    }
+
+    #[test]
+    fn test_get_compiled_checked_invalidates_on_mismatch() {
+        let func = BytecodeFunction {
+            argdesc: 0x0101,
+            bytecode: vec![0, 84, 135],
+            constants: vec![],
+            maxdepth: 2,
+            docstring: None,
+            interactive: None,
+        };
+        let mut jit = JitCompiler::new();
+        jit.compile_with_version(201, &func, 1).expect("should compile");
+        // Version bumps to 2 somewhere else — lookup must drop the
+        // stale entry and return None.
+        assert!(jit.get_compiled_checked(201, 2).is_none());
+        assert!(!jit.is_compiled(201), "stale entry should have been dropped");
+        assert_eq!(jit.compiled_version(201), None);
+    }
+
+    #[test]
+    fn test_invalidate_clears_version_slot() {
+        let func = BytecodeFunction {
+            argdesc: 0x0101,
+            bytecode: vec![0, 84, 135],
+            constants: vec![],
+            maxdepth: 2,
+            docstring: None,
+            interactive: None,
+        };
+        let mut jit = JitCompiler::new();
+        jit.compile_with_version(202, &func, 5).expect("should compile");
+        jit.invalidate(202);
+        assert_eq!(jit.compiled_version(202), None);
+        assert!(!jit.is_compiled(202));
     }
 }

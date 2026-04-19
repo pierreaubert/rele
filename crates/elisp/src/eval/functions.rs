@@ -216,6 +216,12 @@ fn stateful_intern_soft(
     args: &LispObject,
     env: &Arc<RwLock<Environment>>,
 ) -> ElispResult<LispObject> {
+    // `intern-soft` returns the symbol if it's already known to the
+    // obarray, else nil. "Known" here means: any prior
+    // `intern`/`define`/`defun`/etc. reference installed the symbol
+    // — which covers primitives (function cell set at startup),
+    // user-defined values (variable cell), and plain references in
+    // loaded code. We probe the global obarray by name.
     let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let name = match &arg {
         LispObject::String(s) => s.clone(),
@@ -223,10 +229,28 @@ fn stateful_intern_soft(
         _ => return Ok(LispObject::nil()),
     };
     if env.read().get(&name).is_some() {
-        Ok(LispObject::symbol(&name))
-    } else {
-        Ok(LispObject::nil())
+        return Ok(LispObject::symbol(&name));
     }
+    // Fall back to a global obarray scan — but only count a symbol
+    // as "interned" if it has a real binding (value OR function
+    // cell). Merely appearing in the obarray isn't enough because
+    // our reader interns bare tokens on first read; that would
+    // make `(intern-soft "foo")` return `foo` for any name the
+    // reader has seen, which isn't what callers expect.
+    let table = crate::obarray::GLOBAL_OBARRAY.read();
+    for id in 0..table.symbol_count() as u32 {
+        let sid = crate::obarray::SymbolId(id);
+        if table.name(sid) == name {
+            drop(table);
+            let has_value = crate::obarray::get_value_cell(sid).is_some();
+            let has_fn = crate::obarray::get_function_cell(sid).is_some();
+            if has_value || has_fn {
+                return Ok(LispObject::Symbol(sid));
+            }
+            return Ok(LispObject::nil());
+        }
+    }
+    Ok(LispObject::nil())
 }
 
 fn stateful_set(args: &LispObject) -> ElispResult<LispObject> {

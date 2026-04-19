@@ -83,12 +83,12 @@ cranelift-jit = "0.116"
 cranelift-native = "0.116"
 
 # GPUI toolkit (from sotf project)
-gpui-ui-kit = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
-gpui-ui-kit-macros = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
-gpui-builder = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
-gpui-design = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
-gpui-keybinding = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
-gpui-pretext = { version = "0.6", git = "file:///Users/pierrre/src/sotf", branch = "master" }
+gpui-ui-kit = { version = "0.6", git = "file:///Users/pierre/src/sotf", branch = "master" }
+gpui-ui-kit-macros = { version = "0.6", git = "file:///Users/pierre/src/sotf", branch = "master" }
+gpui-builder = { version = "0.6", git = "file:///Users/pierre/src/sotf", branch = "master" }
+gpui-design = { version = "0.6", git = "file:///Users/pierre/src/sotf", branch = "master" }
+gpui-keybinding = { version = "0.6", git = "file:///Users/pierre/src/sotf", branch = "master" }
+gpui-pretext = { version = "0.6", git = "file:///Users/pierre/src/sotf", branch = "master" }
 
 # TUI framework
 ratatui = "0.30"

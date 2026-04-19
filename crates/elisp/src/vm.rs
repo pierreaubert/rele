@@ -2347,7 +2347,11 @@ mod elc_tests {
 
     #[test]
     fn test_parse_subr_elc() {
-        let data = match std::fs::read("/opt/homebrew/share/emacs/30.2/lisp/subr.elc") {
+        let Some(lisp_dir) = crate::eval::tests::emacs_lisp_dir() else {
+            return;
+        };
+        let path = format!("{lisp_dir}/subr.elc");
+        let data = match std::fs::read(&path) {
             Ok(d) => d,
             Err(_) => return,
         };
@@ -2374,8 +2378,11 @@ mod elc_tests {
 
     #[test]
     fn test_parse_cl_macs_elc() {
-        let path = "/opt/homebrew/share/emacs/30.2/lisp/emacs-lisp/cl-macs.elc";
-        let data = match std::fs::read(path) {
+        let Some(lisp_dir) = crate::eval::tests::emacs_lisp_dir() else {
+            return;
+        };
+        let path = format!("{lisp_dir}/emacs-lisp/cl-macs.elc");
+        let data = match std::fs::read(&path) {
             Ok(d) => d,
             Err(_) => return,
         };

@@ -3113,7 +3113,7 @@ dependencies = [
 [[package]]
 name = "gpui-builder"
 version = "0.6.1"
-source = "git+file:///Users/pierrre/src/sotf?branch=master#dfbfc11bddfba4ae1f02d50d68f6e5cf8aa85b1c"
+source = "git+file:///Users/pierre/src/sotf?branch=master#2ed8b804b036de65f3f6c111168e1cf373c0c595"
 dependencies = [
  "gpui-pretext",
 ]
@@ -3121,7 +3121,7 @@ dependencies = [
 [[package]]
 name = "gpui-design"
 version = "0.6.0"
-source = "git+file:///Users/pierrre/src/sotf?branch=master#dfbfc11bddfba4ae1f02d50d68f6e5cf8aa85b1c"
+source = "git+file:///Users/pierre/src/sotf?branch=master#2ed8b804b036de65f3f6c111168e1cf373c0c595"
 dependencies = [
  "gpui 0.2.2 (git+https://github.com/zed-industries/zed.git?rev=ebb451ec7b5bfdd60e7b70cf56f066c8f9a12293)",
  "serde",
@@ -3130,7 +3130,7 @@ dependencies = [
 [[package]]
 name = "gpui-ios"
 version = "0.6.1"
-source = "git+file:///Users/pierrre/src/sotf?branch=master#dfbfc11bddfba4ae1f02d50d68f6e5cf8aa85b1c"
+source = "git+file:///Users/pierre/src/sotf?branch=master#2ed8b804b036de65f3f6c111168e1cf373c0c595"
 dependencies = [
  "anyhow",
  "block",
@@ -3155,7 +3155,7 @@ dependencies = [
 [[package]]
 name = "gpui-keybinding"
 version = "0.6.0"
-source = "git+file:///Users/pierrre/src/sotf?branch=master#dfbfc11bddfba4ae1f02d50d68f6e5cf8aa85b1c"
+source = "git+file:///Users/pierre/src/sotf?branch=master#2ed8b804b036de65f3f6c111168e1cf373c0c595"
 dependencies = [
  "gpui 0.2.2 (git+https://github.com/zed-industries/zed.git?rev=ebb451ec7b5bfdd60e7b70cf56f066c8f9a12293)",
  "serde",
@@ -3164,15 +3164,15 @@ dependencies = [
 [[package]]
 name = "gpui-pretext"
 version = "0.6.2"
-source = "git+file:///Users/pierrre/src/sotf?branch=master#dfbfc11bddfba4ae1f02d50d68f6e5cf8aa85b1c"
+source = "git+file:///Users/pierre/src/sotf?branch=master#2ed8b804b036de65f3f6c111168e1cf373c0c595"
 dependencies = [
  "unicode-segmentation",
 ]
 
 [[package]]
 name = "gpui-ui-kit"
-version = "0.6.16"
-source = "git+file:///Users/pierrre/src/sotf?branch=master#dfbfc11bddfba4ae1f02d50d68f6e5cf8aa85b1c"
+version = "0.6.17"
+source = "git+file:///Users/pierre/src/sotf?branch=master#2ed8b804b036de65f3f6c111168e1cf373c0c595"
 dependencies = [
  "gpui 0.2.2 (git+https://github.com/zed-industries/zed.git?rev=ebb451ec7b5bfdd60e7b70cf56f066c8f9a12293)",
  "gpui-design",
@@ -3191,7 +3191,7 @@ dependencies = [
 [[package]]
 name = "gpui-ui-kit-macros"
 version = "0.6.0"
-source = "git+file:///Users/pierrre/src/sotf?branch=master#dfbfc11bddfba4ae1f02d50d68f6e5cf8aa85b1c"
+source = "git+file:///Users/pierre/src/sotf?branch=master#2ed8b804b036de65f3f6c111168e1cf373c0c595"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6288,6 +6288,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-module",
  "cranelift-native",
+ "criterion",
  "parking_lot",
  "regex",
  "serde_json",

@@ -200,8 +200,47 @@ pub fn get_function_cell(sym: SymbolId) -> Option<LispObject> {
 }
 
 /// Write the symbol's function cell.
+///
+/// Side effect: bumps the symbol's `def_version` counter. JIT-compiled
+/// code records the `def_version` it was compiled against; when the
+/// cached version no longer matches the current version, the
+/// compiled code is stale and must be deoptimized. This matches the
+/// `safeExecution` / `noStaleKeepsRunning` invariants in
+/// `spec/quint/jit_runtime.qnt`.
+///
+/// Note: a `BytecodeFunction*`-to-`SymbolId` mapping would let the
+/// JIT call site look up "who owns this bytecode" on every call, but
+/// `BytecodeFunction` has value semantics (not `Arc`-wrapped) so its
+/// address isn't stable across `Clone::clone` / moves. That mapping
+/// is left for a later refactor that boxes bytecode behind `Arc`.
+/// Rust's move semantics already give automatic safety: a redefined
+/// function lands at a new address, so the old `func_id` in the JIT
+/// cache is orphaned and never matched again.
 pub fn set_function_cell(sym: SymbolId, value: LispObject) {
     GLOBAL_OBARRAY.write().set_function_cell(sym, value);
+    bump_def_version(sym);
+}
+
+/// Per-symbol redefinition counter. A fresh symbol has version 0;
+/// each `set_function_cell` bumps it by one. Readable via
+/// `def_version(sym)` for tools / tests; `compile_with_version`
+/// snapshots the current value when a function is compiled.
+///
+/// Stored separately from the symbol table so the obarray's write
+/// lock isn't needed by the JIT call-site on every invocation.
+static DEF_VERSIONS: LazyLock<RwLock<std::collections::HashMap<SymbolId, u64>>> =
+    LazyLock::new(|| RwLock::new(std::collections::HashMap::new()));
+
+/// Increment `sym`'s def_version counter. Called from every
+/// `set_function_cell` writer.
+pub fn bump_def_version(sym: SymbolId) {
+    let mut map = DEF_VERSIONS.write();
+    *map.entry(sym).or_insert(0) += 1;
+}
+
+/// Return `sym`'s current def_version (0 if never defined).
+pub fn def_version(sym: SymbolId) -> u64 {
+    DEF_VERSIONS.read().get(&sym).copied().unwrap_or(0)
 }
 
 /// Look up the flags for a symbol.
@@ -234,4 +273,32 @@ pub fn mark_special(sym: SymbolId) {
 #[cfg(test)]
 pub fn clear_plist_for_tests(sym: SymbolId) {
     GLOBAL_OBARRAY.write().symbols[sym.0 as usize].plist.clear();
+}
+
+#[cfg(test)]
+mod def_version_tests {
+    use super::*;
+
+    #[test]
+    fn def_version_bumps_on_set_function_cell() {
+        // Each call to set_function_cell must bump the counter.
+        // Use a symbol unique to this test so parallel tests don't
+        // perturb the count.
+        let sym = intern("obarray-def-version-test-fn");
+        let before = def_version(sym);
+        set_function_cell(sym, LispObject::nil());
+        let after_one = def_version(sym);
+        set_function_cell(sym, LispObject::t());
+        let after_two = def_version(sym);
+        assert_eq!(after_one, before + 1, "first set bumps once");
+        assert_eq!(after_two, before + 2, "second set bumps again");
+    }
+
+    #[test]
+    fn def_version_of_untouched_symbol_is_zero() {
+        let sym = intern("obarray-def-version-untouched");
+        // Must be queried BEFORE any set_function_cell, and the
+        // counter starts at 0 by contract.
+        assert_eq!(def_version(sym), 0);
+    }
 }
