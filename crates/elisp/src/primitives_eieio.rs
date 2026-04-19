@@ -441,7 +441,11 @@ pub fn call_eieio_primitive(name: &str, args: &LispObject) -> Option<ElispResult
         "oset" => prim_oset(args),
         "eieio-oset" => prim_eieio_oset(args),
         "slot-boundp" => prim_slot_boundp(args),
-        "object-of-class-p" | "cl-typep" => prim_object_of_class_p(args),
+        // Note: `cl-typep` is the general type-check function; the
+        // EIEIO-specific class check is `object-of-class-p`. Routing
+        // `cl-typep` here would miss builtin types (integer, number,
+        // string, ...) — handled in primitives_cl.rs instead.
+        "object-of-class-p" => prim_object_of_class_p(args),
         "eieio-object-p" => prim_eieio_object_p(args),
         "eieio-object-class" | "cl-type-of" => prim_eieio_object_class(args),
         "eieio-object-name" | "object-name" => prim_eieio_object_name(args),
@@ -476,7 +480,8 @@ pub const EIEIO_PRIMITIVE_NAMES: &[&str] = &[
     "eieio-oset",
     "slot-boundp",
     "object-of-class-p",
-    "cl-typep",
+    // `cl-typep` is owned by primitives_cl.rs (supports integer,
+    // number, list, string, ... in addition to classes).
     "eieio-object-p",
     "eieio-object-class",
     "cl-type-of",

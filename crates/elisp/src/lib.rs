@@ -8,6 +8,7 @@ pub mod obarray;
 mod object;
 mod primitives;
 mod primitives_buffer;
+mod primitives_cl;
 mod primitives_eieio;
 mod primitives_file;
 mod primitives_value;

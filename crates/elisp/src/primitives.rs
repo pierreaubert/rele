@@ -154,6 +154,16 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     for &n in crate::primitives_eieio::EIEIO_PRIMITIVE_NAMES {
         interp.define(n, LispObject::primitive(n));
     }
+    // cl-lib primitives — see primitives_cl.rs. Higher-order functions
+    // (cl-find, cl-some, cl-reduce, cl-mapcar, ...) need the interpreter
+    // env/state to funcall their predicate arg, so they live in the
+    // "state_cl" module and dispatch through call_stateful_primitive.
+    for &n in crate::primitives_cl::CL_PRIMITIVE_NAMES {
+        interp.define(n, LispObject::primitive(n));
+    }
+    for &n in crate::eval::state_cl::STATEFUL_CL_NAMES {
+        interp.define(n, LispObject::primitive(n));
+    }
 
     // New primitives — string
     interp.define(

@@ -1550,6 +1550,20 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("bignump", LispObject::primitive("ignore"));
     interp.define("cl-progv", LispObject::primitive("ignore"));
 
+    // Void-variable stubs — top defvar-missing errors from the emacs test suite.
+    // eshell/esh-util.el
+    interp.define("eshell-debug-command", LispObject::nil());
+    interp.define(
+        "eshell-debug-command-buffer",
+        LispObject::string("*eshell last cmd*"),
+    );
+    // emacs-lisp/nadvice.el — initial value is a complex alist, nil unblocks the lookups.
+    interp.define("advice--how-alist", LispObject::nil());
+    // net/tramp-archive.el — real init is (featurep 'dbusbind); we have no dbus.
+    interp.define("tramp-archive-enabled", LispObject::nil());
+    // calendar/icalendar.el — helper fn referenced at load time.
+    interp.define("icalendar-parse-property", LispObject::nil());
+
     // cl--find-class is implemented in the eval dispatch (mod.rs)
     // since it's tightly coupled with the (setf (cl--find-class N) V)
     // place expansion handled there. No registration needed here.
@@ -2091,6 +2105,602 @@ fn ert_with_temp_file_binds_name_unevaluated() {
         )
         .unwrap();
     assert_eq!(r, LispObject::t());
+}
+
+// =========================================================
+// cl-* macros and functions — one-pass native implementation
+// =========================================================
+
+#[test]
+fn cl_block_return_from() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    // Normal return from block.
+    let r = interp.eval(read("(cl-block foo (cl-return-from foo 42) 99)").unwrap()).unwrap();
+    assert_eq!(r, LispObject::integer(42));
+    // Block that doesn't return early → last body value.
+    let r = interp.eval(read("(cl-block foo 1 2 3)").unwrap()).unwrap();
+    assert_eq!(r, LispObject::integer(3));
+    // Unmatched throws propagate.
+    let r = interp.eval(read("(cl-block outer (cl-block inner (cl-return-from outer 7)))").unwrap()).unwrap();
+    assert_eq!(r, LispObject::integer(7));
+}
+
+#[test]
+fn cl_case_matches_values_and_default() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp.eval(read("(cl-case 2 (1 'a) (2 'b) (t 'z))").unwrap()).unwrap();
+    assert_eq!(r, LispObject::symbol("b"));
+    // Value-list match.
+    let r = interp.eval(read("(cl-case 3 ((1 2) 'ab) ((3 4) 'cd) (t 'z))").unwrap()).unwrap();
+    assert_eq!(r, LispObject::symbol("cd"));
+    // Default branch.
+    let r = interp.eval(read("(cl-case 99 (1 'a) (t 'z))").unwrap()).unwrap();
+    assert_eq!(r, LispObject::symbol("z"));
+}
+
+#[test]
+fn cl_flet_introduces_local_function() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(
+            read(
+                "(cl-flet ((double (x) (* x 2))) \
+                   (double 21))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::integer(42));
+}
+
+#[test]
+fn cl_labels_supports_mutual_recursion() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(
+            read(
+                "(cl-labels ((evenp (n) (if (= n 0) t (oddp (- n 1)))) \
+                             (oddp (n) (if (= n 0) nil (evenp (- n 1))))) \
+                   (evenp 10))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::t());
+}
+
+#[test]
+fn cl_letf_restores_on_exit() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    interp.eval(read("(defvar x 1)").unwrap()).unwrap();
+    let r = interp.eval(read("(cl-letf ((x 99)) x)").unwrap()).unwrap();
+    assert_eq!(r, LispObject::integer(99));
+    // After exit x restored to 1.
+    let r = interp.eval(read("x").unwrap()).unwrap();
+    assert_eq!(r, LispObject::integer(1));
+}
+
+#[test]
+fn cl_the_returns_form_unchanged() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp.eval(read("(cl-the integer (+ 1 2))").unwrap()).unwrap();
+    assert_eq!(r, LispObject::integer(3));
+}
+
+#[test]
+fn cl_assert_signals_on_nil() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let err = interp.eval(read("(cl-assert nil)").unwrap()).unwrap_err();
+    match err {
+        crate::error::ElispError::Signal(sig) => {
+            assert_eq!(sig.symbol.as_symbol().as_deref(), Some("cl-assertion-failed"));
+        }
+        _ => panic!("expected Signal, got {err:?}"),
+    }
+    // Non-nil passes silently.
+    let r = interp.eval(read("(cl-assert t)").unwrap()).unwrap();
+    assert_eq!(r, LispObject::nil());
+}
+
+#[test]
+fn cl_check_type_signals_on_wrong_type() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let err = interp
+        .eval(read("(cl-check-type \"hi\" integer)").unwrap())
+        .unwrap_err();
+    match err {
+        crate::error::ElispError::Signal(sig) => {
+            assert_eq!(
+                sig.symbol.as_symbol().as_deref(),
+                Some("wrong-type-argument")
+            );
+        }
+        _ => panic!("expected Signal"),
+    }
+    // Correct type passes.
+    let r = interp.eval(read("(cl-check-type 7 integer)").unwrap()).unwrap();
+    assert_eq!(r, LispObject::nil());
+}
+
+#[test]
+fn cl_do_counts_down() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(
+            read(
+                "(cl-do ((i 0 (+ i 1)) (acc 0 (+ acc i))) \
+                   ((= i 5) acc))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::integer(10)); // 0+1+2+3+4
+}
+
+// ---- cl-loop comprehensive ----------------------------------------
+
+#[test]
+fn cl_loop_for_in_collect() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(read("(cl-loop for x in '(1 2 3 4) collect (* x 10))").unwrap())
+        .unwrap();
+    // Expect (10 20 30 40)
+    let items: Vec<_> = {
+        let mut out = Vec::new();
+        let mut c = r;
+        while let Some((car, cdr)) = c.destructure_cons() {
+            out.push(car);
+            c = cdr;
+        }
+        out
+    };
+    assert_eq!(items.len(), 4);
+    assert_eq!(items[0], LispObject::integer(10));
+    assert_eq!(items[3], LispObject::integer(40));
+}
+
+#[test]
+fn cl_loop_for_from_to_sum() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(read("(cl-loop for i from 1 to 10 sum i)").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::integer(55));
+}
+
+#[test]
+fn cl_loop_for_from_below() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(read("(cl-loop for i from 0 below 4 collect i)").unwrap())
+        .unwrap();
+    let items: Vec<_> = {
+        let mut out = Vec::new();
+        let mut c = r;
+        while let Some((car, cdr)) = c.destructure_cons() {
+            out.push(car);
+            c = cdr;
+        }
+        out
+    };
+    assert_eq!(items.len(), 4);
+    assert_eq!(items[0], LispObject::integer(0));
+    assert_eq!(items[3], LispObject::integer(3));
+}
+
+#[test]
+fn cl_loop_count_and_maximize() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(
+            read(
+                "(cl-loop for x in '(3 1 4 1 5 9 2 6) \
+                   count (> x 3) into big \
+                   maximize x into top \
+                   finally return (list big top))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    // big=3 (4, 5, 9, 6 → 4 actually. wait 4>3, 5>3, 9>3, 6>3 → 4). Let me recount:
+    // 3>3=false, 1>3=false, 4>3=true, 1>3=false, 5>3=true, 9>3=true, 2>3=false, 6>3=true → 4.
+    let items: Vec<_> = {
+        let mut out = Vec::new();
+        let mut c = r;
+        while let Some((car, cdr)) = c.destructure_cons() {
+            out.push(car);
+            c = cdr;
+        }
+        out
+    };
+    assert_eq!(items[0], LispObject::integer(4)); // big
+    assert_eq!(items[1], LispObject::integer(9)); // top
+}
+
+#[test]
+fn cl_loop_while_breaks_early() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(
+            read(
+                "(cl-loop for i from 1 to 100 \
+                   while (< i 5) \
+                   collect i)",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut count = 0;
+    let mut c = r;
+    while let Some((_, cdr)) = c.destructure_cons() {
+        count += 1;
+        c = cdr;
+    }
+    assert_eq!(count, 4); // 1, 2, 3, 4
+}
+
+#[test]
+fn cl_loop_always_returns_t_or_nil() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(read("(cl-loop for x in '(2 4 6) always (= 0 (mod x 2)))").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::t());
+    let r = interp
+        .eval(read("(cl-loop for x in '(2 3 6) always (= 0 (mod x 2)))").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::nil());
+}
+
+#[test]
+fn cl_loop_thereis_returns_value() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(read("(cl-loop for x in '(1 2 3) thereis (and (> x 1) x))").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::integer(2));
+}
+
+#[test]
+fn cl_loop_repeat() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(read("(cl-loop repeat 5 sum 2)").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::integer(10));
+}
+
+// ---- cl-* functions ------------------------------------------------
+
+#[test]
+fn cl_find_and_if() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp.eval(read("(cl-find 3 '(1 2 3 4))").unwrap()).unwrap();
+    assert_eq!(r, LispObject::integer(3));
+    let r = interp
+        .eval(read("(cl-find-if (lambda (x) (> x 2)) '(1 2 3 4))").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::integer(3));
+}
+
+#[test]
+fn cl_some_and_every() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(read("(cl-some (lambda (x) (> x 5)) '(1 2 3))").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::nil());
+    let r = interp
+        .eval(read("(cl-some (lambda (x) (> x 2)) '(1 2 3))").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::t());
+    let r = interp
+        .eval(read("(cl-every 'integerp '(1 2 3))").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::t());
+    let r = interp
+        .eval(read("(cl-every 'integerp '(1 2 \"x\"))").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::nil());
+}
+
+#[test]
+fn cl_reduce_accumulates() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(read("(cl-reduce '+ '(1 2 3 4))").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::integer(10));
+    let r = interp
+        .eval(read("(cl-reduce '+ '(1 2 3) :initial-value 100)").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::integer(106));
+}
+
+#[test]
+fn cl_mapcar_pairs_multiple_lists() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(read("(cl-mapcar '+ '(1 2 3) '(10 20 30))").unwrap())
+        .unwrap();
+    let items: Vec<_> = {
+        let mut out = Vec::new();
+        let mut c = r;
+        while let Some((car, cdr)) = c.destructure_cons() {
+            out.push(car);
+            c = cdr;
+        }
+        out
+    };
+    assert_eq!(items[0], LispObject::integer(11));
+    assert_eq!(items[2], LispObject::integer(33));
+}
+
+#[test]
+fn cl_position_member_count_remove() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(
+        interp.eval(read("(cl-position 3 '(1 2 3 4))").unwrap()).unwrap(),
+        LispObject::integer(2)
+    );
+    // cl-count goes via the non-predicate form.
+    assert_eq!(
+        interp.eval(read("(cl-count 2 '(1 2 2 3 2))").unwrap()).unwrap(),
+        LispObject::integer(3)
+    );
+    let r = interp.eval(read("(cl-remove 2 '(1 2 3 2 4))").unwrap()).unwrap();
+    let items: Vec<_> = {
+        let mut out = Vec::new();
+        let mut c = r;
+        while let Some((car, cdr)) = c.destructure_cons() {
+            out.push(car);
+            c = cdr;
+        }
+        out
+    };
+    assert_eq!(items, vec![LispObject::integer(1), LispObject::integer(3), LispObject::integer(4)]);
+}
+
+#[test]
+fn cl_accessors_first_through_tenth() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(
+        interp.eval(read("(cl-first '(a b c))").unwrap()).unwrap(),
+        LispObject::symbol("a")
+    );
+    assert_eq!(
+        interp.eval(read("(cl-second '(a b c))").unwrap()).unwrap(),
+        LispObject::symbol("b")
+    );
+    assert_eq!(
+        interp.eval(read("(cl-third '(a b c))").unwrap()).unwrap(),
+        LispObject::symbol("c")
+    );
+    assert_eq!(
+        interp.eval(read("(cl-fourth '(a b c))").unwrap()).unwrap(),
+        LispObject::nil()
+    );
+}
+
+#[test]
+fn cl_gcd_lcm_isqrt() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(interp.eval(read("(cl-gcd 12 18)").unwrap()).unwrap(), LispObject::integer(6));
+    assert_eq!(interp.eval(read("(cl-lcm 4 6)").unwrap()).unwrap(), LispObject::integer(12));
+    assert_eq!(interp.eval(read("(cl-isqrt 100)").unwrap()).unwrap(), LispObject::integer(10));
+    assert_eq!(interp.eval(read("(cl-isqrt 99)").unwrap()).unwrap(), LispObject::integer(9));
+}
+
+#[test]
+fn cl_union_intersection_difference() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(read("(cl-intersection '(1 2 3) '(2 3 4))").unwrap())
+        .unwrap();
+    let items: Vec<_> = {
+        let mut out = Vec::new();
+        let mut c = r;
+        while let Some((car, cdr)) = c.destructure_cons() {
+            out.push(car);
+            c = cdr;
+        }
+        out
+    };
+    assert_eq!(items.len(), 2);
+    assert!(items.contains(&LispObject::integer(2)));
+    assert!(items.contains(&LispObject::integer(3)));
+
+    let r = interp
+        .eval(read("(cl-subsetp '(1 2) '(1 2 3))").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::t());
+    let r = interp
+        .eval(read("(cl-subsetp '(1 9) '(1 2 3))").unwrap())
+        .unwrap();
+    assert_eq!(r, LispObject::nil());
+}
+
+#[test]
+fn cl_caddr_and_friends() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(interp.eval(read("(cl-caddr '(a b c d))").unwrap()).unwrap(), LispObject::symbol("c"));
+    assert_eq!(interp.eval(read("(cl-cadddr '(a b c d))").unwrap()).unwrap(), LispObject::symbol("d"));
+    assert_eq!(interp.eval(read("(cl-cdddr '(a b c d))").unwrap()).unwrap(), read("(d)").unwrap());
+    assert_eq!(interp.eval(read("(cl-caadr '((a b) (c d)))").unwrap()).unwrap(), LispObject::symbol("c"));
+}
+
+#[test]
+fn cl_predicates_evenp_plusp() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(interp.eval(read("(cl-evenp 4)").unwrap()).unwrap(), LispObject::t());
+    assert_eq!(interp.eval(read("(cl-oddp 4)").unwrap()).unwrap(), LispObject::nil());
+    assert_eq!(interp.eval(read("(cl-plusp 3)").unwrap()).unwrap(), LispObject::t());
+    assert_eq!(interp.eval(read("(cl-plusp -3)").unwrap()).unwrap(), LispObject::nil());
+    assert_eq!(interp.eval(read("(cl-minusp -0.5)").unwrap()).unwrap(), LispObject::t());
+}
+
+#[test]
+fn cl_list_utilities() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(
+        interp.eval(read("(cl-list* 1 2 3 '(4 5))").unwrap()).unwrap(),
+        read("(1 2 3 4 5)").unwrap()
+    );
+    assert_eq!(
+        interp.eval(read("(cl-revappend '(1 2 3) '(4 5))").unwrap()).unwrap(),
+        read("(3 2 1 4 5)").unwrap()
+    );
+    assert_eq!(interp.eval(read("(cl-endp nil)").unwrap()).unwrap(), LispObject::t());
+    assert_eq!(interp.eval(read("(cl-endp '(1))").unwrap()).unwrap(), LispObject::nil());
+}
+
+#[test]
+fn cl_incf_decf_mutate() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    interp.eval(read("(setq x 5)").unwrap()).unwrap();
+    interp.eval(read("(cl-incf x)").unwrap()).unwrap();
+    assert_eq!(interp.eval(read("x").unwrap()).unwrap(), LispObject::integer(6));
+    interp.eval(read("(cl-decf x 2)").unwrap()).unwrap();
+    assert_eq!(interp.eval(read("x").unwrap()).unwrap(), LispObject::integer(4));
+}
+
+#[test]
+fn cl_assoc_with_test() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(read("(cl-assoc 2 '((1 . a) (2 . b) (3 . c)))").unwrap())
+        .unwrap();
+    assert_eq!(r, read("(2 . b)").unwrap());
+    let r = interp
+        .eval(read("(cl-rassoc 'b '((1 . a) (2 . b) (3 . c)))").unwrap())
+        .unwrap();
+    assert_eq!(r, read("(2 . b)").unwrap());
+}
+
+#[test]
+fn cl_substitute_replaces() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(
+        interp.eval(read("(cl-substitute 99 2 '(1 2 3 2 4))").unwrap()).unwrap(),
+        read("(1 99 3 99 4)").unwrap()
+    );
+    assert_eq!(
+        interp.eval(read("(cl-subst 'x 'a '(a (a b) (c a)))").unwrap()).unwrap(),
+        read("(x (x b) (c x))").unwrap()
+    );
+}
+
+#[test]
+fn cl_tree_equal_recursive() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(
+        interp.eval(read("(cl-tree-equal '(1 (2 3) 4) '(1 (2 3) 4))").unwrap()).unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp.eval(read("(cl-tree-equal '(1 (2 3) 4) '(1 (2 9) 4))").unwrap()).unwrap(),
+        LispObject::nil()
+    );
+}
+
+#[test]
+fn cl_merge_sorted() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(
+        interp.eval(read("(cl-merge 'list '(1 3 5) '(2 4 6) '<)").unwrap()).unwrap(),
+        read("(1 2 3 4 5 6)").unwrap()
+    );
+}
+
+#[test]
+fn cl_search_finds_subseq() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(
+        interp.eval(read("(cl-search '(2 3) '(1 2 3 4))").unwrap()).unwrap(),
+        LispObject::integer(1)
+    );
+    assert_eq!(
+        interp.eval(read("(cl-search '(9) '(1 2 3))").unwrap()).unwrap(),
+        LispObject::nil()
+    );
+}
+
+#[test]
+fn funcall_nil_signals_void_function() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    // Real Emacs signals `void-function nil`, not `wrong-type-argument`.
+    let err = interp.eval(read("(funcall nil 1 2)").unwrap()).unwrap_err();
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("VoidFunction"),
+        "expected VoidFunction, got {msg}"
+    );
+}
+
+#[test]
+fn function_form_captures_lexical_env() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    // `(function (lambda ...))` should snapshot the current lexical env,
+    // so the inner lambda can see let-bound vars when later invoked.
+    let r = interp
+        .eval(
+            read(
+                "(let ((y 10))
+                   (funcall (function (lambda (x) (+ x y))) 5))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::integer(15));
+}
+
+#[test]
+fn cl_typep_recognizes_common_types() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(interp.eval(read("(cl-typep 3 'integer)").unwrap()).unwrap(), LispObject::t());
+    assert_eq!(interp.eval(read("(cl-typep 3 'string)").unwrap()).unwrap(), LispObject::nil());
+    assert_eq!(interp.eval(read("(cl-typep '(1 2) 'list)").unwrap()).unwrap(), LispObject::t());
+    assert_eq!(interp.eval(read("(cl-typep nil 'list)").unwrap()).unwrap(), LispObject::t());
+    assert_eq!(interp.eval(read("(cl-typep 1 'number)").unwrap()).unwrap(), LispObject::t());
+    assert_eq!(interp.eval(read("(cl-typep 1.5 'number)").unwrap()).unwrap(), LispObject::t());
 }
 
 /// `cl-multiple-value-bind` — wraps a single value in a list and

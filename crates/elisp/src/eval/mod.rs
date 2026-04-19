@@ -1155,7 +1155,21 @@ fn eval_inner(
                 "cond" => eval_cond(obj_to_value(cdr), env, editor, macros, state),
                 "loop" => eval_loop(obj_to_value(cdr), env, editor, macros, state),
                 "function" => {
+                    // `(function X)` — reader shorthand `#'X`. Symbols
+                    // pass through unchanged; bare `(lambda ...)` forms
+                    // snapshot the lexical env into a `closure` so they
+                    // behave like source-level lambdas when later called.
                     let arg = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    if let Some((head, rest)) = arg.destructure_cons() {
+                        if head.as_symbol().as_deref() == Some("lambda") {
+                            let params = rest.first().unwrap_or(LispObject::nil());
+                            let body = rest.rest().unwrap_or(LispObject::nil());
+                            let captured = env.read().capture_as_alist();
+                            return Ok(obj_to_value(LispObject::closure_expr(
+                                captured, params, body,
+                            )));
+                        }
+                    }
                     Ok(obj_to_value(arg))
                 }
                 "apply" => eval_apply(obj_to_value(cdr), env, editor, macros, state),
@@ -1897,6 +1911,429 @@ fn eval_inner(
                         let _ = std::fs::remove_file(&path);
                     }
                     result
+                }
+                "cl-block" => {
+                    // (cl-block NAME BODY...) — BODY may call
+                    // (cl-return-from NAME VAL) to escape with VAL.
+                    // Implemented as catch/throw over a fresh symbol
+                    // per invocation so nested blocks don't collide.
+                    let name_obj =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let name = name_obj
+                        .as_symbol()
+                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    match eval_progn(obj_to_value(body), env, editor, macros, state) {
+                        Ok(v) => Ok(v),
+                        Err(ElispError::Throw(throw_data)) => {
+                            // If the throw's tag matches our block
+                            // name, consume it; otherwise propagate.
+                            if throw_data.tag.as_symbol().as_deref() == Some(&name) {
+                                Ok(obj_to_value(throw_data.value))
+                            } else {
+                                Err(ElispError::Throw(throw_data))
+                            }
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                "cl-return-from" => {
+                    // (cl-return-from NAME [VAL]) — throw to matching cl-block.
+                    let name_obj =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let value = match cdr.nth(1) {
+                        Some(v) => value_to_obj(eval(obj_to_value(v), env, editor, macros, state)?),
+                        None => LispObject::nil(),
+                    };
+                    Err(ElispError::Throw(Box::new(crate::error::ThrowData {
+                        tag: name_obj,
+                        value,
+                    })))
+                }
+                "cl-return" => {
+                    // `cl-return` ≡ `cl-return-from nil`.
+                    let value = match cdr.first() {
+                        Some(v) => value_to_obj(eval(obj_to_value(v), env, editor, macros, state)?),
+                        None => LispObject::nil(),
+                    };
+                    Err(ElispError::Throw(Box::new(crate::error::ThrowData {
+                        tag: LispObject::symbol("nil"),
+                        value,
+                    })))
+                }
+                "cl-case" | "cl-ecase" => {
+                    // (cl-case KEYFORM (VALS BODY...) ... (t DEFAULT...))
+                    // VALS is either a literal or a list of literals;
+                    // matched with `eql`. Body of matching clause is
+                    // evaluated. `cl-ecase` errors if no branch matches.
+                    let key_form =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let key = value_to_obj(eval(
+                        obj_to_value(key_form),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let mut clauses = cdr.rest().unwrap_or(LispObject::nil());
+                    while let Some((clause, rest)) = clauses.destructure_cons() {
+                        let keyset = clause.first().unwrap_or(LispObject::nil());
+                        let body = clause.rest().unwrap_or(LispObject::nil());
+                        let matched = match &keyset {
+                            // Bare `t` (reader emits LispObject::T) is the default.
+                            LispObject::T => true,
+                            LispObject::Symbol(_) => {
+                                let n = keyset.as_symbol().unwrap_or_default();
+                                n == "otherwise" || (keyset == key)
+                            }
+                            LispObject::Cons(_) => {
+                                // A list of values — match any.
+                                let mut cur = keyset.clone();
+                                let mut matched = false;
+                                while let Some((car, cdr2)) = cur.destructure_cons() {
+                                    if car == key {
+                                        matched = true;
+                                        break;
+                                    }
+                                    cur = cdr2;
+                                }
+                                matched
+                            }
+                            _ => keyset == key,
+                        };
+                        if matched {
+                            return eval_progn(obj_to_value(body), env, editor, macros, state);
+                        }
+                        clauses = rest;
+                    }
+                    if sym_name == "cl-ecase" {
+                        return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                            symbol: LispObject::symbol("cl-ecase-no-match"),
+                            data: LispObject::cons(key, LispObject::nil()),
+                        })));
+                    }
+                    Ok(Value::nil())
+                }
+                "cl-typecase" | "cl-etypecase" => {
+                    // (cl-typecase KEYFORM (TYPE BODY...) ...)
+                    let key_form =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let key = value_to_obj(eval(
+                        obj_to_value(key_form),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let mut clauses = cdr.rest().unwrap_or(LispObject::nil());
+                    while let Some((clause, rest)) = clauses.destructure_cons() {
+                        let type_spec = clause.first().unwrap_or(LispObject::nil());
+                        let body = clause.rest().unwrap_or(LispObject::nil());
+                        // Re-use the stateless cl-typep.
+                        let args = LispObject::cons(
+                            key.clone(),
+                            LispObject::cons(type_spec.clone(), LispObject::nil()),
+                        );
+                        let type_name = type_spec.as_symbol();
+                        let matched = matches!(type_name.as_deref(), Some("t") | Some("otherwise"))
+                            || matches!(
+                                crate::primitives_cl::prim_cl_typep(&args),
+                                Ok(r) if !matches!(r, LispObject::Nil)
+                            );
+                        if matched {
+                            return eval_progn(obj_to_value(body), env, editor, macros, state);
+                        }
+                        clauses = rest;
+                    }
+                    if sym_name == "cl-etypecase" {
+                        return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                            symbol: LispObject::symbol("cl-etypecase-no-match"),
+                            data: LispObject::cons(key, LispObject::nil()),
+                        })));
+                    }
+                    Ok(Value::nil())
+                }
+                "cl-flet" => {
+                    // (cl-flet ((NAME ARGS BODY...) ...) BODY)
+                    // Each binding installs a local lambda in a fresh
+                    // env; mutual recursion does NOT see sibling
+                    // bindings (that's cl-labels).
+                    let bindings =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    let parent = Arc::new(env.read().clone());
+                    let new_env = Arc::new(RwLock::new(Environment::with_parent(parent)));
+                    let mut cur = bindings;
+                    while let Some((binding, rest)) = cur.destructure_cons() {
+                        let name =
+                            binding.first().and_then(|n| n.as_symbol()).unwrap_or_default();
+                        let rest_of_binding = binding.rest().unwrap_or(LispObject::nil());
+                        let params = rest_of_binding.first().unwrap_or(LispObject::nil());
+                        let fbody = rest_of_binding.rest().unwrap_or(LispObject::nil());
+                        // Build a bare lambda form (lambda PARAMS BODY...).
+                        let lambda = LispObject::cons(
+                            LispObject::symbol("lambda"),
+                            LispObject::cons(params, fbody),
+                        );
+                        new_env.write().define(&name, lambda);
+                        cur = rest;
+                    }
+                    eval_progn(obj_to_value(body), &new_env, editor, macros, state)
+                }
+                "cl-labels" => {
+                    // Like cl-flet, but each binding is visible to
+                    // sibling bindings (supports mutual recursion).
+                    // Achieved by installing the lambdas into the SAME
+                    // env that they capture as the enclosing scope.
+                    let bindings =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    let parent = Arc::new(env.read().clone());
+                    let new_env = Arc::new(RwLock::new(Environment::with_parent(parent)));
+                    let mut cur = bindings;
+                    while let Some((binding, rest)) = cur.destructure_cons() {
+                        let name =
+                            binding.first().and_then(|n| n.as_symbol()).unwrap_or_default();
+                        let rest_of_binding = binding.rest().unwrap_or(LispObject::nil());
+                        let params = rest_of_binding.first().unwrap_or(LispObject::nil());
+                        let fbody = rest_of_binding.rest().unwrap_or(LispObject::nil());
+                        let lambda = LispObject::cons(
+                            LispObject::symbol("lambda"),
+                            LispObject::cons(params, fbody),
+                        );
+                        new_env.write().define(&name, lambda);
+                        cur = rest;
+                    }
+                    eval_progn(obj_to_value(body), &new_env, editor, macros, state)
+                }
+                "cl-letf" | "cl-letf*" => {
+                    // (cl-letf ((PLACE VALUE) ...) BODY)
+                    // We only support bare-symbol PLACEs. Each binding
+                    // is restored on exit even on error, via an
+                    // explicit unwind block built from Rust Drop-ish
+                    // semantics (save + restore the old env value).
+                    let bindings =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    let mut saves: Vec<(String, Option<LispObject>)> = Vec::new();
+                    let mut cur = bindings;
+                    while let Some((binding, rest)) = cur.destructure_cons() {
+                        let place = binding.first().unwrap_or(LispObject::nil());
+                        let val_expr = binding.nth(1).unwrap_or(LispObject::nil());
+                        if let Some(sym) = place.as_symbol() {
+                            saves.push((sym.clone(), env.read().get(&sym)));
+                            let val = value_to_obj(eval(
+                                obj_to_value(val_expr),
+                                env,
+                                editor,
+                                macros,
+                                state,
+                            )?);
+                            env.write().set(&sym, val);
+                        }
+                        cur = rest;
+                    }
+                    let result = eval_progn(obj_to_value(body), env, editor, macros, state);
+                    // Restore all saves in reverse order.
+                    for (name, old) in saves.into_iter().rev() {
+                        match old {
+                            Some(v) => env.write().set(&name, v),
+                            None => env.write().set(&name, LispObject::nil()),
+                        }
+                    }
+                    result
+                }
+                "cl-lexical-let" => {
+                    // In our runtime Emacs's lexical vs dynamic
+                    // distinction isn't modeled; treat as plain `let`.
+                    eval_let(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "cl-lexical-let*" => {
+                    eval_let_star(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "cl-the" => {
+                    // (cl-the TYPE FORM) — runtime type assertion. We
+                    // don't check the type; just evaluate FORM.
+                    let form = cdr.nth(1).unwrap_or(LispObject::nil());
+                    eval(obj_to_value(form), env, editor, macros, state)
+                }
+                "cl-incf" | "cl-decf" | "incf" | "decf" => {
+                    // Expand (cl-incf VAR [DELTA]) to (setq VAR (+ VAR DELTA))
+                    // and evaluate. DELTA defaults to 1.
+                    let var = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let delta = cdr.nth(1).unwrap_or(LispObject::integer(1));
+                    let op = if sym_name.ends_with("decf") { "-" } else { "+" };
+                    let new_val = LispObject::cons(
+                        LispObject::symbol(op),
+                        LispObject::cons(
+                            var.clone(),
+                            LispObject::cons(delta, LispObject::nil()),
+                        ),
+                    );
+                    let setq_form = LispObject::cons(
+                        LispObject::symbol("setq"),
+                        LispObject::cons(
+                            var,
+                            LispObject::cons(new_val, LispObject::nil()),
+                        ),
+                    );
+                    eval(obj_to_value(setq_form), env, editor, macros, state)
+                }
+                "cl-assert" => {
+                    // (cl-assert FORM &optional SHOW-ARGS STRING &rest ARGS)
+                    let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let val = value_to_obj(eval(obj_to_value(form.clone()), env, editor, macros, state)?);
+                    if matches!(val, LispObject::Nil) {
+                        return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                            symbol: LispObject::symbol("cl-assertion-failed"),
+                            data: LispObject::cons(form, LispObject::nil()),
+                        })));
+                    }
+                    Ok(Value::nil())
+                }
+                "cl-check-type" => {
+                    // (cl-check-type FORM TYPE [STRING])
+                    let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let type_spec = cdr.nth(1).unwrap_or(LispObject::nil());
+                    let val = value_to_obj(eval(obj_to_value(form), env, editor, macros, state)?);
+                    let args = LispObject::cons(
+                        val.clone(),
+                        LispObject::cons(type_spec.clone(), LispObject::nil()),
+                    );
+                    let is_type = matches!(
+                        crate::primitives_cl::prim_cl_typep(&args),
+                        Ok(r) if !matches!(r, LispObject::Nil)
+                    );
+                    if !is_type {
+                        return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                            symbol: LispObject::symbol("wrong-type-argument"),
+                            data: LispObject::cons(type_spec, LispObject::cons(val, LispObject::nil())),
+                        })));
+                    }
+                    Ok(Value::nil())
+                }
+                "cl-eval-when" => {
+                    // (cl-eval-when (SITUATIONS...) BODY...). Always run BODY.
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    eval_progn(obj_to_value(body), env, editor, macros, state)
+                }
+                "cl-progv" => {
+                    // (cl-progv SYMBOLS VALUES BODY) — bind each symbol
+                    // dynamically to the corresponding value.
+                    let syms_form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let vals_form = cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+                    let body = cdr.rest().and_then(|r| r.rest()).unwrap_or(LispObject::nil());
+                    let syms = value_to_obj(eval(obj_to_value(syms_form), env, editor, macros, state)?);
+                    let vals = value_to_obj(eval(obj_to_value(vals_form), env, editor, macros, state)?);
+                    let mut saves: Vec<(String, Option<LispObject>)> = Vec::new();
+                    let mut s_cur = syms;
+                    let mut v_cur = vals;
+                    while let Some((s, s_rest)) = s_cur.destructure_cons() {
+                        let (v, v_rest) = v_cur
+                            .destructure_cons()
+                            .unwrap_or((LispObject::nil(), LispObject::nil()));
+                        if let Some(n) = s.as_symbol() {
+                            saves.push((n.clone(), env.read().get(&n)));
+                            env.write().set(&n, v);
+                        }
+                        s_cur = s_rest;
+                        v_cur = v_rest;
+                    }
+                    let result = eval_progn(obj_to_value(body), env, editor, macros, state);
+                    for (n, old) in saves.into_iter().rev() {
+                        match old {
+                            Some(v) => env.write().set(&n, v),
+                            None => env.write().set(&n, LispObject::nil()),
+                        }
+                    }
+                    result
+                }
+                "cl-do" | "cl-do*" => {
+                    // (cl-do ((VAR INIT [STEP]) ...) (END-COND RESULT...) BODY...)
+                    // Simplified: init once, loop while END-COND false,
+                    // step vars each iteration; return RESULT.
+                    let bindings =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let end_clause = cdr.nth(1).unwrap_or(LispObject::nil());
+                    let body = cdr.rest().and_then(|r| r.rest()).unwrap_or(LispObject::nil());
+                    let parent = Arc::new(env.read().clone());
+                    let new_env = Arc::new(RwLock::new(Environment::with_parent(parent)));
+                    // Collect var/init/step triples.
+                    let mut triples: Vec<(String, Option<LispObject>, Option<LispObject>)> =
+                        Vec::new();
+                    let mut bcur = bindings;
+                    while let Some((b, rest)) = bcur.destructure_cons() {
+                        let name =
+                            b.first().and_then(|n| n.as_symbol()).unwrap_or_default();
+                        let init = b.nth(1);
+                        let step = b.nth(2);
+                        triples.push((name, init, step));
+                        bcur = rest;
+                    }
+                    // Init.
+                    for (name, init, _) in &triples {
+                        let v = match init {
+                            Some(e) => value_to_obj(eval(
+                                obj_to_value(e.clone()),
+                                &new_env,
+                                editor,
+                                macros,
+                                state,
+                            )?),
+                            None => LispObject::nil(),
+                        };
+                        new_env.write().define(name, v);
+                    }
+                    // Loop.
+                    let end_cond = end_clause.first().unwrap_or(LispObject::nil());
+                    let result_forms = end_clause.rest().unwrap_or(LispObject::nil());
+                    loop {
+                        let done = value_to_obj(eval(
+                            obj_to_value(end_cond.clone()),
+                            &new_env,
+                            editor,
+                            macros,
+                            state,
+                        )?);
+                        if !matches!(done, LispObject::Nil) {
+                            return eval_progn(
+                                obj_to_value(result_forms),
+                                &new_env,
+                                editor,
+                                macros,
+                                state,
+                            );
+                        }
+                        let _ = eval_progn(obj_to_value(body.clone()), &new_env, editor, macros, state)?;
+                        // Step.
+                        let mut new_vals: Vec<(String, LispObject)> = Vec::new();
+                        for (name, _, step) in &triples {
+                            if let Some(step_form) = step {
+                                let v = value_to_obj(eval(
+                                    obj_to_value(step_form.clone()),
+                                    &new_env,
+                                    editor,
+                                    macros,
+                                    state,
+                                )?);
+                                new_vals.push((name.clone(), v));
+                            }
+                        }
+                        for (name, v) in new_vals {
+                            new_env.write().set(&name, v);
+                        }
+                    }
+                }
+                "cl-loop" => {
+                    // Delegate to a dedicated evaluator. Returns a
+                    // single result value.
+                    return functions::eval_cl_loop(
+                        obj_to_value(cdr),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    );
                 }
                 "cl-multiple-value-bind" => {
                     // (cl-multiple-value-bind (VAR1 VAR2...) FORM BODY...)
@@ -3738,6 +4175,7 @@ mod editor;
 mod error_forms;
 mod functions;
 mod special_forms;
+pub mod state_cl;
 
 // Re-export functions used internally and externally
 use builtins::{

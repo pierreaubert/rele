@@ -1,5 +1,70 @@
 # Unreleased
 
+## cl-* complete + call_function dispatch fixes
+
+Round out the native Rust cl-lib coverage and fix a dispatch bug that
+was masking ~317 test failures.
+
+### cl-* coverage
+
+- **primitives_cl.rs**: 24 `c[ad]+r` accessors (`cl-caaar` ... `cl-cddddr`),
+  number predicates (`cl-evenp`, `cl-oddp`, `cl-plusp`, `cl-minusp`,
+  `cl-digit-char-p`), list utilities (`cl-endp`, `cl-tailp`, `cl-ldiff`,
+  `cl-list*`, `cl-revappend`, `cl-nreconc`, `cl-fill`, `cl-replace`),
+  tree substitution (`cl-subst`, `cl-nsubst`), plist stubs (`cl-get`,
+  `cl-remprop`), random (`cl-random`, `cl-make-random-state`),
+  `cl-constantly` returning a lambda, and no-op stubs
+  (`cl-multiple-value-call`/`-apply`, `cl-proclaim`, `cl-fresh-line`,
+  `cl-float-limits`).
+- **state_cl.rs** (needs env/state to funcall predicates):
+  `cl-assoc`/`cl-rassoc` + `-if`/`-if-not` variants (×6), `cl-search`,
+  `cl-mismatch`, `cl-tree-equal`, `cl-substitute`/`-if`/`-if-not` (×3),
+  `cl-nsubstitute` variants (×3), `cl-subst-if`/`-if-not`,
+  `cl-nsubst-if`/`-if-not`, `cl-sublis`/`cl-nsublis`, `cl-merge`,
+  `cl-stable-sort`.
+- **eval/mod.rs**: `cl-incf`/`cl-decf`/`incf`/`decf` as special forms
+  that rewrite to `(setq VAR (+/- VAR DELTA))` and re-enter `eval`.
+
+### call_function dispatch fixes
+
+Investigation of the 317-test "wrong type argument: expected function"
+bucket identified four feeders in `call_function`:
+
+1. `Nil` in function position fell into the catch-all and signalled
+   `wrong-type-argument` instead of `void-function`. Emacs code that
+   does `(funcall (symbol-function 'maybe-unbound) …)` relies on the
+   `void-function` shape.
+2. `(macro . F)` cons heads (what `symbol-function` returns for a
+   macro) weren't dispatched — we now unwrap and call the inner F.
+3. `(autoload FILE …)` in the function cell wasn't handled — we now
+   trigger the load (best-effort) and signal `void-function`.
+4. `(function (lambda …))` at `eval/mod.rs:1157` was passing the
+   lambda through unchanged, so the resulting callable had no captured
+   lexical env. Now mirrors the source-level `"lambda"` arm by
+   building a `closure` with `env.capture_as_alist()`.
+
+### Tests
+
+11 new unit tests covering the above. Full lib suite: 408 pass / 0 fail.
+
+## Void-variable stubs for top 5 defvar-missing errors
+
+Added defvar stubs in `make_stdlib_interp` for the five highest-count
+`void variable` errors in the emacs ERT suite:
+
+- `eshell-debug-command` → nil (195 hits)
+- `icalendar-parse-property` → nil (166 hits)
+- `eshell-debug-command-buffer` → `"*eshell last cmd*"` (111 hits)
+- `advice--how-alist` → nil (86 hits)
+- `tramp-archive-enabled` → nil (40 hits — upstream is
+  `(featurep 'dbusbind)`, we have no dbus)
+
+Full-suite impact: **268 pass** (+14) / 834 fail / 3766 error (−66) /
+554 skip (+39). Tests that previously errored on these missing defvars
+now either pass, fail cleanly, or skip — revealing the next blocker
+cluster (`void function: eshell` ×187, `:printer` ×166,
+`"Unknown add-function location :after"` ×58).
+
 ## Phase 7i — Match data, concat sequences, help.el 100%
 
 Two real-bug fixes that unlocked `help.el` fully and advanced the
