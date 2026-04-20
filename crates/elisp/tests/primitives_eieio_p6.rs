@@ -1,6 +1,6 @@
 //! P6 tests for keyword slot accessor dispatch in EIEIO.
 
-use rele_elisp::object::LispObject;
+use rele_elisp::LispObject;
 use rele_elisp::primitives_eieio::{Class, Slot, register_class, prim_make_instance, try_keyword_slot_call};
 
 fn reset_classes() {
@@ -15,7 +15,7 @@ fn symbol(s: &str) -> LispObject {
 fn list(items: &[LispObject]) -> LispObject {
     let mut out = LispObject::nil();
     for item in items.iter().rev() {
-        out = LispObject::cons(item.clone(), out);
+        out = LispObject::cons(item.clone(), out.clone());
     }
     out
 }

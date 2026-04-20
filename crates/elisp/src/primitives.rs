@@ -49,6 +49,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     interp.define("member", LispObject::primitive("member"));
     interp.define("assoc", LispObject::primitive("assoc"));
     interp.define("eq", LispObject::primitive("eq"));
+    interp.define("eql", LispObject::primitive("eql"));
     interp.define("equal", LispObject::primitive("equal"));
     interp.define("not", LispObject::primitive("not"));
     interp.define("null", LispObject::primitive("null"));
@@ -1198,6 +1199,7 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
         "member" => prim_member(args),
         "assoc" => prim_assoc(args),
         "eq" => prim_eq(args),
+        "eql" => prim_eql(args),
         "equal" => prim_equal(args),
         "not" => prim_not(args),
         "null" => prim_null(args),
@@ -2402,6 +2404,35 @@ fn prim_eq(args: &LispObject) -> ElispResult<LispObject> {
         (LispObject::T, LispObject::T) => true,
         (LispObject::Integer(x), LispObject::Integer(y)) => x == y,
         (LispObject::Symbol(x), LispObject::Symbol(y)) => x == y,
+        _ => false,
+    };
+    Ok(LispObject::from(result))
+}
+
+/// `(eql A B)` — Emacs/CL structural equality between `eq` and `equal`.
+///
+/// Returns `t` when:
+/// - `A` and `B` are `eq` (same symbol, same nil/t, same fixnum), OR
+/// - Both are integers with the same value (covers all fixnums), OR
+/// - Both are floats with the same bit pattern (`eql 1.0 1.0` → t).
+///
+/// Unlike `equal`, strings and lists are NOT `eql` unless they are the
+/// same object (`eq`). Unlike `eq`, two floats with the same value are
+/// `eql` even if they are distinct allocations.
+fn prim_eql(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let b = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let result = match (&a, &b) {
+        // eq cases: nil, t, symbols, and fixnums (same as prim_eq)
+        (LispObject::Nil, LispObject::Nil) => true,
+        (LispObject::T, LispObject::T) => true,
+        (LispObject::Symbol(x), LispObject::Symbol(y)) => x == y,
+        (LispObject::Integer(x), LispObject::Integer(y)) => x == y,
+        // eql extension: two floats are eql iff they have the same bit pattern.
+        // NaN != NaN under IEEE 754 but eql uses bit-pattern identity like CL.
+        (LispObject::Float(x), LispObject::Float(y)) => x.to_bits() == y.to_bits(),
+        // Integers and floats with the same numeric value are NOT eql
+        // (different types per CL/Emacs spec: `(eql 1 1.0)` → nil).
         _ => false,
     };
     Ok(LispObject::from(result))
