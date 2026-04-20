@@ -1916,6 +1916,46 @@ pub fn make_stdlib_interp() -> Interpreter {
     // net/secrets.el — nil means the Secret Service API is unavailable (6 hits)
     interp.define("secrets-enabled", LispObject::nil());
 
+    // R15: void-variable fixtures round 3 — legitimate defvar/defconst gaps.
+    // Source: /tmp/emacs-results-round2-baseline.jsonl. Only entries whose
+    // real Emacs source introduces them via a top-level defvar / defconst
+    // are registered here; (b)/(c) cases (macro-local / reader / rx-symbol
+    // bugs) are left for a dedicated evaluator-fix stream.
+    //
+    // Classification of the round-2 baseline shortlist (see PR body):
+    //   location                     (b) cl-defmacro &key binding in with-package-test
+    //   interactive-sym              (b) cl-defmacro positional in eglot--guessing-contact
+    //   with-timeout-value-          (c) real name is -with-timeout-value-
+    //   endpoint-sym                 (b) cl-defmacro positional in jsonrpc--with-emacsrpc-fixture
+    //   elvar                        (b) cl-defmacro positional in gv-tests--in-temp-dir
+    //   bow                          (b) rx-macro symbol (beginning-of-word), not a variable
+    //   spec                         (b) let-bound outside ert-deftest; lexical capture
+    //   ispell-tests--constants      (c) reader splits `/` — real symbols are
+    //                                     ispell-tests--constants/english/wrong etc.
+    //   create-file-buffer           (b) let*-bound lambda in ibuffer-tests
+    //   create-non-file-buffer       (b) same
+    //
+    // Fixed here (a):
+
+    // test/src/process-tests.el — top-level
+    //   (defvar internet-is-working (progn (require 'dns) (dns-query "google.com")))
+    // The init form fails in our environment (no dns-query), leaving the
+    // symbol void. Pre-defining as nil is semantically correct: it means
+    // "no internet" and the tests guarded by `(skip-unless internet-is-working)`
+    // will be skipped rather than error. (5 hits)
+    interp.define("internet-is-working", LispObject::nil());
+
+    // test/src/regex-emacs-tests.el — top-level
+    //   (defconst regex-tests--resources-dir
+    //     (concat (file-name-directory (or load-file-name buffer-file-name))
+    //             "/regex-resources/"))
+    // Under our test runner both `load-file-name` and `buffer-file-name`
+    // are nil, so the defconst init fails. The guarded tests wrap access in
+    // `(skip-unless (file-directory-p regex-tests--resources-dir))`, so
+    // pre-binding to an empty string lets the skip-unless evaluate cleanly
+    // (file-directory-p "" -> nil -> skip). (4 hits)
+    interp.define("regex-tests--resources-dir", LispObject::string(""));
+
     interp
 }
 
