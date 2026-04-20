@@ -373,6 +373,124 @@ pub fn prim_eieio_object_name(_args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::string("anonymous"))
 }
 
+/// `(eieio-defclass-internal CNAME SUPERCLASSES SLOTS OPTIONS)`
+///
+/// The function the byte-compiler emits instead of the `defclass`
+/// special form. `.elc` files (e.g. `auth-source.elc`, `vtable.elc`)
+/// lower all class definitions through this entry point, so if we
+/// don't register the class here `(make-instance 'CNAME ...)` later
+/// signals `invalid-slot-type: (CNAME)` — which was the R20 bug.
+///
+/// Args are already-evaluated literal data: CNAME is a symbol,
+/// SUPERCLASSES a list of symbols, SLOTS a list of slot specs
+/// `((NAME :initarg :FOO :initform FORM :type T ...))`. Because the
+/// whole slots list is passed as a quoted constant, `:initform 'netrc`
+/// arrives as the literal cons `(quote netrc)`. We best-effort
+/// de-quote simple forms; full eval would need interpreter context.
+pub fn prim_eieio_defclass_internal(args: &LispObject) -> ElispResult<LispObject> {
+    let cname_obj = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let cname = cname_obj
+        .as_symbol()
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
+
+    let supers = args.nth(1).unwrap_or(LispObject::nil());
+    let parent_name: Option<String> = supers
+        .destructure_cons()
+        .and_then(|(car, _)| car.as_symbol());
+
+    let slots_list = args.nth(2).unwrap_or(LispObject::nil());
+    let mut slots: Vec<Slot> = Vec::new();
+    let mut cur = slots_list;
+    while let Some((slot_spec, rest)) = cur.destructure_cons() {
+        let (slot_name_obj, plist) = match slot_spec.destructure_cons() {
+            Some(p) => p,
+            None => break,
+        };
+        let Some(slot_name) = slot_name_obj.as_symbol() else {
+            cur = rest;
+            continue;
+        };
+
+        let mut initarg: Option<String> = None;
+        let mut initform = LispObject::nil();
+        let mut p = plist;
+        while let Some((k, vs)) = p.destructure_cons() {
+            let key = k.as_symbol();
+            if let Some((v, rest2)) = vs.destructure_cons() {
+                match key.as_deref() {
+                    Some(":initarg") => {
+                        if let Some(k2) = v.as_symbol() {
+                            initarg =
+                                Some(k2.strip_prefix(':').unwrap_or(&k2).to_string());
+                        }
+                    }
+                    Some(":initform") => {
+                        initform = dequote_initform(&v);
+                    }
+                    _ => {}
+                }
+                p = rest2;
+            } else {
+                break;
+            }
+        }
+        slots.push(Slot {
+            name: slot_name,
+            initarg,
+            default: initform,
+        });
+        cur = rest;
+    }
+
+    register_class(Class {
+        name: cname.clone(),
+        parent: parent_name,
+        slots,
+    });
+    Ok(LispObject::symbol(&cname))
+}
+
+/// Partial evaluator for literal initforms coming through byte-
+/// compiled slot specs. `(quote X)` → `X`, `(function X)` → `X`;
+/// anything else is kept verbatim.
+fn dequote_initform(form: &LispObject) -> LispObject {
+    if let Some((head, tail)) = form.destructure_cons() {
+        if let Some(sym) = head.as_symbol() {
+            if sym == "quote" || sym == "function" {
+                if let Some((inner, _)) = tail.destructure_cons() {
+                    return inner;
+                }
+            }
+        }
+    }
+    form.clone()
+}
+
+/// `(eieio-make-class-predicate CNAME)` — build a unary class
+/// predicate. `.elc` files do `(defalias 'FOO-p (eieio-make-class-predicate 'FOO))`
+/// right after the class definition; we need to return *something*
+/// callable so the surrounding `defalias` doesn't fail. We emit a
+/// closure that dispatches through `object-of-class-p`, matching
+/// Emacs's own implementation.
+pub fn prim_eieio_make_class_predicate(args: &LispObject) -> ElispResult<LispObject> {
+    let cname = args.first().unwrap_or(LispObject::nil());
+    let sym = cname.as_symbol().unwrap_or_default();
+    let lambda_src = format!(
+        "(lambda (obj) (and (eieio-object-p obj) (object-of-class-p obj '{sym})))"
+    );
+    match crate::read_all(&lambda_src) {
+        Ok(mut forms) if !forms.is_empty() => Ok(forms.remove(0)),
+        _ => Ok(LispObject::nil()),
+    }
+}
+
+/// `(eieio-make-child-predicate CNAME)` — in practice identical to
+/// the class predicate because our `object-of-class-p` already walks
+/// the parent chain (see `class_hierarchy`).
+pub fn prim_eieio_make_child_predicate(args: &LispObject) -> ElispResult<LispObject> {
+    prim_eieio_make_class_predicate(args)
+}
+
 // Advice system stubs — treat all advice as no-op for now.
 
 pub fn prim_advice_add(_args: &LispObject) -> ElispResult<LispObject> {
@@ -493,6 +611,9 @@ pub fn call_eieio_primitive(name: &str, args: &LispObject) -> Option<ElispResult
         "eieio-object-p" => prim_eieio_object_p(args),
         "eieio-object-class" | "cl-type-of" => prim_eieio_object_class(args),
         "eieio-object-name" | "object-name" => prim_eieio_object_name(args),
+        "eieio-defclass-internal" => prim_eieio_defclass_internal(args),
+        "eieio-make-class-predicate" => prim_eieio_make_class_predicate(args),
+        "eieio-make-child-predicate" => prim_eieio_make_child_predicate(args),
         "advice-add" => prim_advice_add(args),
         "advice-remove" => prim_advice_remove(args),
         "advice--p" | "advice-p" => prim_advice__p(args),
@@ -531,6 +652,9 @@ pub const EIEIO_PRIMITIVE_NAMES: &[&str] = &[
     "cl-type-of",
     "eieio-object-name",
     "object-name",
+    "eieio-defclass-internal",
+    "eieio-make-class-predicate",
+    "eieio-make-child-predicate",
     "advice-add",
     "advice-remove",
     "advice--p",
