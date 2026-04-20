@@ -3378,9 +3378,75 @@ fn eval_inner(
                     Ok(state.heap_vector_from_objects(&items))
                 }
                 "byte-code" => {
-                    // Stub: we don't have a bytecode interpreter.
-                    // Return nil to let files that contain byte-compiled forms continue loading.
-                    Ok(Value::nil())
+                    // `(byte-code CODE-STRING CONSTANTS MAXDEPTH)` —
+                    // the wrapper the compiler emits for top-level
+                    // bodies in `.elc` files. Before R20 we stubbed
+                    // this to `nil`, which meant every class, defalias,
+                    // and defvar defined inside a compiled top-level
+                    // form silently vanished — producing the
+                    // `invalid-slot-type: (auth-source-backend)`
+                    // cascade. Run the bytecode through our VM instead.
+                    let code_form =
+                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let consts_form =
+                        cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+                    let depth_form =
+                        cdr.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
+                    let code_val = value_to_obj(eval(
+                        obj_to_value(code_form),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let consts_val = value_to_obj(eval(
+                        obj_to_value(consts_form),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let depth_val = value_to_obj(eval(
+                        obj_to_value(depth_form),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    // `.elc` code strings are read as Latin-1 by the
+                    // reader (see `eval_load`), so each char's low byte
+                    // is the original bytecode byte.
+                    let Some(code_str) = code_val.as_string() else {
+                        return Ok(Value::nil());
+                    };
+                    let bytecode: Vec<u8> =
+                        code_str.chars().map(|c| c as u32 as u8).collect();
+                    let constants: Vec<LispObject> = match consts_val {
+                        LispObject::Vector(v) => v.lock().clone(),
+                        _ => Vec::new(),
+                    };
+                    let maxdepth =
+                        depth_val.as_integer().unwrap_or(32) as usize;
+                    let func = crate::object::BytecodeFunction {
+                        argdesc: 0,
+                        bytecode,
+                        constants,
+                        maxdepth,
+                        docstring: None,
+                        interactive: None,
+                    };
+                    match crate::vm::execute_bytecode(
+                        &func, &[], env, editor, macros, state,
+                    ) {
+                        Ok(result) => Ok(obj_to_value(result)),
+                        Err(e) => {
+                            // Tolerate per-form VM errors so the rest of
+                            // the file continues to load — mirrors the
+                            // per-form tolerance in `eval_load`.
+                            eprintln!("byte-code: execution error: {e}");
+                            Ok(Value::nil())
+                        }
+                    }
                 }
                 "make-symbol" => {
                     let name_val = value_to_obj(eval(
