@@ -425,6 +425,50 @@ pub fn prim_widgetp(_args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::nil())
 }
 
+// ---- Keyword slot accessor dispatch ----------------------------
+
+/// Try to handle a keyword (`:printer`, `:name`, etc.) called as a function.
+///
+/// When `(:keyword INSTANCE)` is evaluated, we treat it as slot-value lookup:
+/// the keyword is looked up as an initarg on the instance's class, and we
+/// return the corresponding slot value.
+///
+/// Returns `Some(result)` if the keyword matched a known slot; `None` if the
+/// keyword name doesn't start with `:` or isn't found in the class.
+pub fn try_keyword_slot_call(kw_symbol: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
+    // Only handle symbols starting with `:` (keywords)
+    if !kw_symbol.starts_with(':') {
+        return None;
+    }
+
+    // Extract the instance (first and only required argument)
+    let instance = args.first()?;
+
+    // Get the class name from the instance
+    let items = as_items(&instance)?;
+    let class_name = instance_class(&items)?;
+    let class = get_class(&class_name)?;
+
+    // Strip the leading `:` from the keyword to get the initarg name
+    let initarg_name = kw_symbol.strip_prefix(':').unwrap_or(kw_symbol);
+
+    // Find the slot by matching either:
+    // 1. The slot's declared `:initarg` (if present), or
+    // 2. The slot's `:name` (fallback, as per make-instance logic)
+    let slot_index = class.slots.iter().position(|s| {
+        if let Some(ref ia) = s.initarg {
+            ia == initarg_name
+        } else {
+            s.name == initarg_name
+        }
+    })?;
+
+    // Retrieve the value: instance layout is [TAG, CLASS, slot0, slot1, ...]
+    // so slot N is at index N + 2.
+    let value = items.get(slot_index + 2).cloned().unwrap_or(LispObject::nil());
+    Some(Ok(value))
+}
+
 // ---- Dispatch ---------------------------------------------------------
 
 pub fn call_eieio_primitive(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
