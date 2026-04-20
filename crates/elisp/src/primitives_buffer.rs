@@ -1295,6 +1295,72 @@ pub fn prim_replace_match(args: &LispObject) -> ElispResult<LispObject> {
     }
 }
 
+
+pub fn prim_get_truename_buffer(args: &LispObject) -> ElispResult<LispObject> {
+    let name = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let file_name = match name {
+        LispObject::String(s) => s.clone(),
+        _ => return Ok(LispObject::nil()),
+    };
+    let found = buffer::with_registry(|r| {
+        r.buffers
+            .values()
+            .find(|b| b.file_name.as_deref() == Some(&file_name))
+            .map(|b| b.name.clone())
+    });
+    Ok(found.map(|n| LispObject::string(&n)).unwrap_or(LispObject::nil()))
+}
+
+pub fn prim_buffer_text_pixel_size(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::cons(LispObject::integer(0), LispObject::integer(0)))
+}
+
+pub fn prim_text_property_not_all(args: &LispObject) -> ElispResult<LispObject> {
+    let start = args.first().and_then(|a| a.as_integer()).ok_or(ElispError::WrongTypeArgument("integer".into()))? as usize;
+    let end = args.nth(1).and_then(|a| a.as_integer()).ok_or(ElispError::WrongTypeArgument("integer".into()))? as usize;
+    let _prop = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
+    let _value = args.nth(3).ok_or(ElispError::WrongNumberOfArguments)?;
+    if start < end { Ok(LispObject::integer(start as i64)) } else { Ok(LispObject::nil()) }
+}
+
+pub fn prim_marker_insertion_type(args: &LispObject) -> ElispResult<LispObject> {
+    let _marker = args.first().unwrap_or(LispObject::nil());
+    Ok(LispObject::nil())
+}
+
+pub fn prim_buffer_swap_text(args: &LispObject) -> ElispResult<LispObject> {
+    let _ = args;
+    Err(ElispError::Signal(Box::new(crate::error::SignalData {
+        symbol: LispObject::symbol("error"),
+        data: LispObject::cons(LispObject::string("buffer-swap-text not supported"), LispObject::nil()),
+    })))
+}
+
+pub fn prim_overlay_lists(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::cons(LispObject::nil(), LispObject::nil()))
+}
+
+pub fn prim_overlay_recenter(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::nil())
+}
+
+pub fn prim_buffer_base_buffer(args: &LispObject) -> ElispResult<LispObject> {
+    let id = args.first().and_then(|a| resolve_buffer(&a)).unwrap_or_else(|| buffer::with_registry(|r| r.current_id()));
+    let name = buffer::with_registry(|r| r.get(id).map(|b| b.name.clone()));
+    Ok(name.map(|n| LispObject::string(&n)).unwrap_or(LispObject::nil()))
+}
+
+pub fn prim_buffer_last_name(args: &LispObject) -> ElispResult<LispObject> {
+    prim_buffer_name(args)
+}
+
+pub fn prim_buffer_chars_modified_tick(args: &LispObject) -> ElispResult<LispObject> {
+    let id = args.first().and_then(|a| resolve_buffer(&a)).unwrap_or_else(|| buffer::with_registry(|r| r.current_id()));
+    let t = buffer::with_registry(|r| r.get(id).map(|b| b.modified_tick).unwrap_or(0));
+    #[allow(clippy::cast_possible_wrap)]
+    Ok(LispObject::integer(t as i64))
+}
+
 // ---- Dispatch table --------------------------------------------------
 
 /// Called from `call_stateful_primitive`. Returns `Some(result)` if
@@ -1368,6 +1434,16 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "search-forward" => prim_search_forward(args),
         "search-backward" => prim_search_backward(args),
         "replace-match" => prim_replace_match(args),
+        "get-truename-buffer" => prim_get_truename_buffer(args),
+        "buffer-text-pixel-size" => prim_buffer_text_pixel_size(args),
+        "text-property-not-all" => prim_text_property_not_all(args),
+        "marker-insertion-type" => prim_marker_insertion_type(args),
+        "buffer-swap-text" => prim_buffer_swap_text(args),
+        "overlay-lists" => prim_overlay_lists(args),
+        "overlay-recenter" => prim_overlay_recenter(args),
+        "buffer-base-buffer" => prim_buffer_base_buffer(args),
+        "buffer-last-name" => prim_buffer_last_name(args),
+        "buffer-chars-modified-tick" => prim_buffer_chars_modified_tick(args),
         _ => return None,
     })
 }
