@@ -142,105 +142,130 @@ pub(super) fn expand_macro(
     let params = &macro_.args;
     let body = &macro_.body;
 
-    // Parse the parameter list into positional, optional and rest kinds.
-    // Emacs Lisp macro lambda lists look like
-    //   (a b &optional c d &rest r)
-    // `&optional` flips subsequent names to optional (nil-padded if
-    // no arg is provided); `&rest` captures the remaining args as a
-    // list bound to the single following name.
-    // Use a sentinel for destructuring patterns we don't support (e.g.
-    // sub-lists like `()` or `(a b)`): we still consume one positional
-    // slot, but bind nothing. This is what `cl-defmacro` arg lists use
-    // for fixed-shape arg patterns (e.g. `ert-deftest NAME () BODY...`
-    // requires the second positional slot to BE the empty list).
-    const SKIP: &str = "";
-    let mut positional: Vec<String> = Vec::new();
-    let mut optional: Vec<String> = Vec::new();
-    let mut rest_name: Option<String> = None;
-    let mut mode = 0u8; // 0=positional, 1=optional, 2=rest
-    let mut cur = Some(params.clone());
-    while let Some(curr) = cur {
-        match curr.destructure_cons() {
-            Some((car, tail)) => {
-                if let Some(s) = car.as_symbol() {
-                    match s.as_str() {
-                        "&optional" => mode = 1,
-                        // `&body` is a CL extension synonym for `&rest`.
-                        // Used heavily in `cl-defmacro` (e.g. ert-deftest).
-                        "&rest" | "&body" => mode = 2,
-                        _ => match mode {
-                            0 => positional.push(s),
-                            1 => optional.push(s),
-                            2 => {
-                                rest_name = Some(s);
-                                break;
-                            }
-                            _ => unreachable!(),
-                        },
-                    }
-                    cur = Some(tail);
-                } else {
-                    // Non-symbol param entry — typically a destructuring
-                    // pattern like `()` or `(name &optional default)`.
-                    // We don't implement destructuring; consume one slot
-                    // with the SKIP sentinel so subsequent args still
-                    // line up correctly.
-                    match mode {
-                        0 => positional.push(SKIP.to_string()),
-                        1 => optional.push(SKIP.to_string()),
-                        2 => {
-                            // `&rest` followed by a non-symbol shouldn't
-                            // happen in well-formed code; just stop.
-                            break;
-                        }
-                        _ => unreachable!(),
-                    }
-                    cur = Some(tail);
-                }
-            }
-            None => break,
-        }
-    }
-
-    let mut arg_list = args;
+    // Bind macro parameters to the call-site args, supporting `cl-defmacro`-style
+    // destructuring (e.g. `((name other &optional flag) &rest body)`).
+    //
+    // Top-level params is a lambda list with &optional / &rest / &body markers.
+    // A non-symbol positional slot is a SUB-lambda-list that recursively matches
+    // the shape of the corresponding call-site argument. This is essential for
+    // macros like `files-tests--with-temp-non-special` whose first param is
+    // `(name non-special-name &optional dir-flag)`: the outer positional slot
+    // consumes one call-site arg (itself a list like `(tmpfile nospecial)`),
+    // and the inner pattern binds `name=tmpfile`, `non-special-name=nospecial`.
     let mut bindings: Vec<(String, LispObject)> = Vec::new();
-
-    // Positional: each takes one arg (or nil if missing — Emacs would
-    // signal wrong-number-of-args, but we stay permissive like the
-    // prior implementation).
-    for name in &positional {
-        let arg = arg_list.first().unwrap_or(LispObject::nil());
-        bindings.push((name.clone(), arg));
-        arg_list = arg_list.rest().unwrap_or(LispObject::nil());
-    }
-    // Optional: like positional but nil when out of args.
-    for name in &optional {
-        if arg_list.is_nil() {
-            bindings.push((name.clone(), LispObject::nil()));
-        } else {
-            let arg = arg_list.first().unwrap_or(LispObject::nil());
-            bindings.push((name.clone(), arg));
-            arg_list = arg_list.rest().unwrap_or(LispObject::nil());
-        }
-    }
-    // Rest: bind to the whole remaining arg list (including unevaluated
-    // forms — macro args are NOT evaluated before binding).
-    if let Some(rest) = rest_name {
-        bindings.push((rest, arg_list));
-    }
+    bind_macro_params(params.clone(), args, &mut bindings)?;
 
     let parent_env = Arc::new(env.read().clone());
     let temp_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
 
     for (name, value) in bindings {
         if name.is_empty() {
-            continue; // skip the SKIP sentinel from destructuring patterns
+            continue; // skip the SKIP sentinel (unsupported shape)
         }
         temp_env.write().define(&name, value);
     }
 
     let result = eval_progn(obj_to_value(body.clone()), &temp_env, editor, macros, state)?;
     Ok(value_to_obj(result))
+}
+
+/// Walk a macro lambda list `params` and the corresponding call-site args,
+/// pushing (name, unevaluated-value) pairs into `bindings`.
+///
+/// Handles `&optional`, `&rest`, `&body`, and recursive list destructuring
+/// (cl-defmacro style). Non-symbol positional slots are treated as a sub
+/// lambda list matching the structure of the corresponding argument.
+fn bind_macro_params(
+    params: LispObject,
+    args: LispObject,
+    bindings: &mut Vec<(String, LispObject)>,
+) -> ElispResult<()> {
+    let mut arg_list = args;
+    let mut mode = 0u8; // 0=positional, 1=optional, 2=rest
+    let mut cur = Some(params);
+    while let Some(curr) = cur {
+        match curr.destructure_cons() {
+            None => break,
+            Some((param, tail)) => {
+                if let Some(s) = param.as_symbol() {
+                    match s.as_str() {
+                        "&optional" => {
+                            mode = 1;
+                            cur = Some(tail);
+                            continue;
+                        }
+                        // `&body` is a CL extension synonym for `&rest`.
+                        // Used heavily in `cl-defmacro` (e.g. ert-deftest).
+                        "&rest" | "&body" => {
+                            mode = 2;
+                            cur = Some(tail);
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+
+                match mode {
+                    0 => {
+                        // Positional slot: consume one call-site arg.
+                        let arg = arg_list.first().unwrap_or(LispObject::nil());
+                        arg_list = arg_list.rest().unwrap_or(LispObject::nil());
+                        bind_one_param(param, arg, bindings)?;
+                        cur = Some(tail);
+                    }
+                    1 => {
+                        // Optional slot: default to nil if call-site exhausted.
+                        let arg = if arg_list.is_nil() {
+                            LispObject::nil()
+                        } else {
+                            let a = arg_list.first().unwrap_or(LispObject::nil());
+                            arg_list = arg_list.rest().unwrap_or(LispObject::nil());
+                            a
+                        };
+                        bind_one_param(param, arg, bindings)?;
+                        cur = Some(tail);
+                    }
+                    2 => {
+                        // Rest slot: the whole remainder, bound to one name.
+                        // A destructuring pattern after &rest is unusual; just skip.
+                        if let Some(s) = param.as_symbol() {
+                            bindings.push((s, arg_list.clone()));
+                        }
+                        break;
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Bind a single positional/optional parameter slot — either a plain symbol
+/// or a destructuring sub-pattern (itself a lambda list).
+fn bind_one_param(
+    param: LispObject,
+    arg: LispObject,
+    bindings: &mut Vec<(String, LispObject)>,
+) -> ElispResult<()> {
+    if let Some(s) = param.as_symbol() {
+        bindings.push((s, arg));
+        return Ok(());
+    }
+    // Non-symbol: must be a list (destructuring pattern). Recurse with the
+    // arg as the inner "arg list". Non-list args against a sub-pattern are
+    // permissively treated as nil (Emacs would signal; we stay lenient to
+    // match existing behaviour for unsupported shapes).
+    if matches!(param, LispObject::Cons(_)) {
+        let inner_args = if matches!(arg, LispObject::Cons(_)) || arg.is_nil() {
+            arg
+        } else {
+            LispObject::nil()
+        };
+        bind_macro_params(param, inner_args, bindings)?;
+    }
+    // Any other shape (vector, literal) — skip, matches old SKIP behaviour.
+    Ok(())
 }
 pub(super) fn eval_let(
     args: Value,
