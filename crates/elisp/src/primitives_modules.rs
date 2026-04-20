@@ -121,6 +121,26 @@ pub fn register(interp: &mut Interpreter) {
 (defun scss-mode (&rest _args) nil)
 (defun pcomplete-erc-setup (&rest _args) nil)
 (defun log-edit-fill-entry (&rest _args) nil)
+
+;; R6: eshell primitive stubs from ERT baseline
+;; (/tmp/emacs-results-round2-baseline.jsonl — void-function counts)
+;;
+;; Nearby eshell-* functions with hits >= 5 that weren't already covered:
+(defun eshell-glob-convert (&rest args) (car args))         ; 6 hits — identity pass-through
+(defun eshell-printable-size (&rest _args) "")              ; 5 hits — format helper; empty string is harmless
+;;
+;; Explicit eshell API-surface stubs (table in task brief). Hits are lower
+;; but these entry points are referenced by eshell's own test files and
+;; flipping them from "void function" to a sensible default unblocks the
+;; rest of each test's setup.
+(defun eshell-command (&rest _args) nil)                    ; 3 hits
+(defun eshell-parse-arguments (&rest args) (list (cons 'eshell-parsed-args args))) ; structural stub
+(defun eshell-evaluate-predicate (&rest _args) t)           ; predicate — default true
+(defun eshell-eval-command (&rest _args) nil)
+(defun eshell-evaluate-gpg (&rest _args) nil)
+;;
+;; NOTE: eshell-eval-using-options (9 hits) is intentionally left unstubbed
+;; per the existing comment above — some tests rely on it being void.
 "#;
 
     // Read and evaluate the stubs. Silently ignore parse/eval errors
