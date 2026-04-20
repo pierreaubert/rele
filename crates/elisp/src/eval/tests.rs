@@ -5403,6 +5403,26 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
         }
         interp.set_eval_ops_limit(0);
     }
+
+    // Additional fixture defvars. These are legit Emacs globals (not
+    // test-local vars) that commonly appear as `void variable: X` in
+    // the test corpus because their owning module failed to load.
+    // Pre-registering them as nil / sensible-default lets dependent
+    // tests at least progress past the first reference. We do NOT
+    // pre-register test-local names like `abba` / `name` / `location`:
+    // those would paper over real interpreter bugs in dynamic-binding.
+    interp.define("auto-revert-interval", LispObject::integer(5));
+    interp.define("url-handler-mode", LispObject::nil());
+    interp.define("secrets-enabled", LispObject::nil());
+    interp.define("sql-sqlite-program", LispObject::string("sqlite3"));
+    interp.define("mh-path", LispObject::nil());
+    interp.define("require-passphrase", LispObject::nil());
+    interp.define("erc-autojoin-timing", LispObject::symbol("connect"));
+    interp.define("erc-send-post-hook", LispObject::nil());
+    interp.define("erc-interpret-controls-p", LispObject::t());
+    interp.define("erc-scrolltobottom-all", LispObject::nil());
+    interp.define("erc-nicks-track-faces", LispObject::symbol("prepend"));
+    interp.define("erc-d-u--library-directory", LispObject::nil());
 }
 
 /// Load Emacs cl-* files (cl-macs, cl-extra, cl-seq, cl-print) into an
@@ -5946,13 +5966,14 @@ pub struct ErtRunStats {
     pub errored: usize,
     pub skipped: usize,
     pub panicked: usize,
+    pub timed_out: usize,
 }
 
 /// Per-test result, captured for JSONL emission.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ErtTestResult {
     pub name: String,
-    /// One of "pass", "fail", "error", "skip", "panic".
+    /// One of "pass", "fail", "error", "skip", "panic", "timeout".
     pub result: &'static str,
     /// Free-form detail (error message, signal symbol, etc.). Empty for passes.
     pub detail: String,
@@ -5995,9 +6016,38 @@ impl ErtTestResult {
 /// Run all `ert-deftest`s registered under our `ert--rele-test` plist key
 /// in the given `interp`. Wraps each test in `catch_unwind` so panics
 /// from unforeseen interpreter bugs don't take down the whole run.
-/// Returns aggregate counters AND per-test results.
+/// Returns aggregate counters AND per-test results. No wall-clock
+/// timeout — an errant test can hang until the parent-side 15 s
+/// per-file deadline kills the worker.
 pub fn run_rele_ert_tests_detailed(interp: &Interpreter) -> (ErtRunStats, Vec<ErtTestResult>) {
+    run_rele_ert_tests_detailed_inner(interp, 0)
+}
+
+/// Same as `run_rele_ert_tests_detailed` but with a per-test wall-clock
+/// timeout in milliseconds. `per_test_ms == 0` means unlimited.
+///
+/// Termination mechanism: a dedicated watchdog thread waits on an
+/// `mpsc` receiver for up to `per_test_ms`. If it wakes via timeout it
+/// lowers the interpreter's `eval_ops_limit` to `1`, which makes the
+/// next `charge()` call in the interpreter return `EvalError`. The
+/// main thread, on seeing both the timed-out flag and that error,
+/// classifies the result as `"timeout"`. This works for any test
+/// that returns to the charge path periodically; pathological
+/// tight-loops in a primitive that never call `charge()` still
+/// escape the watchdog and rely on the parent's per-file deadline.
+pub fn run_rele_ert_tests_detailed_with_timeout(
+    interp: &Interpreter,
+    per_test_ms: u64,
+) -> (ErtRunStats, Vec<ErtTestResult>) {
+    run_rele_ert_tests_detailed_inner(interp, per_test_ms)
+}
+
+fn run_rele_ert_tests_detailed_inner(
+    interp: &Interpreter,
+    per_test_ms: u64,
+) -> (ErtRunStats, Vec<ErtTestResult>) {
     use crate::obarray;
+    use std::sync::atomic::Ordering;
     let test_key = obarray::intern("ert--rele-test");
     let skipped_key = obarray::intern("ert-test-skipped");
     let failed_key = obarray::intern("ert-test-failed");
@@ -6029,11 +6079,47 @@ pub fn run_rele_ert_tests_detailed(interp: &Interpreter) -> (ErtRunStats, Vec<Er
         );
         interp.reset_eval_ops();
         interp.set_eval_ops_limit(500_000);
+
+        // Arm the watchdog. `timed_out` is the source of truth for
+        // reclassification; the mpsc channel only serves to wake the
+        // watchdog early when the test finishes before the deadline.
+        let (watchdog_handle, timed_out, done_tx) = if per_test_ms > 0 {
+            let timed_out = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let timed_out_w = std::sync::Arc::clone(&timed_out);
+            let limit = std::sync::Arc::clone(&interp.state.eval_ops_limit);
+            let (tx, rx) = std::sync::mpsc::channel::<()>();
+            let timeout = std::time::Duration::from_millis(per_test_ms);
+            let h = std::thread::spawn(move || {
+                if rx.recv_timeout(timeout).is_err() {
+                    // Deadline elapsed without a "done" message.
+                    timed_out_w.store(true, Ordering::Relaxed);
+                    limit.store(1, Ordering::Relaxed);
+                }
+            });
+            (Some(h), Some(timed_out), Some(tx))
+        } else {
+            (None, None, None)
+        };
+
         let start = std::time::Instant::now();
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             interp.eval(call.clone())
         }));
         let elapsed_ms = start.elapsed().as_millis();
+
+        // Disarm the watchdog. Sending is best-effort: if the
+        // watchdog already timed out and exited, the send just fails
+        // and we'll see the `timed_out` flag below.
+        if let Some(tx) = done_tx {
+            let _ = tx.send(());
+        }
+        if let Some(h) = watchdog_handle {
+            let _ = h.join();
+        }
+        let was_timed_out = timed_out
+            .as_ref()
+            .is_some_and(|t| t.load(Ordering::Relaxed));
+
         let (result, detail) = match outcome {
             Ok(Ok(_)) => {
                 stats.passed += 1;
@@ -6041,19 +6127,29 @@ pub fn run_rele_ert_tests_detailed(interp: &Interpreter) -> (ErtRunStats, Vec<Er
             }
             Ok(Err(crate::error::ElispError::Signal(sig))) => {
                 let sym = sig.symbol.as_symbol_id();
+                let sym_name = sig
+                    .symbol
+                    .as_symbol()
+                    .unwrap_or_else(|| sig.symbol.prin1_to_string());
+                let data_str = sig.data.prin1_to_string();
                 if sym == Some(failed_key) {
                     stats.failed += 1;
-                    ("fail", sig.data.prin1_to_string())
+                    let d = if data_str.is_empty() || data_str == "nil" {
+                        "(assertion failed)".to_string()
+                    } else {
+                        data_str
+                    };
+                    ("fail", d)
                 } else if sym == Some(skipped_key) {
                     stats.skipped += 1;
-                    ("skip", String::new())
+                    let d = if data_str.is_empty() || data_str == "nil" {
+                        String::new()
+                    } else {
+                        format!("skip: {data_str}")
+                    };
+                    ("skip", d)
                 } else {
                     stats.errored += 1;
-                    let sym_name = sig
-                        .symbol
-                        .as_symbol()
-                        .unwrap_or_else(|| format!("{:?}", sig.symbol));
-                    let data_str = sig.data.prin1_to_string();
                     if data_str.is_empty() || data_str == "nil" {
                         ("error", format!("signal {sym_name}"))
                     } else {
@@ -6062,12 +6158,34 @@ pub fn run_rele_ert_tests_detailed(interp: &Interpreter) -> (ErtRunStats, Vec<Er
                 }
             }
             Ok(Err(e)) => {
-                stats.errored += 1;
-                ("error", e.to_string())
+                // If the watchdog tripped, it lowered the eval-ops
+                // limit to 1, which surfaces here as an EvalError
+                // about the limit. Reclassify so the harness can
+                // distinguish a real error from an exceeded deadline.
+                let msg = e.to_string();
+                if was_timed_out {
+                    stats.timed_out += 1;
+                    ("timeout", format!("exceeded {per_test_ms}ms wall-clock"))
+                } else {
+                    stats.errored += 1;
+                    let detail = if msg.is_empty() {
+                        format!("{e:?}")
+                    } else {
+                        msg
+                    };
+                    ("error", detail)
+                }
             }
-            Err(_) => {
+            Err(payload) => {
                 stats.panicked += 1;
-                ("panic", String::new())
+                let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                    (*s).to_string()
+                } else if let Some(s) = payload.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "panic: <unprintable payload>".to_string()
+                };
+                ("panic", msg)
             }
         };
         results.push(ErtTestResult {
@@ -6090,6 +6208,7 @@ fn run_rele_ert_tests(interp: &Interpreter) -> ErtRunStats {
             "fail" => eprintln!("    FAIL: {}", r.name),
             "error" => eprintln!("    ERROR: {}: {}", r.name, r.detail),
             "panic" => eprintln!("    PANIC: {}", r.name),
+            "timeout" => eprintln!("    TIMEOUT: {}", r.name),
             _ => {}
         }
     }
@@ -6126,6 +6245,105 @@ fn test_emacs_ert_can_run_a_test() {
             assert_eq!(s.failed, 1, "expected 1 fail (rele-fail)");
             assert_eq!(s.errored, 0);
             assert_eq!(s.panicked, 0);
+        })
+        .expect("spawn");
+    handle.join().expect("join");
+}
+
+/// Regression guard: the `detail` field must not be empty for any
+/// non-pass result. Lots of downstream tooling (diff-emacs-results.sh,
+/// error-bucket histograms) relies on a usable detail string.
+#[test]
+fn test_ert_run_detail_is_populated() {
+    if !ensure_stdlib_files() {
+        return;
+    }
+    let handle = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let interp = make_stdlib_interp();
+            interp
+                .eval(read("(ert-deftest rele-pass () (should (= (+ 1 2) 3)))").unwrap())
+                .unwrap();
+            interp
+                .eval(read("(ert-deftest rele-fail () (should (= 1 2)))").unwrap())
+                .unwrap();
+            interp
+                .eval(
+                    read("(ert-deftest rele-raw-err () (signal 'my-sig '(\"boom\")))").unwrap(),
+                )
+                .unwrap();
+            let (_stats, results) = run_rele_ert_tests_detailed(&interp);
+            for r in &results {
+                if r.result != "pass" {
+                    assert!(
+                        !r.detail.is_empty(),
+                        "{}: detail was empty for {} result",
+                        r.name,
+                        r.result,
+                    );
+                }
+            }
+            let fail = results
+                .iter()
+                .find(|r| r.name == "rele-fail")
+                .expect("rele-fail missing");
+            assert_eq!(fail.result, "fail");
+            let raw = results
+                .iter()
+                .find(|r| r.name == "rele-raw-err")
+                .expect("rele-raw-err missing");
+            assert_eq!(raw.result, "error");
+            assert!(
+                raw.detail.contains("my-sig"),
+                "raw-err detail should mention signal: {:?}",
+                raw.detail,
+            );
+        })
+        .expect("spawn");
+    handle.join().expect("join");
+}
+
+/// The watchdog in `run_rele_ert_tests_detailed_with_timeout` must
+/// trip hanging tests and label them `"timeout"` rather than
+/// `"error"`. The test below registers a deftest that spins in a
+/// pure-elisp loop — which charges eval ops on every iteration, so
+/// the watchdog reliably catches it.
+#[test]
+fn test_ert_run_per_test_timeout() {
+    if !ensure_stdlib_files() {
+        return;
+    }
+    let handle = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let interp = make_stdlib_interp();
+            interp
+                .eval(
+                    read(
+                        "(ert-deftest rele-hang () \
+                           (while t (ignore 1)))",
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            interp
+                .eval(read("(ert-deftest rele-ok () (should (= 1 1)))").unwrap())
+                .unwrap();
+            let (stats, results) =
+                run_rele_ert_tests_detailed_with_timeout(&interp, 100);
+            assert_eq!(stats.timed_out, 1, "hang test should time out: {results:?}");
+            assert_eq!(stats.passed, 1, "non-hang test should still pass");
+            let hang = results
+                .iter()
+                .find(|r| r.name == "rele-hang")
+                .expect("rele-hang missing");
+            assert_eq!(hang.result, "timeout");
+            assert!(
+                hang.detail.contains("100ms"),
+                "timeout detail should name the budget: {:?}",
+                hang.detail,
+            );
         })
         .expect("spawn");
     handle.join().expect("join");
@@ -6216,6 +6434,7 @@ struct FileSummary {
     errored: usize,
     skipped: usize,
     panicked: usize,
+    timed_out: usize,
     loaded: usize,
     total_forms: usize,
 }
@@ -6287,7 +6506,8 @@ fn run_worker_pool(
                 for line in &jsonl_lines {
                     let _ = writeln!(jsonl, "{line}");
                 }
-                let t = summary.passed + summary.failed + summary.errored + summary.skipped + summary.panicked;
+                let t = summary.passed + summary.failed + summary.errored
+                    + summary.skipped + summary.panicked + summary.timed_out;
                 if summary.loaded == 0 && summary.total_forms == 0 {
                     files_load_failed += 1;
                     eprintln!(
@@ -6296,9 +6516,9 @@ fn run_worker_pool(
                     );
                 } else {
                     eprintln!(
-                        "[{}/{total_files}] {rel}: loaded {}/{} forms, ERT {} pass / {} fail / {} error / {} skip / {} panic (of {t})",
+                        "[{}/{total_files}] {rel}: loaded {}/{} forms, ERT {} pass / {} fail / {} error / {} skip / {} panic / {} timeout (of {t})",
                         file_index + 1, summary.loaded, summary.total_forms,
-                        summary.passed, summary.failed, summary.errored, summary.skipped, summary.panicked,
+                        summary.passed, summary.failed, summary.errored, summary.skipped, summary.panicked, summary.timed_out,
                     );
                 }
                 grand.passed += summary.passed;
@@ -6306,6 +6526,7 @@ fn run_worker_pool(
                 grand.errored += summary.errored;
                 grand.skipped += summary.skipped;
                 grand.panicked += summary.panicked;
+                grand.timed_out += summary.timed_out;
             }
             FileOutcome::Timeout { file_index, rel } => {
                 eprintln!(
@@ -6337,14 +6558,15 @@ fn run_worker_pool(
     for h in handles {
         let _ = h.join();
     }
-    let total = grand.passed + grand.failed + grand.errored + grand.skipped + grand.panicked;
+    let total = grand.passed + grand.failed + grand.errored
+        + grand.skipped + grand.panicked + grand.timed_out;
     let pct = if total > 0 { grand.passed * 100 / total } else { 0 };
     eprintln!(
         "\n=== Emacs test suite summary ===\n\
          Files:  {files_done} run, {files_load_failed} load-failed, {files_timed_out} timed out, {files_crashed} crashed\n\
-         Tests:  {} pass / {} fail / {} error / {} skip / {} panic (of {total})\n\
+         Tests:  {} pass / {} fail / {} error / {} skip / {} panic / {} timeout (of {total})\n\
          Pass rate: {pct}%",
-        grand.passed, grand.failed, grand.errored, grand.skipped, grand.panicked,
+        grand.passed, grand.failed, grand.errored, grand.skipped, grand.panicked, grand.timed_out,
     );
 }
 
@@ -6513,19 +6735,33 @@ fn worker_manager(
 }
 
 fn parse_summary(rest: &str) -> Option<FileSummary> {
+    // Two layouts are accepted for forward/backwards compatibility:
+    //   legacy (7 fields): PASS FAIL ERROR SKIP PANIC LOADED TOTAL
+    //   current (8 fields): PASS FAIL ERROR SKIP PANIC TIMEOUT LOADED TOTAL
     let parts: Vec<&str> = rest.split_whitespace().collect();
-    if parts.len() < 7 {
-        return None;
+    match parts.len() {
+        7 => Some(FileSummary {
+            passed: parts[0].parse().ok()?,
+            failed: parts[1].parse().ok()?,
+            errored: parts[2].parse().ok()?,
+            skipped: parts[3].parse().ok()?,
+            panicked: parts[4].parse().ok()?,
+            timed_out: 0,
+            loaded: parts[5].parse().ok()?,
+            total_forms: parts[6].parse().ok()?,
+        }),
+        n if n >= 8 => Some(FileSummary {
+            passed: parts[0].parse().ok()?,
+            failed: parts[1].parse().ok()?,
+            errored: parts[2].parse().ok()?,
+            skipped: parts[3].parse().ok()?,
+            panicked: parts[4].parse().ok()?,
+            timed_out: parts[5].parse().ok()?,
+            loaded: parts[6].parse().ok()?,
+            total_forms: parts[7].parse().ok()?,
+        }),
+        _ => None,
     }
-    Some(FileSummary {
-        passed: parts[0].parse().ok()?,
-        failed: parts[1].parse().ok()?,
-        errored: parts[2].parse().ok()?,
-        skipped: parts[3].parse().ok()?,
-        panicked: parts[4].parse().ok()?,
-        loaded: parts[5].parse().ok()?,
-        total_forms: parts[6].parse().ok()?,
-    })
 }
 
 fn worker_binary_path() -> std::path::PathBuf {
