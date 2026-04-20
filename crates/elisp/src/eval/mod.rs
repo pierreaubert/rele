@@ -4437,6 +4437,26 @@ fn eval_backquote_form(
                         // `eval(X)` contributing a single element —
                         // the regular element expansion handles it.
                     }
+
+                    // Dotted-pair unquote: `(foo . ,expr)` is read by the
+                    // reader as cons(foo, cons(comma-sym, cons(expr, nil))).
+                    // When the walk reaches the comma SYMBOL (not a cons)
+                    // as an element, the *next* element is the expression
+                    // to eval and use as the list tail. Example:
+                    //   `(progn . ,(nreverse exps))
+                    //    => (progn . eval-of-(nreverse exps))
+                    if elem.as_symbol().as_deref() == Some(",") {
+                        let inner =
+                            rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                        let tail_val = eval(
+                            obj_to_value(inner),
+                            env,
+                            editor,
+                            macros,
+                            state,
+                        )?;
+                        break value_to_obj(tail_val);
+                    }
                 }
                 out.push(eval_backquote_form(
                     elem, depth, env, editor, macros, state,
