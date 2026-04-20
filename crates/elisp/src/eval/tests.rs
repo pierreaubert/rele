@@ -6196,9 +6196,21 @@ fn run_rele_ert_tests_detailed_inner(
         .write()
         .clear_plist_prop_globally(test_key);
     for (name, thunk) in tests {
+        // Wrap the stored thunk in `(quote ...)` so eval hands funcall
+        // the object as-is. R19: the thunk is now a
+        // `(closure CAPTURED () BODY...)` form; evaluating that cons as
+        // a bare expression would try to dispatch on `closure` as a
+        // function head, which doesn't exist. Quoting sidesteps the
+        // dispatch and lets `call_function`'s `closure` arm handle it.
         let call = LispObject::cons(
             LispObject::symbol("funcall"),
-            LispObject::cons(thunk, LispObject::nil()),
+            LispObject::cons(
+                LispObject::cons(
+                    LispObject::symbol("quote"),
+                    LispObject::cons(thunk, LispObject::nil()),
+                ),
+                LispObject::nil(),
+            ),
         );
         interp.reset_eval_ops();
         interp.set_eval_ops_limit(2_000_000);
