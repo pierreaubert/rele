@@ -331,12 +331,53 @@ impl<'a> Vm<'a> {
             }
 
             // pushcatch (50): push a catch handler.
-            // Operand: 2-byte jump target (handler entry point).
-            // Modern Emacs uses this instead of the older opcode 141 form.
+            // Operand: 2-byte jump target (the "end-tag" after pophandler).
+            //
+            // Emacs 29+ byte-compiles `(catch TAG BODY)` as:
+            //   <compile TAG>           ; pushes tag
+            //   Bpushcatch ENDTAG
+            //   <compile BODY>          ; leaves result on stack
+            //   Bpophandler
+            //   ENDTAG:                 ; (merge point)
+            //
+            // On normal completion: body result is on stack, fall through
+            // to ENDTAG.
+            // On matching throw: truncate stack to the pre-body depth,
+            // push the thrown value, jump to ENDTAG.
+            // On non-matching throw: re-propagate so an outer handler
+            // (bytecode or eval-level) can catch it.
+            //
+            // We implement this by running the body inline via
+            // `run_until(ENDTAG)` and converting ElispError::Throw back
+            // into stack manipulation, mirroring the older opcode 141
+            // semantics exactly. Before 2026-04, this opcode was a
+            // no-op, which silently dropped the catch — any `throw`
+            // inside byte-compiled `catch` bodies (e.g. `treesit-ready-p`
+            // calling `throw 'term nil`) escaped to the top level and
+            // surfaced as "no catch for tag: term with value: nil"
+            // (fixes 49 tree-sitter ERT tests, R14).
             50 => {
                 let target = self.fetch_u16() as usize;
-                let _catch_tag = self.pop_obj()?;
-                let _ = target;
+                let tag = self.pop_obj()?;
+                let saved_stack_len = self.stack.len();
+                match self.run_until(target) {
+                    Ok(()) => {
+                        // Body completed normally — fall through. The
+                        // body's result is already on the stack.
+                    }
+                    Err(ElispError::Throw(throw_data)) => {
+                        if tag == throw_data.tag {
+                            // Caught: restore stack depth and push thrown value.
+                            self.stack.truncate(saved_stack_len);
+                            self.push_obj(throw_data.value);
+                            self.pc = target;
+                        } else {
+                            // Not our tag — re-throw
+                            return Err(ElispError::Throw(throw_data));
+                        }
+                    }
+                    Err(e) => return Err(e),
+                }
             }
 
             // nth (56)
