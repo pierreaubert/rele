@@ -1344,6 +1344,290 @@ pub fn prim_overlay_recenter(_args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::nil())
 }
 
+// ---- Overlays ---------------------------------------------------------
+
+/// Elisp-side an overlay is represented as `(overlay . <OverlayId>)`,
+/// mirroring the marker representation. The registry stores the actual
+/// overlay state.
+fn make_overlay_object(id: buffer::OverlayId) -> LispObject {
+    LispObject::cons(LispObject::symbol("overlay"), LispObject::integer(id as i64))
+}
+
+fn overlay_id_of(obj: &LispObject) -> Option<buffer::OverlayId> {
+    let (car, cdr) = obj.destructure_cons()?;
+    if car.as_symbol().as_deref() != Some("overlay") {
+        return None;
+    }
+    cdr.as_integer().map(|n| n as buffer::OverlayId)
+}
+
+/// Bool-ish truthiness matching Emacs: nil is false, everything else is
+/// true.
+fn is_truthy(obj: &LispObject) -> bool {
+    !matches!(obj, LispObject::Nil)
+}
+
+pub fn prim_overlayp(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().unwrap_or(LispObject::nil());
+    Ok(LispObject::from(overlay_id_of(&a).is_some()))
+}
+
+pub fn prim_make_overlay(args: &LispObject) -> ElispResult<LispObject> {
+    let start = args
+        .first()
+        .and_then(|a| a.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
+    let end = args
+        .nth(1)
+        .and_then(|a| a.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
+    // Third arg is optional buffer. Fourth/fifth are front/rear advance.
+    let buf_id = match args.nth(2) {
+        Some(LispObject::Nil) | None => buffer::with_registry(|r| r.current_id()),
+        Some(obj) => resolve_buffer(&obj)
+            .unwrap_or_else(|| buffer::with_registry(|r| r.current_id())),
+    };
+    let fa = args.nth(3).map(|o| is_truthy(&o)).unwrap_or(false);
+    let ra = args.nth(4).map(|o| is_truthy(&o)).unwrap_or(false);
+
+    // Clamp positions to the buffer's valid range. Emacs clamps to
+    // point-min/point-max of the target buffer.
+    let (pmin, pmax) = buffer::with_registry(|r| {
+        r.get(buf_id)
+            .map(|b| (b.point_min(), b.point_max()))
+            .unwrap_or((1, 1))
+    });
+    let clamp = |n: i64| -> usize {
+        if n < 1 {
+            pmin
+        } else {
+            (n as usize).clamp(pmin, pmax)
+        }
+    };
+    let s = clamp(start);
+    let e = clamp(end);
+
+    let id = buffer::with_registry_mut(|r| r.make_overlay(buf_id, s, e, fa, ra));
+    Ok(make_overlay_object(id))
+}
+
+pub fn prim_delete_overlay(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().unwrap_or(LispObject::nil());
+    if let Some(id) = overlay_id_of(&a) {
+        buffer::with_registry_mut(|r| r.delete_overlay(id));
+    }
+    Ok(LispObject::nil())
+}
+
+pub fn prim_move_overlay(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().unwrap_or(LispObject::nil());
+    let Some(id) = overlay_id_of(&a) else {
+        return Ok(LispObject::nil());
+    };
+    let start = args
+        .nth(1)
+        .and_then(|v| v.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
+    let end = args
+        .nth(2)
+        .and_then(|v| v.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
+    let buf_id = match args.nth(3) {
+        Some(LispObject::Nil) | None => buffer::with_registry(|r| {
+            r.overlay_get(id).map(|o| o.buffer).unwrap_or(r.current_id())
+        }),
+        Some(obj) => resolve_buffer(&obj)
+            .unwrap_or_else(|| buffer::with_registry(|r| r.current_id())),
+    };
+    let (pmin, pmax) = buffer::with_registry(|r| {
+        r.get(buf_id)
+            .map(|b| (b.point_min(), b.point_max()))
+            .unwrap_or((1, 1))
+    });
+    let clamp = |n: i64| -> usize {
+        if n < 1 {
+            pmin
+        } else {
+            (n as usize).clamp(pmin, pmax)
+        }
+    };
+    let (s, e) = {
+        let a = clamp(start);
+        let b = clamp(end);
+        if a <= b { (a, b) } else { (b, a) }
+    };
+    buffer::with_registry_mut(|r| {
+        if let Some(ov) = r.overlay_get_mut(id) {
+            ov.start = Some(s);
+            ov.end = Some(e);
+            ov.buffer = buf_id;
+        }
+    });
+    Ok(a)
+}
+
+pub fn prim_overlay_start(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().unwrap_or(LispObject::nil());
+    let Some(id) = overlay_id_of(&a) else {
+        return Ok(LispObject::nil());
+    };
+    let pos = buffer::with_registry(|r| r.overlay_get(id).and_then(|o| o.start));
+    #[allow(clippy::cast_possible_wrap)]
+    Ok(pos.map(|p| LispObject::integer(p as i64)).unwrap_or(LispObject::nil()))
+}
+
+pub fn prim_overlay_end(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().unwrap_or(LispObject::nil());
+    let Some(id) = overlay_id_of(&a) else {
+        return Ok(LispObject::nil());
+    };
+    let pos = buffer::with_registry(|r| r.overlay_get(id).and_then(|o| o.end));
+    #[allow(clippy::cast_possible_wrap)]
+    Ok(pos.map(|p| LispObject::integer(p as i64)).unwrap_or(LispObject::nil()))
+}
+
+pub fn prim_overlay_buffer(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().unwrap_or(LispObject::nil());
+    let Some(id) = overlay_id_of(&a) else {
+        return Ok(LispObject::nil());
+    };
+    let name = buffer::with_registry(|r| {
+        let ov = r.overlay_get(id)?;
+        // A detached overlay (deleted) has start/end None and
+        // `overlay-buffer` must return nil.
+        if ov.start.is_none() {
+            return None;
+        }
+        r.get(ov.buffer).map(|b| b.name.clone())
+    });
+    Ok(name.map(|n| LispObject::string(&n)).unwrap_or(LispObject::nil()))
+}
+
+pub fn prim_overlay_put(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().unwrap_or(LispObject::nil());
+    let Some(id) = overlay_id_of(&a) else {
+        return Ok(LispObject::nil());
+    };
+    let key = args.nth(1).unwrap_or(LispObject::nil());
+    let val = args.nth(2).unwrap_or(LispObject::nil());
+    buffer::with_registry_mut(|r| {
+        if let Some(ov) = r.overlay_get_mut(id) {
+            if let Some(slot) = ov.plist.iter_mut().find(|(k, _)| *k == key) {
+                slot.1 = val.clone();
+            } else {
+                ov.plist.push((key, val.clone()));
+            }
+        }
+    });
+    Ok(val)
+}
+
+pub fn prim_overlay_get(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().unwrap_or(LispObject::nil());
+    let Some(id) = overlay_id_of(&a) else {
+        return Ok(LispObject::nil());
+    };
+    let key = args.nth(1).unwrap_or(LispObject::nil());
+    let val = buffer::with_registry(|r| {
+        r.overlay_get(id).and_then(|ov| {
+            ov.plist
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone())
+        })
+    });
+    Ok(val.unwrap_or(LispObject::nil()))
+}
+
+pub fn prim_overlay_properties(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().unwrap_or(LispObject::nil());
+    let Some(id) = overlay_id_of(&a) else {
+        return Ok(LispObject::nil());
+    };
+    let plist = buffer::with_registry(|r| {
+        r.overlay_get(id).map(|ov| ov.plist.clone()).unwrap_or_default()
+    });
+    // Flatten to a proper plist: (k1 v1 k2 v2 ...)
+    let mut out = LispObject::nil();
+    for (k, v) in plist.into_iter().rev() {
+        out = LispObject::cons(v, out);
+        out = LispObject::cons(k, out);
+    }
+    Ok(out)
+}
+
+fn list_from_ids(ids: Vec<buffer::OverlayId>) -> LispObject {
+    let mut out = LispObject::nil();
+    for id in ids.into_iter().rev() {
+        out = LispObject::cons(make_overlay_object(id), out);
+    }
+    out
+}
+
+pub fn prim_overlays_at(args: &LispObject) -> ElispResult<LispObject> {
+    let pos = args
+        .first()
+        .and_then(|a| a.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
+    if pos < 1 {
+        return Ok(LispObject::nil());
+    }
+    let pos = pos as usize;
+    let ids = buffer::with_registry(|r| r.overlays_at(r.current_id(), pos));
+    Ok(list_from_ids(ids))
+}
+
+pub fn prim_overlays_in(args: &LispObject) -> ElispResult<LispObject> {
+    let beg = args
+        .first()
+        .and_then(|a| a.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
+    let end = args
+        .nth(1)
+        .and_then(|a| a.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
+    if beg < 1 || end < 1 {
+        return Ok(LispObject::nil());
+    }
+    let ids = buffer::with_registry(|r| r.overlays_in(r.current_id(), beg as usize, end as usize));
+    Ok(list_from_ids(ids))
+}
+
+pub fn prim_remove_overlays(args: &LispObject) -> ElispResult<LispObject> {
+    // (remove-overlays &optional BEG END NAME VAL)
+    // With no args, clears all overlays in the current buffer. With BEG
+    // and END, only overlays overlapping the range. NAME/VAL further
+    // restrict by property match.
+    let beg = args.first().and_then(|a| a.as_integer()).unwrap_or(1);
+    let end_arg = args.nth(1).and_then(|a| a.as_integer());
+    let name = args.nth(2);
+    let val = args.nth(3);
+
+    buffer::with_registry_mut(|r| {
+        let buf = r.current_id();
+        let pmax = r.get(buf).map(|b| b.point_max()).unwrap_or(1);
+        let b = beg.max(1) as usize;
+        let e = end_arg.map(|n| n.max(1) as usize).unwrap_or(pmax);
+        let (b, e) = if b <= e { (b, e) } else { (e, b) };
+        let ids = r.overlays_in(buf, b, e);
+        for id in ids {
+            if let Some(ov) = r.overlay_get(id) {
+                // Property filtering.
+                if let Some(name_key) = &name {
+                    let matches = ov.plist.iter().any(|(k, v)| {
+                        k == name_key && val.as_ref().map(|vv| v == vv).unwrap_or(true)
+                    });
+                    if !matches {
+                        continue;
+                    }
+                }
+                r.delete_overlay(id);
+            }
+        }
+    });
+    Ok(LispObject::nil())
+}
+
 pub fn prim_buffer_base_buffer(args: &LispObject) -> ElispResult<LispObject> {
     let id = args.first().and_then(|a| resolve_buffer(&a)).unwrap_or_else(|| buffer::with_registry(|r| r.current_id()));
     let name = buffer::with_registry(|r| r.get(id).map(|b| b.name.clone()));
@@ -1441,6 +1725,19 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "buffer-swap-text" => prim_buffer_swap_text(args),
         "overlay-lists" => prim_overlay_lists(args),
         "overlay-recenter" => prim_overlay_recenter(args),
+        "overlayp" => prim_overlayp(args),
+        "make-overlay" => prim_make_overlay(args),
+        "delete-overlay" => prim_delete_overlay(args),
+        "move-overlay" => prim_move_overlay(args),
+        "overlay-start" => prim_overlay_start(args),
+        "overlay-end" => prim_overlay_end(args),
+        "overlay-buffer" => prim_overlay_buffer(args),
+        "overlay-put" => prim_overlay_put(args),
+        "overlay-get" => prim_overlay_get(args),
+        "overlay-properties" => prim_overlay_properties(args),
+        "overlays-at" => prim_overlays_at(args),
+        "overlays-in" => prim_overlays_in(args),
+        "remove-overlays" => prim_remove_overlays(args),
         "buffer-base-buffer" => prim_buffer_base_buffer(args),
         "buffer-last-name" => prim_buffer_last_name(args),
         "buffer-chars-modified-tick" => prim_buffer_chars_modified_tick(args),

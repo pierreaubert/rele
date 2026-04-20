@@ -1021,8 +1021,10 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("window-configuration-change-hook", LispObject::nil());
     interp.define("buffer-list-update-hook", LispObject::nil());
 
-    // Phase 7e — missing primitive stubs.
-    interp.define("make-overlay", LispObject::primitive("ignore"));
+    // Phase 7e — missing primitive stubs. `make-overlay` is a real
+    // primitive (see primitives_buffer.rs); register its symbol to
+    // route through the stateful dispatch.
+    interp.define("make-overlay", LispObject::primitive("make-overlay"));
     interp.define("custom-add-option", LispObject::primitive("ignore"));
     interp.define("custom-add-version", LispObject::primitive("ignore"));
     interp.define("custom-declare-variable", LispObject::primitive("ignore"));
@@ -1474,20 +1476,22 @@ pub fn make_stdlib_interp() -> Interpreter {
     // real primitives in `add_primitives` — don't shadow them.
     interp.define("modify-frame-parameters-ignored", LispObject::nil());
     interp.define("force-mode-line-update", LispObject::primitive("ignore"));
-    interp.define("overlay-put", LispObject::primitive("ignore"));
-    interp.define("overlay-get", LispObject::primitive("ignore"));
-    interp.define("delete-overlay", LispObject::primitive("ignore"));
-    interp.define("move-overlay", LispObject::primitive("ignore"));
-    interp.define("overlay-start", LispObject::primitive("ignore"));
-    interp.define("overlay-end", LispObject::primitive("ignore"));
-    interp.define("overlays-at", LispObject::primitive("ignore"));
-    interp.define("overlays-in", LispObject::primitive("ignore"));
+    // Overlay primitives — real implementations in
+    // `primitives_buffer.rs`, dispatched via `call_stateful_primitive`.
+    interp.define("overlay-put", LispObject::primitive("overlay-put"));
+    interp.define("overlay-get", LispObject::primitive("overlay-get"));
+    interp.define("delete-overlay", LispObject::primitive("delete-overlay"));
+    interp.define("move-overlay", LispObject::primitive("move-overlay"));
+    interp.define("overlay-start", LispObject::primitive("overlay-start"));
+    interp.define("overlay-end", LispObject::primitive("overlay-end"));
+    interp.define("overlays-at", LispObject::primitive("overlays-at"));
+    interp.define("overlays-in", LispObject::primitive("overlays-in"));
     interp.define("next-overlay-change", LispObject::primitive("ignore"));
     interp.define("previous-overlay-change", LispObject::primitive("ignore"));
-    interp.define("remove-overlays", LispObject::primitive("ignore"));
-    interp.define("overlay-properties", LispObject::primitive("ignore"));
-    interp.define("overlay-buffer", LispObject::primitive("ignore"));
-    interp.define("overlayp", LispObject::primitive("ignore"));
+    interp.define("remove-overlays", LispObject::primitive("remove-overlays"));
+    interp.define("overlay-properties", LispObject::primitive("overlay-properties"));
+    interp.define("overlay-buffer", LispObject::primitive("overlay-buffer"));
+    interp.define("overlayp", LispObject::primitive("overlayp"));
     // Frames: we never have any.
     interp.define("current-message", LispObject::primitive("ignore"));
     interp.define("message-log-max", LispObject::nil());
@@ -2405,8 +2409,12 @@ fn test_batched_defun_stubs_resolve_round3() {
         ("(y-or-n-p \"ok?\")", "nil"),
         ("(color-values \"red\")", "nil"),
         ("(face-bold-p 'default)", "nil"),
-        ("(make-overlay 1 1)", "nil"),
-        ("(overlays-at 1)", "nil"),
+        // `(make-overlay 1 1)` now returns a real overlay object, so
+        // probe via `overlayp`. The preceding `overlays-at` call in
+        // the old stub-world returned nil; with real overlays, probe
+        // instead via `(overlays-at 9999)` where nothing exists.
+        ("(overlayp (make-overlay 1 1))", "t"),
+        ("(overlays-at 9999)", "nil"),
         // Coding-system: list with 'utf-8.
         ("(coding-system-priority-list)", "(utf-8)"),
         ("(find-coding-systems-string \"hello\")", "(utf-8)"),

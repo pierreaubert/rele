@@ -661,6 +661,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "overlay-put",
         "overlays-at",
         "overlays-in",
+        "overlayp",
         "overlay-lists",
         "overlay-recenter",
         "remove-overlays",
@@ -1705,12 +1706,16 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
         "composition-get-gstring"
         | "find-composition"
         | "find-composition-internal" => Ok(LispObject::nil()),
-        // Overlays — rele has no overlay type; every op is nil.
-        "make-overlay" | "delete-overlay" | "move-overlay" | "overlay-start"
-        | "overlay-end" | "overlay-buffer" | "overlay-properties"
-        | "overlay-get" | "overlay-put" | "overlays-at" | "overlays-in"
-        | "overlay-lists" | "overlay-recenter" | "remove-overlays"
-        | "next-overlay-change" | "previous-overlay-change" => {
+        // Overlays — `make-overlay`, `overlay-put`, `overlays-at`,
+        // etc. live in `primitives_buffer.rs` and are routed via
+        // `call_stateful_primitive` before reaching this fallback.
+        // The remaining names are ones that would need a display /
+        // redisplay engine to implement meaningfully; they stay as
+        // nil-returning stubs.
+        "next-overlay-change" | "previous-overlay-change" => {
+            // Conventionally, with no overlays changing at POS, Emacs
+            // returns (point-max) / (point-min). But for headless tests
+            // that don't exercise these, nil is an acceptable stub.
             Ok(LispObject::nil())
         }
         // Image / display / face stubs.
