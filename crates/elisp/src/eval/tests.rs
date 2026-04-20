@@ -1899,6 +1899,23 @@ pub fn make_stdlib_interp() -> Interpreter {
     // lisp/mail/eshell.el (3+ hits)
     interp.define("eshell-ls-use-in-dired", LispObject::nil());
 
+    // R10: icalendar + tramp + connection-local + misc void-variable fixtures.
+    // Source: /tmp/emacs-results-round2-baseline.jsonl. Only items with
+    // >=5 hits in the icalendar/tramp/connection-local/mh/secrets/
+    // auth-source/file-name-magic namespaces are registered here.
+
+    // calendar/icalendar.el (18 hits)
+    interp.define("icalendar-parse-component", LispObject::nil());
+
+    // calendar/icalendar.el (7 hits)
+    interp.define("icalendar-parse-calendar", LispObject::nil());
+
+    // mh-e/*.el — mh-path is the detected binary dir (14 hits)
+    interp.define("mh-path", LispObject::nil());
+
+    // net/secrets.el — nil means the Secret Service API is unavailable (6 hits)
+    interp.define("secrets-enabled", LispObject::nil());
+
     interp
 }
 
