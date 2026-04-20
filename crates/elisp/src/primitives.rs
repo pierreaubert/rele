@@ -1965,6 +1965,9 @@ fn get_number(obj: &LispObject) -> Option<f64> {
     match obj {
         LispObject::Integer(i) => Some(*i as f64),
         LispObject::Float(f) => Some(*f),
+        // Emacs treats nil as 0 and t as 1 in numeric contexts.
+        LispObject::Nil => Some(0.0),
+        LispObject::T => Some(1.0),
         _ => None,
     }
 }
@@ -5237,4 +5240,39 @@ fn prim_default_toplevel_value(args: &LispObject) -> ElispResult<LispObject> {
         .and_then(|a| a.as_symbol_id())
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
     Ok(crate::obarray::get_value_cell(sym).unwrap_or_else(LispObject::nil))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_number_nil_as_zero() {
+        assert_eq!(get_number(&LispObject::nil()), Some(0.0));
+    }
+
+    #[test]
+    fn test_get_number_t_as_one() {
+        assert_eq!(get_number(&LispObject::t()), Some(1.0));
+    }
+
+    #[test]
+    fn test_add_with_nil() {
+        let args = LispObject::cons(
+            LispObject::nil(),
+            LispObject::cons(LispObject::integer(5), LispObject::nil()),
+        );
+        let result = prim_add(&args).unwrap();
+        assert_eq!(result.as_float(), Some(5.0));
+    }
+
+    #[test]
+    fn test_add_t_plus_5() {
+        let args = LispObject::cons(
+            LispObject::t(),
+            LispObject::cons(LispObject::integer(5), LispObject::nil()),
+        );
+        let result = prim_add(&args).unwrap();
+        assert_eq!(result.as_float(), Some(6.0));
+    }
 }
