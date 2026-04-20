@@ -521,6 +521,129 @@ pub fn prim_minor_mode_key_binding(_args: &LispObject) -> ElispResult<LispObject
     Ok(LispObject::nil())
 }
 
+// ---- P4 window query primitives -----------------------------------------------
+
+pub fn prim_window_minibuffer_p(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::nil())
+}
+
+pub fn prim_last_nonminibuffer_frame(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(frame_obj())
+}
+
+pub fn prim_frame_initial_p(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().unwrap_or(LispObject::nil());
+    Ok(LispObject::from(is_frame(&a)))
+}
+
+pub fn prim_frame_internal_border_width(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::integer(0))
+}
+
+pub fn prim_set_frame_width(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::nil())
+}
+
+pub fn prim_terminal_coding_system(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::symbol("utf-8"))
+}
+
+pub fn prim_tty_top_frame(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(frame_obj())
+}
+
+pub fn prim_accessible_keymaps(args: &LispObject) -> ElispResult<LispObject> {
+    let keymap = match args.first() {
+        Some(k) => k.clone(),
+        None => keymap_cons(None),
+    };
+    let entry = LispObject::cons(LispObject::string(""), keymap);
+    Ok(LispObject::cons(entry, LispObject::nil()))
+}
+
+pub fn prim_color_values_from_color_spec(args: &LispObject) -> ElispResult<LispObject> {
+    let spec = args.first().unwrap_or(LispObject::nil());
+    match spec {
+        LispObject::String(s) => {
+            if !s.starts_with('#') || s.len() != 7 {
+                return Ok(LispObject::nil());
+            }
+            match u32::from_str_radix(&s[1..], 16) {
+                Ok(rgb) => {
+                    let r = (((rgb >> 16) & 0xFF) as i64) * 257;
+                    let g = (((rgb >> 8) & 0xFF) as i64) * 257;
+                    let b = ((rgb & 0xFF) as i64) * 257;
+                    Ok(LispObject::cons(
+                        LispObject::integer(r),
+                        LispObject::cons(
+                            LispObject::integer(g),
+                            LispObject::cons(LispObject::integer(b), LispObject::nil()),
+                        ),
+                    ))
+                }
+                Err(_) => Ok(LispObject::nil()),
+            }
+        }
+        _ => Ok(LispObject::nil()),
+    }
+}
+
+pub fn prim_color_blend(args: &LispObject) -> ElispResult<LispObject> {
+    let c1 = args.nth(0).and_then(|a| a.as_string()).map(|s| s.clone()).unwrap_or_default();
+    let c2 = args.nth(1).and_then(|a| a.as_string()).map(|s| s.clone()).unwrap_or_default();
+    let alpha = match args.nth(2).and_then(|a| a.as_float()) {
+        Some(&f) => f.max(0.0).min(1.0),
+        None => 0.5,
+    };
+    let parse = |s: &str| -> Option<(u8, u8, u8)> {
+        if !s.starts_with('#') || s.len() != 7 { return None; }
+        u32::from_str_radix(&s[1..], 16).ok().map(|rgb| (
+            ((rgb >> 16) & 0xFF) as u8,
+            ((rgb >> 8) & 0xFF) as u8,
+            (rgb & 0xFF) as u8,
+        ))
+    };
+    match (parse(&c1), parse(&c2)) {
+        (Some((r1, g1, b1)), Some((r2, g2, b2))) => {
+            let ia = 1.0 - alpha;
+            let r = ((r1 as f64 * ia + r2 as f64 * alpha) as u32) & 0xFF;
+            let g = ((g1 as f64 * ia + g2 as f64 * alpha) as u32) & 0xFF;
+            let b = ((b1 as f64 * ia + b2 as f64 * alpha) as u32) & 0xFF;
+            Ok(LispObject::string(&format!("#{:06x}", (r << 16) | (g << 8) | b)))
+        }
+        _ => Ok(LispObject::nil()),
+    }
+}
+
+pub fn prim_color_name_to_rgb(args: &LispObject) -> ElispResult<LispObject> {
+    match args.first().and_then(|a| a.as_string()) {
+        Some(name) if name.starts_with('#') && name.len() == 7 && u32::from_str_radix(&name[1..], 16).is_ok() => {
+            Ok(LispObject::string(name))
+        }
+        _ => Ok(LispObject::nil()),
+    }
+}
+
+pub fn prim_color_distance(args: &LispObject) -> ElispResult<LispObject> {
+    let c1 = args.nth(0).and_then(|a| a.as_string()).map(|s| s.clone()).unwrap_or_default();
+    let c2 = args.nth(1).and_then(|a| a.as_string()).map(|s| s.clone()).unwrap_or_default();
+    let parse = |s: &str| -> Option<(f64, f64, f64)> {
+        if !s.starts_with('#') || s.len() != 7 { return None; }
+        u32::from_str_radix(&s[1..], 16).ok().map(|rgb| (
+            ((rgb >> 16) & 0xFF) as f64,
+            ((rgb >> 8) & 0xFF) as f64,
+            (rgb & 0xFF) as f64,
+        ))
+    };
+    match (parse(&c1), parse(&c2)) {
+        (Some((r1, g1, b1)), Some((r2, g2, b2))) => {
+            let dist = ((r1 - r2).powi(2) + (g1 - g2).powi(2) + (b1 - b2).powi(2)).sqrt();
+            Ok(LispObject::float(dist))
+        }
+        _ => Ok(LispObject::nil()),
+    }
+}
+
 // ---- Dispatch ---------------------------------------------------------
 
 pub fn call_window_primitive(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
@@ -593,6 +716,18 @@ pub fn call_window_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "keymap-lookup" => prim_keymap_lookup(args),
         "key-binding" => prim_key_binding(args),
         "minor-mode-key-binding" => prim_minor_mode_key_binding(args),
+        "window-minibuffer-p" => prim_window_minibuffer_p(args),
+        "frame-internal-border-width" => prim_frame_internal_border_width(args),
+        "last-nonminibuffer-frame" => prim_last_nonminibuffer_frame(args),
+        "frame-initial-p" => prim_frame_initial_p(args),
+        "set-frame-width" => prim_set_frame_width(args),
+        "terminal-coding-system" => prim_terminal_coding_system(args),
+        "tty-top-frame" => prim_tty_top_frame(args),
+        "accessible-keymaps" => prim_accessible_keymaps(args),
+        "color-values-from-color-spec" => prim_color_values_from_color_spec(args),
+        "color-blend" => prim_color_blend(args),
+        "color-name-to-rgb" => prim_color_name_to_rgb(args),
+        "color-distance" => prim_color_distance(args),
         _ => return None,
     })
 }
@@ -675,4 +810,16 @@ pub const WINDOW_PRIMITIVE_NAMES: &[&str] = &[
     "keymap-lookup",
     "key-binding",
     "minor-mode-key-binding",
+    "window-minibuffer-p",
+    "frame-internal-border-width",
+    "last-nonminibuffer-frame",
+    "frame-initial-p",
+    "set-frame-width",
+    "terminal-coding-system",
+    "tty-top-frame",
+    "accessible-keymaps",
+    "color-values-from-color-spec",
+    "color-blend",
+    "color-name-to-rgb",
+    "color-distance",
 ];
