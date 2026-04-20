@@ -11,6 +11,7 @@ mod primitives_buffer;
 mod primitives_cl;
 mod primitives_eieio;
 mod primitives_file;
+pub mod primitives_modules;
 mod primitives_value;
 mod primitives_window;
 mod reader;
