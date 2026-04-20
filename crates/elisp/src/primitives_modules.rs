@@ -6,6 +6,12 @@
 //!
 //! Largest single lever: 187 eshell + 114 eshell-command-result + 75
 //! erc-d-t-with-cleanup + 38 erc-mode + many more.
+//!
+//! Stream R7 extends this with additional ERC test-support stubs:
+//! erc-nicks--reduce, erc--target-from-string, erc-unique-channel-names,
+//! erc-sasl--create-client, erc-parse-server-response, the erc-d-i--*
+//! family, plus the `dumb-server-var` defvar (20 hits). See
+//! /tmp/emacs-results-round2-baseline.jsonl for hit counts.
 
 use crate::eval::Interpreter;
 
@@ -121,6 +127,39 @@ pub fn register(interp: &mut Interpreter) {
 (defun scss-mode (&rest _args) nil)
 (defun pcomplete-erc-setup (&rest _args) nil)
 (defun log-edit-fill-entry (&rest _args) nil)
+
+;; -------------------------------------------------------------------
+;; R7: ERC test-support stubs from round-2 ERT baseline.
+;; Source: /tmp/emacs-results-round2-baseline.jsonl.
+;; These cover ERC / erc-d-t / erc-d-u / erc-d-i / dumb-server symbols
+;; that ERC tests reference but our interpreter can't resolve because
+;; the ERC sources haven't been loaded. Returning nil (or passing
+;; arguments through) lets tests fail cleanly as test-failures rather
+;; than erroring at load time with `void-function` / `void-variable`.
+;; -------------------------------------------------------------------
+
+;; ERC core (additional functions not covered by R3)
+(defun erc-nicks--reduce (&rest _args) nil)           ;; 5 hits
+(defun erc--target-from-string (s &rest _args) s)     ;; 4 hits — identity
+(defun erc-unique-channel-names (&rest _args) nil)    ;; 3 hits
+(defun erc-sasl--create-client (&rest _args) nil)     ;; 3 hits
+(defun erc-parse-server-response (&rest _args) nil)   ;; 2 hits
+(defun erc-networks--id-fixed-create (&rest _args) nil) ;; 2 hits
+(defun erc-keep-place-mode (&rest _args) nil)         ;; 2 hits
+
+;; erc-d-i: IRC message parsing helpers
+(defun erc-d-i--validate-tags (&rest _args) nil)      ;; 2 hits
+(defun erc-d-i--unescape-tag-value (s &rest _args) s) ;; 2 hits — identity
+(defun erc-d-i--escape-tag-value (s &rest _args) s)   ;; 2 hits — identity
+(defun erc-d-i--parse-message (&rest _args) nil)      ;; 2 hits
+
+;; ERC test-support defvars (top void-variable hits).
+;; `dumb-server-var` is a test-local binding ERC installs around its
+;; erc-d scenario server but accessed at load time. Pre-registering it
+;; as nil lets the enclosing test reach its real assertions. All other
+;; top-hit erc-* / erc-d-* variables are already defined in
+;; `eval::tests::load_full_bootstrap` — see R5 / R7 commit messages.
+(defvar dumb-server-var nil)                          ;; 20 hits
 "#;
 
     // Read and evaluate the stubs. Silently ignore parse/eval errors
