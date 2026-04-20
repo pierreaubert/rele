@@ -9,7 +9,7 @@ mod object;
 mod primitives;
 mod primitives_buffer;
 pub mod primitives_cl;
-mod primitives_eieio;
+pub mod primitives_eieio;
 mod primitives_file;
 pub mod primitives_modules;
 mod primitives_value;

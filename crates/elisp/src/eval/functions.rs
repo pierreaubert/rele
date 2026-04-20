@@ -616,6 +616,34 @@ pub(super) fn eval_funcall(
     macros: &MacroTable,
     state: &InterpreterState,
 ) -> ElispResult<Value> {
+    // Keyword slot accessor pre-check: `(:keyword INSTANCE ...)` syntax.
+    // When the function symbol starts with `:` and has no function
+    // definition, we try EIEIO keyword-slot dispatch *before* signalling
+    // VoidFunction. We must evaluate the args first so that `INSTANCE` is
+    // the real object, not the source form.
+    let func_name: Option<String> = {
+        let func_obj = value_to_obj(func);
+        if let LispObject::Symbol(id) = func_obj {
+            let name = crate::obarray::symbol_name(id);
+            if name.starts_with(':') && env.read().get_function(&name).is_none() {
+                Some(name)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    if let Some(ref kw) = func_name {
+        let evaled_args = eval_list(args, env, editor, macros, state)?;
+        let args_obj = value_to_obj(evaled_args);
+        if let Some(result) = crate::primitives_eieio::try_keyword_slot_call(kw, &args_obj) {
+            return result.map(obj_to_value);
+        }
+        // Keyword didn't match any slot — fall through to resolve_function
+        // which will produce the appropriate VoidFunction error.
+        return Err(ElispError::VoidFunction(kw.clone()));
+    }
     let func = resolve_function(func, env, editor, macros, state)?;
     let args = eval_list(args, env, editor, macros, state)?;
 
@@ -1028,6 +1056,17 @@ pub fn call_function(
             // `(NAME (quote ARG1) (quote ARG2) ...)` and re-enter
             // `eval` — `quote` ensures we don't double-eval.
             let args_obj = value_to_obj(args);
+            // Keyword slot accessor: `(:slot instance)` syntax. If the
+            // symbol is a keyword (starts with `:`) and the first arg
+            // is an EIEIO instance, look up the matching slot and return
+            // its value. Returns `Some(result)` on a match; `None` means
+            // the keyword doesn't map to any slot — fall through to the
+            // normal error path.
+            if let Some(result) =
+                crate::primitives_eieio::try_keyword_slot_call(&name, &args_obj)
+            {
+                return result.map(obj_to_value);
+            }
             source_level_fallback(&name, &args_obj, env, editor, macros, state)
         }
         LispObject::Nil => Err(ElispError::VoidFunction("nil".to_string())),
