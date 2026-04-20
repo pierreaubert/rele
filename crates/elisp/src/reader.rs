@@ -368,28 +368,21 @@ impl Reader {
                 let next = self.peek();
                 if next.map(|c| c.is_ascii_digit()).unwrap_or(false) {
                     self.read_number_from(c)
-                } else if c == '-' && next == Some('.') {
-                    // Check for -.5 style floats
-                    if self
+                } else if next == Some('.')
+                    && self
                         .peek_ahead(1)
                         .map(|c| c.is_ascii_digit())
                         .unwrap_or(false)
-                    {
-                        self.read_number_from(c)
-                    } else {
-                        Ok(LispObject::symbol("-"))
-                    }
-                } else if c == '+' && next == Some('.') {
-                    if self
-                        .peek_ahead(1)
-                        .map(|c| c.is_ascii_digit())
-                        .unwrap_or(false)
-                    {
-                        self.read_number_from(c)
-                    } else {
-                        Ok(LispObject::symbol("+"))
-                    }
+                {
+                    // -.5 / +.5 style floats
+                    self.read_number_from(c)
+                } else if next.map(is_symbol_char).unwrap_or(false) {
+                    // +abba, -foo, +1plus etc. are symbols; the leading sign is
+                    // part of the symbol name when followed by any symbol
+                    // constituent (rule-1: don't drop the sign).
+                    self.read_symbol(c)
                 } else {
+                    // Standalone '+' or '-' (operator symbol)
                     let s = String::from(c);
                     Ok(LispObject::symbol(&s))
                 }
