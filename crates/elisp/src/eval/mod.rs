@@ -1542,16 +1542,40 @@ fn eval_inner(
                 "defcustom" => eval_defvar(obj_to_value(cdr), env, editor, macros, state),
                 "defgroup" | "defface" => Ok(Value::nil()),
                 "define-minor-mode" => {
+                    // R11: define-minor-mode installs both a variable
+                    // (nil, as the mode's state) and a function (the
+                    // toggle command) in real Emacs. Our stub previously
+                    // only created the variable, leaving the function
+                    // cell empty. Because `get_function_id` falls back
+                    // to the variable binding — even a nil one — a later
+                    // `(the-mode)` call resolved the variable value nil
+                    // and tried to funcall it, signalling "void function:
+                    // nil". Install an `ignore`-backed function cell so
+                    // mode-entry calls from tests (e.g.
+                    // `(with-temp-buffer (emacs-lisp-mode) ...)`) return
+                    // nil instead of erroring. The variable binding is
+                    // kept for `(boundp 'the-mode)` semantics.
                     let name = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     if let Some(n) = name.as_symbol() {
                         env.write().define(&n, LispObject::nil());
+                        let id = crate::obarray::intern(&n);
+                        crate::obarray::set_function_cell(id, LispObject::primitive("ignore"));
                     }
                     Ok(obj_to_value(name))
                 }
                 "define-derived-mode" => {
+                    // R11: see define-minor-mode above. `define-derived-mode`
+                    // defines a major-mode function (e.g. `emacs-lisp-mode`,
+                    // `autoconf-mode`, `f90-mode`, `prog-mode`) that tests
+                    // routinely call. Without a function-cell stub, the
+                    // variable fallback returned nil and the call signalled
+                    // "void function: nil" — root cause of ~100+ ERT errors
+                    // across autoconf-tests, checkdoc-tests, f90-tests, etc.
                     let name = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     if let Some(n) = name.as_symbol() {
                         env.write().define(&n, LispObject::nil());
+                        let id = crate::obarray::intern(&n);
+                        crate::obarray::set_function_cell(id, LispObject::primitive("ignore"));
                     }
                     Ok(obj_to_value(name))
                 }
@@ -1946,8 +1970,20 @@ fn eval_inner(
                         obj_to_value(cdr), env, editor, macros, state, true,
                     )
                 }
-                "define-globalized-minor-mode"
-                | "define-abbrev-table" => Ok(Value::nil()),
+                "define-globalized-minor-mode" => {
+                    // R11: same void-function-nil fix as define-minor-mode.
+                    // Globalized minor modes are callable from tests too
+                    // (e.g. `(some-globalized-mode 1)`); install an
+                    // ignore-backed function cell so the call returns nil.
+                    let name = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    if let Some(n) = name.as_symbol() {
+                        env.write().define(&n, LispObject::nil());
+                        let id = crate::obarray::intern(&n);
+                        crate::obarray::set_function_cell(id, LispObject::primitive("ignore"));
+                    }
+                    Ok(Value::nil())
+                }
+                "define-abbrev-table" => Ok(Value::nil()),
                 "cl-destructuring-bind" => {
                     // (cl-destructuring-bind VAR-LIST VALUE-FORM BODY...)
                     // Evaluate VALUE-FORM to a list, then bind VAR-LIST
