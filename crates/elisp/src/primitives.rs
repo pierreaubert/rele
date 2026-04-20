@@ -650,6 +650,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "composition-get-gstring",
         "find-composition",
         "find-composition-internal",
+        "overlayp",
         "make-overlay",
         "delete-overlay",
         "move-overlay",
@@ -1705,14 +1706,10 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
         "composition-get-gstring"
         | "find-composition"
         | "find-composition-internal" => Ok(LispObject::nil()),
-        // Overlays — rele has no overlay type; every op is nil.
-        "make-overlay" | "delete-overlay" | "move-overlay" | "overlay-start"
-        | "overlay-end" | "overlay-buffer" | "overlay-properties"
-        | "overlay-get" | "overlay-put" | "overlays-at" | "overlays-in"
-        | "overlay-lists" | "overlay-recenter" | "remove-overlays"
-        | "next-overlay-change" | "previous-overlay-change" => {
-            Ok(LispObject::nil())
-        }
+        // Overlays are handled in `primitives_buffer::call_buffer_primitive`
+        // via `call_stateful_primitive` and never reach this fallback.
+        // See R24 for the switch from nil-stubs to real overlay state.
+
         // Image / display / face stubs.
         // image-size, image-mask-p, image-metadata signal an error on
         // non-graphical displays (headless). Tests use should-error to

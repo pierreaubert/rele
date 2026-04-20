@@ -27,9 +27,52 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub type BufferId = usize;
+pub type OverlayId = usize;
 
 static NEXT_BUFFER_ID: AtomicUsize = AtomicUsize::new(1);
 static NEXT_MARKER_ID: AtomicUsize = AtomicUsize::new(1);
+static NEXT_OVERLAY_ID: AtomicUsize = AtomicUsize::new(1);
+
+/// In-memory overlay, shared by the [`Registry`] and exposed to Elisp as
+/// `(overlay . <OverlayId>)`. Only the behaviour exercised by the
+/// `buffer-tests` / `overlay-tests` fixtures is modelled — start/end
+/// positions, the owning buffer id, front/rear advance flags, and a
+/// simple property plist.
+#[derive(Debug, Clone)]
+pub struct Overlay {
+    pub id: OverlayId,
+    pub buffer: BufferId,
+    /// 1-based inclusive start. `None` after `delete-overlay`.
+    pub start: Option<usize>,
+    /// 1-based exclusive end. `None` after `delete-overlay`.
+    pub end: Option<usize>,
+    pub front_advance: bool,
+    pub rear_advance: bool,
+    /// Property list as a flat `Vec<(key, value)>`.
+    pub plist: Vec<(crate::object::LispObject, crate::object::LispObject)>,
+}
+
+impl Overlay {
+    fn new(
+        id: OverlayId,
+        buffer: BufferId,
+        start: usize,
+        end: usize,
+        front_advance: bool,
+        rear_advance: bool,
+    ) -> Self {
+        let (a, b) = if start <= end { (start, end) } else { (end, start) };
+        Self {
+            id,
+            buffer,
+            start: Some(a),
+            end: Some(b),
+            front_advance,
+            rear_advance,
+            plist: Vec::new(),
+        }
+    }
+}
 
 /// Match data saved by the last successful regex search. Shared
 /// per-thread (real Emacs: per-buffer, but overwhelmingly the tests
@@ -276,6 +319,11 @@ pub struct Registry {
     pub buffers: HashMap<BufferId, StubBuffer>,
     pub by_name: HashMap<String, BufferId>,
     pub markers: HashMap<usize, Marker>,
+    /// All overlays ever created in this registry, keyed by id. Deleted
+    /// overlays keep their entry but with `start` and `end` set to
+    /// `None` (Emacs's "detached overlay" state), so `overlayp` still
+    /// returns t for them.
+    pub overlays: HashMap<OverlayId, Overlay>,
     /// Stack of currently active buffer ids. Top is `current-buffer`.
     /// Always has at least one entry (the default `*scratch*`).
     pub stack: Vec<BufferId>,
@@ -407,6 +455,93 @@ impl Registry {
                 m.position = pos;
             })
             .or_insert(Marker { id, buffer, position: pos });
+    }
+
+    /// Create a fresh overlay spanning `[start, end)` in `buffer`.
+    /// Returns the new overlay's id. `start` / `end` are swapped if
+    /// passed in the wrong order so callers don't have to.
+    pub fn make_overlay(
+        &mut self,
+        buffer: BufferId,
+        start: usize,
+        end: usize,
+        front_advance: bool,
+        rear_advance: bool,
+    ) -> OverlayId {
+        let id = NEXT_OVERLAY_ID.fetch_add(1, Ordering::Relaxed);
+        let ov = Overlay::new(id, buffer, start, end, front_advance, rear_advance);
+        self.overlays.insert(id, ov);
+        id
+    }
+
+    pub fn overlay_get(&self, id: OverlayId) -> Option<&Overlay> {
+        self.overlays.get(&id)
+    }
+
+    pub fn overlay_get_mut(&mut self, id: OverlayId) -> Option<&mut Overlay> {
+        self.overlays.get_mut(&id)
+    }
+
+    /// Mark overlay `id` detached. Sets its `start` / `end` to `None`
+    /// but keeps the record so `overlayp` still returns `t`. Returns
+    /// true if the id existed.
+    pub fn delete_overlay(&mut self, id: OverlayId) -> bool {
+        match self.overlays.get_mut(&id) {
+            Some(ov) => {
+                ov.start = None;
+                ov.end = None;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Collect every live overlay in `buffer` that covers position
+    /// `pos`. Emacs semantics: `[S, E)` covers `P` iff `S <= P < E`.
+    /// A zero-length overlay (`S == E`) covers `P` iff `P == S`.
+    pub fn overlays_at(&self, buffer: BufferId, pos: usize) -> Vec<OverlayId> {
+        let mut out = Vec::new();
+        for ov in self.overlays.values() {
+            if ov.buffer != buffer {
+                continue;
+            }
+            let (Some(s), Some(e)) = (ov.start, ov.end) else {
+                continue;
+            };
+            let covers = if s == e { pos == s } else { pos >= s && pos < e };
+            if covers {
+                out.push(ov.id);
+            }
+        }
+        out
+    }
+
+    /// Collect every live overlay in `buffer` that overlaps the
+    /// half-open range `[beg, end)`. An overlay is included iff its
+    /// span shares any position with the range; zero-length overlays
+    /// exactly at `beg` or `end` also count.
+    pub fn overlays_in(&self, buffer: BufferId, beg: usize, end: usize) -> Vec<OverlayId> {
+        let (b, e) = if beg <= end { (beg, end) } else { (end, beg) };
+        let mut out = Vec::new();
+        for ov in self.overlays.values() {
+            if ov.buffer != buffer {
+                continue;
+            }
+            let (Some(s), Some(ee)) = (ov.start, ov.end) else {
+                continue;
+            };
+            let overlaps = if s == ee {
+                s >= b && s <= e
+            } else if b == e {
+                b >= s && b <= ee
+            } else {
+                s < e && ee > b
+            };
+            if overlaps {
+                out.push(ov.id);
+            }
+        }
+        out
     }
 }
 
