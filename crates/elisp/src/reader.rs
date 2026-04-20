@@ -2,6 +2,207 @@ use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 use std::collections::HashMap;
 
+/// Look up a Unicode character by its official Unicode name.
+/// Returns `None` for names not in the built-in table.
+/// This is a best-effort implementation covering the characters that appear
+/// most frequently in Emacs Lisp source; unknown names yield `None` so the
+/// reader can substitute `\0` and continue rather than hard-erroring.
+fn unicode_name_to_char(name: &str) -> Option<char> {
+    // Normalise: upper-case and collapse internal runs of whitespace/hyphens
+    // to a single space so that both "LATIN SMALL LETTER A" and
+    // "latin-small-letter-a" work.
+    let key: String = name
+        .chars()
+        .map(|c| if c == '-' { ' ' } else { c.to_ascii_uppercase() })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Tiny built-in table of names that appear in Emacs test corpora.
+    // Add more entries as needed without touching any other file.
+    let ch = match key.as_str() {
+        // Latin letters
+        "LATIN SMALL LETTER A" => 'a',
+        "LATIN SMALL LETTER B" => 'b',
+        "LATIN SMALL LETTER C" => 'c',
+        "LATIN SMALL LETTER D" => 'd',
+        "LATIN SMALL LETTER E" => 'e',
+        "LATIN SMALL LETTER F" => 'f',
+        "LATIN SMALL LETTER G" => 'g',
+        "LATIN SMALL LETTER H" => 'h',
+        "LATIN SMALL LETTER I" => 'i',
+        "LATIN SMALL LETTER J" => 'j',
+        "LATIN SMALL LETTER K" => 'k',
+        "LATIN SMALL LETTER L" => 'l',
+        "LATIN SMALL LETTER M" => 'm',
+        "LATIN SMALL LETTER N" => 'n',
+        "LATIN SMALL LETTER O" => 'o',
+        "LATIN SMALL LETTER P" => 'p',
+        "LATIN SMALL LETTER Q" => 'q',
+        "LATIN SMALL LETTER R" => 'r',
+        "LATIN SMALL LETTER S" => 's',
+        "LATIN SMALL LETTER T" => 't',
+        "LATIN SMALL LETTER U" => 'u',
+        "LATIN SMALL LETTER V" => 'v',
+        "LATIN SMALL LETTER W" => 'w',
+        "LATIN SMALL LETTER X" => 'x',
+        "LATIN SMALL LETTER Y" => 'y',
+        "LATIN SMALL LETTER Z" => 'z',
+        "LATIN CAPITAL LETTER A" => 'A',
+        "LATIN CAPITAL LETTER B" => 'B',
+        "LATIN CAPITAL LETTER C" => 'C',
+        "LATIN CAPITAL LETTER D" => 'D',
+        "LATIN CAPITAL LETTER E" => 'E',
+        "LATIN CAPITAL LETTER F" => 'F',
+        "LATIN CAPITAL LETTER G" => 'G',
+        "LATIN CAPITAL LETTER H" => 'H',
+        "LATIN CAPITAL LETTER I" => 'I',
+        "LATIN CAPITAL LETTER J" => 'J',
+        "LATIN CAPITAL LETTER K" => 'K',
+        "LATIN CAPITAL LETTER L" => 'L',
+        "LATIN CAPITAL LETTER M" => 'M',
+        "LATIN CAPITAL LETTER N" => 'N',
+        "LATIN CAPITAL LETTER O" => 'O',
+        "LATIN CAPITAL LETTER P" => 'P',
+        "LATIN CAPITAL LETTER Q" => 'Q',
+        "LATIN CAPITAL LETTER R" => 'R',
+        "LATIN CAPITAL LETTER S" => 'S',
+        "LATIN CAPITAL LETTER T" => 'T',
+        "LATIN CAPITAL LETTER U" => 'U',
+        "LATIN CAPITAL LETTER V" => 'V',
+        "LATIN CAPITAL LETTER W" => 'W',
+        "LATIN CAPITAL LETTER X" => 'X',
+        "LATIN CAPITAL LETTER Y" => 'Y',
+        "LATIN CAPITAL LETTER Z" => 'Z',
+        // Greek letters (common in mathematical contexts)
+        "GREEK SMALL LETTER ALPHA" => '\u{03B1}',
+        "GREEK SMALL LETTER BETA" => '\u{03B2}',
+        "GREEK SMALL LETTER GAMMA" => '\u{03B3}',
+        "GREEK SMALL LETTER DELTA" => '\u{03B4}',
+        "GREEK SMALL LETTER EPSILON" => '\u{03B5}',
+        "GREEK SMALL LETTER ZETA" => '\u{03B6}',
+        "GREEK SMALL LETTER ETA" => '\u{03B7}',
+        "GREEK SMALL LETTER THETA" => '\u{03B8}',
+        "GREEK SMALL LETTER IOTA" => '\u{03B9}',
+        "GREEK SMALL LETTER KAPPA" => '\u{03BA}',
+        "GREEK SMALL LETTER LAMDA" => '\u{03BB}',
+        "GREEK SMALL LETTER LAMBDA" => '\u{03BB}',
+        "GREEK SMALL LETTER MU" => '\u{03BC}',
+        "GREEK SMALL LETTER NU" => '\u{03BD}',
+        "GREEK SMALL LETTER XI" => '\u{03BE}',
+        "GREEK SMALL LETTER OMICRON" => '\u{03BF}',
+        "GREEK SMALL LETTER PI" => '\u{03C0}',
+        "GREEK SMALL LETTER RHO" => '\u{03C1}',
+        "GREEK SMALL LETTER SIGMA" => '\u{03C3}',
+        "GREEK SMALL LETTER TAU" => '\u{03C4}',
+        "GREEK SMALL LETTER UPSILON" => '\u{03C5}',
+        "GREEK SMALL LETTER PHI" => '\u{03C6}',
+        "GREEK SMALL LETTER CHI" => '\u{03C7}',
+        "GREEK SMALL LETTER PSI" => '\u{03C8}',
+        "GREEK SMALL LETTER OMEGA" => '\u{03C9}',
+        "GREEK CAPITAL LETTER ALPHA" => '\u{0391}',
+        "GREEK CAPITAL LETTER BETA" => '\u{0392}',
+        "GREEK CAPITAL LETTER GAMMA" => '\u{0393}',
+        "GREEK CAPITAL LETTER DELTA" => '\u{0394}',
+        "GREEK CAPITAL LETTER EPSILON" => '\u{0395}',
+        "GREEK CAPITAL LETTER ZETA" => '\u{0396}',
+        "GREEK CAPITAL LETTER ETA" => '\u{0397}',
+        "GREEK CAPITAL LETTER THETA" => '\u{0398}',
+        "GREEK CAPITAL LETTER IOTA" => '\u{0399}',
+        "GREEK CAPITAL LETTER KAPPA" => '\u{039A}',
+        "GREEK CAPITAL LETTER LAMDA" => '\u{039B}',
+        "GREEK CAPITAL LETTER LAMBDA" => '\u{039B}',
+        "GREEK CAPITAL LETTER MU" => '\u{039C}',
+        "GREEK CAPITAL LETTER NU" => '\u{039D}',
+        "GREEK CAPITAL LETTER XI" => '\u{039E}',
+        "GREEK CAPITAL LETTER OMICRON" => '\u{039F}',
+        "GREEK CAPITAL LETTER PI" => '\u{03A0}',
+        "GREEK CAPITAL LETTER RHO" => '\u{03A1}',
+        "GREEK CAPITAL LETTER SIGMA" => '\u{03A3}',
+        "GREEK CAPITAL LETTER TAU" => '\u{03A4}',
+        "GREEK CAPITAL LETTER UPSILON" => '\u{03A5}',
+        "GREEK CAPITAL LETTER PHI" => '\u{03A6}',
+        "GREEK CAPITAL LETTER CHI" => '\u{03A7}',
+        "GREEK CAPITAL LETTER PSI" => '\u{03A8}',
+        "GREEK CAPITAL LETTER OMEGA" => '\u{03A9}',
+        // Common punctuation / symbols
+        "NULL" => '\0',
+        "SPACE" => ' ',
+        "EXCLAMATION MARK" => '!',
+        "QUOTATION MARK" => '"',
+        "NUMBER SIGN" => '#',
+        "DOLLAR SIGN" => '$',
+        "PERCENT SIGN" => '%',
+        "AMPERSAND" => '&',
+        "APOSTROPHE" => '\'',
+        "LEFT PARENTHESIS" => '(',
+        "RIGHT PARENTHESIS" => ')',
+        "ASTERISK" => '*',
+        "PLUS SIGN" => '+',
+        "COMMA" => ',',
+        "HYPHEN MINUS" => '-',
+        "HYPHEN-MINUS" => '-',
+        "FULL STOP" => '.',
+        "SOLIDUS" => '/',
+        "COLON" => ':',
+        "SEMICOLON" => ';',
+        "LESS THAN SIGN" => '<',
+        "EQUALS SIGN" => '=',
+        "GREATER THAN SIGN" => '>',
+        "QUESTION MARK" => '?',
+        "COMMERCIAL AT" => '@',
+        "LEFT SQUARE BRACKET" => '[',
+        "REVERSE SOLIDUS" => '\\',
+        "RIGHT SQUARE BRACKET" => ']',
+        "CIRCUMFLEX ACCENT" => '^',
+        "LOW LINE" => '_',
+        "GRAVE ACCENT" => '`',
+        "LEFT CURLY BRACKET" => '{',
+        "VERTICAL LINE" => '|',
+        "RIGHT CURLY BRACKET" => '}',
+        "TILDE" => '~',
+        "DELETE" => '\x7F',
+        // Control characters
+        "HORIZONTAL TABULATION" | "CHARACTER TABULATION" => '\t',
+        "LINE FEED" | "NEW LINE" | "NEWLINE" => '\n',
+        "CARRIAGE RETURN" => '\r',
+        "ESCAPE" => '\x1B',
+        "FORM FEED" => '\x0C',
+        "BACKSPACE" => '\x08',
+        "ALERT" | "BELL" => '\x07',
+        // Common special characters
+        "LATIN SMALL LETTER SHARP S" => '\u{00DF}',
+        "LATIN SMALL LETTER AE" => '\u{00E6}',
+        "LATIN CAPITAL LETTER AE" => '\u{00C6}',
+        "PILCROW SIGN" | "PARAGRAPH SIGN" => '\u{00B6}',
+        "SECTION SIGN" => '\u{00A7}',
+        "COPYRIGHT SIGN" => '\u{00A9}',
+        "REGISTERED SIGN" => '\u{00AE}',
+        "TRADE MARK SIGN" => '\u{2122}',
+        "DEGREE SIGN" => '\u{00B0}',
+        "PLUS MINUS SIGN" => '\u{00B1}',
+        "MULTIPLICATION SIGN" => '\u{00D7}',
+        "DIVISION SIGN" => '\u{00F7}',
+        "MICRO SIGN" => '\u{00B5}',
+        "MIDDLE DOT" => '\u{00B7}',
+        "BULLET" => '\u{2022}',
+        "HORIZONTAL ELLIPSIS" => '\u{2026}',
+        "EN DASH" => '\u{2013}',
+        "EM DASH" => '\u{2014}',
+        "LEFT SINGLE QUOTATION MARK" => '\u{2018}',
+        "RIGHT SINGLE QUOTATION MARK" => '\u{2019}',
+        "LEFT DOUBLE QUOTATION MARK" => '\u{201C}',
+        "RIGHT DOUBLE QUOTATION MARK" => '\u{201D}',
+        "SNOWMAN" => '\u{2603}',
+        "SNOWFLAKE" => '\u{2745}',
+        "BLACK HEART SUIT" => '\u{2665}',
+        "WHITE SMILING FACE" => '\u{263A}',
+        _ => return None,
+    };
+    Some(ch)
+}
+
 pub struct Reader {
     input: Vec<char>,
     pos: usize,
@@ -425,14 +626,20 @@ impl Reader {
             }
             '^' => {
                 // #^[...] — char-table literal (e.g. syntax/category tables in .elc).
-                // We don't model char-tables; read the bracketed content as a plain vector.
-                self.advance(); // consume '^'
+                // #^^[...] — sub-char-table literal (also in .elc files).
+                // We don't model char-tables or sub-char-tables; read the bracketed
+                // content as a plain vector in both cases so containing forms parse.
+                self.advance(); // consume first '^'
+                // Consume optional second '^' for #^^[...]
+                if self.peek() == Some('^') {
+                    self.advance(); // consume second '^'
+                }
                 if self.peek() == Some('[') {
                     self.advance(); // consume '['
                     self.read_vector()
                 } else {
                     Err(ElispError::ReaderError(
-                        "expected [ after #^".to_string(),
+                        "expected [ after #^ or #^^".to_string(),
                     ))
                 }
             }
@@ -752,6 +959,29 @@ impl Reader {
                     }
                     let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
                     char::from_u32(code).unwrap_or('\0')
+                }
+                'N' => {
+                    // Named Unicode character: ?\N{UNICODE CHARACTER NAME}
+                    // Consumes the {NAME} block and looks up the character.
+                    // Unknown names yield U+0000 so parsing can continue.
+                    if self.peek() == Some('{') {
+                        self.advance(); // consume '{'
+                        let mut name = String::new();
+                        loop {
+                            match self.advance() {
+                                Some('}') => break,
+                                Some(c) => name.push(c),
+                                None => {
+                                    return Err(ElispError::ReaderError(
+                                        "unterminated \\N{} unicode name".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                        unicode_name_to_char(&name).unwrap_or('\0')
+                    } else {
+                        'N' // ?\N without { is just the character N
+                    }
                 }
                 '0'..='7' => {
                     // Octal character: \NNN
