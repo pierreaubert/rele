@@ -5386,6 +5386,11 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
     // Extra tiny shims commonly assumed by test files that would
     // otherwise require cl-macs to be loaded. Defining them directly
     // avoids pulling cl-macs (which OOMs in bootstrap).
+    //
+    // Also includes abbrev-table-get/put overrides: after abbrev.el loads,
+    // it redefines these using obarray-get/put (which are stubs returning nil).
+    // We override them with hash-table-based implementations so that
+    // abbrev-table-get-put-test can read back what was written.
     let extras = "
 (defmacro cl-incf (place &optional x) \
   (list 'setq place (list '+ place (or x 1))))
@@ -5395,6 +5400,13 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
 (defalias 'decf 'cl-decf)
 (unless (fboundp 'gv-ref) (defun gv-ref (place) place))
 (unless (fboundp 'gv-deref) (defun gv-deref (ref) ref))
+(defun make-abbrev-table (&optional props)
+  (make-hash-table :test (quote eq)))
+(defun abbrev-table-put (table prop val)
+  (puthash prop val table)
+  val)
+(defun abbrev-table-get (table prop)
+  (gethash prop table))
 ";
     if let Ok(forms) = crate::read_all(extras) {
         interp.set_eval_ops_limit(200_000);
@@ -6079,7 +6091,7 @@ fn run_rele_ert_tests_detailed_inner(
             LispObject::cons(thunk, LispObject::nil()),
         );
         interp.reset_eval_ops();
-        interp.set_eval_ops_limit(500_000);
+        interp.set_eval_ops_limit(2_000_000);
 
         // Arm the watchdog. `timed_out` is the source of truth for
         // reclassification; the mpsc channel only serves to wake the

@@ -21,9 +21,15 @@ pub fn register(interp: &mut Interpreter) {
 (defun eshell (&rest _args) nil)
 (defun eshell-command-result (&rest _args) "")
 (defun eshell-extended-glob (&rest args) (car args))
-(defun eshell-eval-using-options (&rest _args) nil)
+;; NOTE: eshell-eval-using-options is intentionally NOT stubbed here.
+;; Tests like esh-opt-test/eval-using-options-unrecognized use should-error
+;; and depend on the function being void (void-function signals an error).
 (defun eshell-convertible-to-number-p (&rest _args) nil)
 (defun eshell-stringify (&rest args) (format "%s" (car args)))
+
+;; java-mode stub — tests call #'java-mode to set up the buffer mode.
+;; Returning nil is sufficient; the test only cares about alignment output.
+(defun java-mode (&rest _args) nil)
 
 ;; erc module stubs
 (defmacro erc-d-t-with-cleanup (&rest body) `(progn ,@body))

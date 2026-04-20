@@ -1676,9 +1676,19 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
             Ok(LispObject::nil())
         }
         // Image / display / face stubs.
-        "image-size" | "image-flush" | "image-mask-p"
-        | "image-frame-cache-size"
-        | "image-metadata" | "create-image" => Ok(LispObject::nil()),
+        // image-size, image-mask-p, image-metadata signal an error on
+        // non-graphical displays (headless). Tests use should-error to
+        // verify this. Real Emacs signals 'error with "not a graphic display".
+        "image-size" => Err(ElispError::EvalError(
+            "image-size: not a graphic display".to_string(),
+        )),
+        "image-mask-p" => Err(ElispError::EvalError(
+            "image-mask-p: not a graphic display".to_string(),
+        )),
+        "image-metadata" => Err(ElispError::EvalError(
+            "image-metadata: not a graphic display".to_string(),
+        )),
+        "image-flush" | "image-frame-cache-size" | "create-image" => Ok(LispObject::nil()),
         "face-list" | "face-attribute" | "face-all-attributes"
         | "face-bold-p" | "face-italic-p" | "face-font" | "face-background"
         | "face-foreground" | "internal-lisp-face-p"
