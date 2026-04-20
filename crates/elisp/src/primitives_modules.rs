@@ -121,6 +121,13 @@ pub fn register(interp: &mut Interpreter) {
 (defun scss-mode (&rest _args) nil)
 (defun pcomplete-erc-setup (&rest _args) nil)
 (defun log-edit-fill-entry (&rest _args) nil)
+
+;; R10: icalendar + tramp + connection-local module stubs from ERT baseline
+;; High-hit-count void functions from /tmp/emacs-results-round2-baseline.jsonl
+;; Only items with >=5 hits in the icalendar/tramp/connection-local/mh/
+;; secrets/auth-source/file-name-magic namespaces are included.
+(defun ical:make-date-time (&rest _args) nil)
+(defun icalendar-unfolded-buffer-from-file (&rest _args) nil)
 "#;
 
     // Read and evaluate the stubs. Silently ignore parse/eval errors
