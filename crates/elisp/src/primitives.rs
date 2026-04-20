@@ -3210,6 +3210,26 @@ fn prim_define_key(args: &LispObject) -> ElispResult<LispObject> {
 
 fn prim_type_of(args: &LispObject) -> ElispResult<LispObject> {
     let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    // Records are represented as vectors with a struct-tag symbol in slot 0.
+    // In real Emacs, `type-of` on a record returns that tag (e.g. `hierarchy`),
+    // not `vector`. The `.elc` bytecode of `cl-defstruct` expands accessor
+    // predicates to `(memq (type-of cl-x) cl-struct-<NAME>-tags)`, so
+    // returning `vector` here breaks every `cl-defstruct`-based predicate.
+    //
+    // Heuristic: if the vector's first element is a symbol that was
+    // registered as a class (via `cl-defstruct` / `cl-struct-define`
+    // / `defclass`) return that symbol as the type. Otherwise fall
+    // back to `vector`.
+    if let LispObject::Vector(v) = &arg {
+        let guard = v.lock();
+        if let Some(first) = guard.first() {
+            if let Some(sym) = first.as_symbol() {
+                if crate::primitives_eieio::get_class(&sym).is_some() {
+                    return Ok(LispObject::symbol(&sym));
+                }
+            }
+        }
+    }
     let type_name = match &arg {
         LispObject::Nil => "symbol",
         LispObject::T => "symbol",

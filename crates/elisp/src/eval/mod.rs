@@ -892,6 +892,12 @@ fn eval_setf_one(
         }
         // (setf (cl--find-class NAME) VALUE) — store under symbol's
         // `cl--class' plist key. cl-preloaded uses this aggressively.
+        //
+        // ALSO register the class in our class registry so that
+        // `type-of` recognises records whose tag is NAME. This is how
+        // byte-compiled `cl-defstruct` (e.g. in hierarchy.elc) installs
+        // its type: via `(cl-struct-define ... NAME ...)` which in turn
+        // does `(setf (cl--find-class NAME) CLASS)`.
         "cl--find-class" | "cl-find-class" => {
             let name_form = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
             let name = value_to_obj(eval(
@@ -901,6 +907,15 @@ fn eval_setf_one(
                 let id = crate::obarray::intern(&name_str);
                 let key = crate::obarray::intern("cl--class");
                 crate::obarray::put_plist(id, key, new_val.clone());
+                // Register as a class (slots left empty — we just need
+                // the name keyed so `type-of` / `cl--find-class` find it).
+                crate::primitives_eieio::register_class(
+                    crate::primitives_eieio::Class {
+                        name: name_str,
+                        parent: None,
+                        slots: Vec::new(),
+                    },
+                );
             }
             Ok(obj_to_value(new_val))
         }
@@ -1065,13 +1080,49 @@ fn eval_cl_defstruct(
 ) -> ElispResult<Value> {
     let args_obj = value_to_obj(args);
     let name_spec = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    // Name spec is either a symbol or (NAME OPTIONS...)
+    // Name spec is either a symbol or (NAME OPTIONS...).
+    // Parse options: we care about (:constructor NAME) and (:conc-name PREFIX)
+    // — Emacs's `hierarchy.el` uses `(:constructor hierarchy--make)` and
+    // `(:conc-name hierarchy--)` so the accessors are named `hierarchy--roots`
+    // etc. rather than the default `hierarchy-roots`.
+    let mut custom_constructors: Vec<String> = Vec::new();
+    let mut conc_name: Option<String> = None;
     let name = match &name_spec {
         LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
         LispObject::Cons(_) => {
             let hd = name_spec.first().ok_or(ElispError::WrongNumberOfArguments)?;
-            hd.as_symbol()
-                .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?
+            let n = hd
+                .as_symbol()
+                .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+            // Walk options after the head symbol.
+            let mut opts = name_spec.rest().unwrap_or(LispObject::nil());
+            while let Some((opt, rest_o)) = opts.destructure_cons() {
+                if let Some((k, opt_rest)) = opt.destructure_cons() {
+                    if let Some(ks) = k.as_symbol() {
+                        match ks.as_str() {
+                            ":constructor" => {
+                                if let Some((cname, _)) = opt_rest.destructure_cons() {
+                                    if let Some(cn) = cname.as_symbol() {
+                                        custom_constructors.push(cn);
+                                    }
+                                }
+                            }
+                            ":conc-name" => {
+                                if let Some((cn, _)) = opt_rest.destructure_cons() {
+                                    if let Some(s) = cn.as_symbol() {
+                                        conc_name = Some(s);
+                                    } else if let Some(s) = cn.as_string() {
+                                        conc_name = Some(s.to_string());
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                opts = rest_o;
+            }
+            n
         }
         _ => return Err(ElispError::WrongTypeArgument("symbol-or-cons".to_string())),
     };
@@ -1106,10 +1157,45 @@ fn eval_cl_defstruct(
         cur = next;
     }
 
-    let tag_name = format!("cl-struct-{}", name);
+    // Tag matches what Emacs records use when byte-compiled: the bare
+    // struct name. `.elc` bytecode emits `(record 'NAME ...)` with the
+    // bare name, and `hierarchy-p` (in bytecode form) checks
+    // `(memq (type-of obj) cl-struct-NAME-tags)`. Our `type-of` returns
+    // the tag when the struct is registered (see `prim_type_of`).
+    let tag_name = name.clone();
     let n_fields = field_names.len();
 
-    // Constructor: make-NAME — positional args, pads missing with nil
+    // Register as a class so `type-of` returns the tag for records,
+    // and so `cl--find-class` / `eieio-class-p` succeed. Slots are
+    // just names here — enough for most struct predicate / accessor tests.
+    let slots_reg: Vec<crate::primitives_eieio::Slot> = field_names
+        .iter()
+        .map(|f| crate::primitives_eieio::Slot {
+            name: f.clone(),
+            initarg: Some(f.clone()),
+            default: LispObject::nil(),
+        })
+        .collect();
+    crate::primitives_eieio::register_class(crate::primitives_eieio::Class {
+        name: name.clone(),
+        parent: None,
+        slots: slots_reg,
+    });
+    // Register the tags list variable that bytecode-compiled predicates
+    // expect: `cl-struct-NAME-tags` is `(NAME)`.
+    {
+        let tags_var = format!("cl-struct-{}-tags", name);
+        state.global_env.write().set(
+            &tags_var,
+            LispObject::cons(LispObject::symbol(&name), LispObject::nil()),
+        );
+    }
+
+    // Constructor: make-NAME (default) and any `:constructor` overrides.
+    // Positional args, pads missing with nil. We install the default
+    // `make-NAME` even when an explicit `:constructor` is present —
+    // Emacs's own `cl-defstruct` does the same unless the user writes
+    // `(:constructor nil)` to suppress it.
     let ctor_body = format!(
         "(lambda (&rest args) \
            (let ((vec (make-vector {n} nil)) (i 0)) \
@@ -1128,10 +1214,14 @@ fn eval_cl_defstruct(
     let ctor_val = value_to_obj(eval(obj_to_value(ctor_expr), env, editor, macros, state)?);
     crate::obarray::set_function_cell(
         crate::obarray::intern(&format!("make-{}", name)),
-        ctor_val,
+        ctor_val.clone(),
     );
+    for cn in &custom_constructors {
+        crate::obarray::set_function_cell(crate::obarray::intern(cn), ctor_val.clone());
+    }
 
-    // Predicate: NAME-p
+    // Predicate: NAME-p — either a plain vector tagged NAME, or a cons
+    // whose tag matches (records are vectors in our runtime).
     let pred_body = format!(
         "(lambda (obj) (and (vectorp obj) (eq (aref obj 0) '{tag})))",
         tag = tag_name,
@@ -1144,14 +1234,16 @@ fn eval_cl_defstruct(
         pred_val,
     );
 
-    // Accessors: NAME-FIELD
+    // Accessors: <conc-name>FIELD (default `NAME-`, overridden by
+    // `:conc-name` — e.g. `hierarchy--` → `hierarchy--roots`).
+    let prefix = conc_name.unwrap_or_else(|| format!("{}-", name));
     for (i, field) in field_names.iter().enumerate() {
         let body = format!("(lambda (obj) (aref obj {}))", i + 1);
         let expr = crate::read(&body)
             .map_err(|e| ElispError::EvalError(format!("cl-defstruct accessor parse: {e}")))?;
         let val = value_to_obj(eval(obj_to_value(expr), env, editor, macros, state)?);
         crate::obarray::set_function_cell(
-            crate::obarray::intern(&format!("{}-{}", name, field)),
+            crate::obarray::intern(&format!("{}{}", prefix, field)),
             val,
         );
     }
@@ -1166,6 +1258,81 @@ fn eval_cl_defstruct(
     );
 
     Ok(obj_to_value(LispObject::symbol(&name)))
+}
+
+/// Type-check with eval access — used by `cl-check-type`. Delegates to
+/// `prim_cl_typep` for the pure cases, but handles `(satisfies PRED)`
+/// and combinators containing it by actually calling the predicate.
+fn check_type_with_eval(
+    val: &LispObject,
+    type_spec: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<bool> {
+    // Handle combinators so `(satisfies PRED)` nested inside `or`/`and`/`not`
+    // still resolves correctly.
+    if let Some((head, rest)) = type_spec.destructure_cons() {
+        if let Some(op) = head.as_symbol() {
+            match op.as_str() {
+                "satisfies" => {
+                    let Some((pred, _)) = rest.destructure_cons() else {
+                        return Ok(false);
+                    };
+                    // Call (PRED VAL). PRED is a symbol or lambda.
+                    let call = LispObject::cons(
+                        pred,
+                        LispObject::cons(
+                            LispObject::cons(
+                                LispObject::symbol("quote"),
+                                LispObject::cons(val.clone(), LispObject::nil()),
+                            ),
+                            LispObject::nil(),
+                        ),
+                    );
+                    let r = eval(obj_to_value(call), env, editor, macros, state)?;
+                    return Ok(!value_to_obj(r).is_nil());
+                }
+                "and" => {
+                    let mut cur = rest;
+                    while let Some((t, next)) = cur.destructure_cons() {
+                        if !check_type_with_eval(val, &t, env, editor, macros, state)? {
+                            return Ok(false);
+                        }
+                        cur = next;
+                    }
+                    return Ok(true);
+                }
+                "or" => {
+                    let mut cur = rest;
+                    while let Some((t, next)) = cur.destructure_cons() {
+                        if check_type_with_eval(val, &t, env, editor, macros, state)? {
+                            return Ok(true);
+                        }
+                        cur = next;
+                    }
+                    return Ok(false);
+                }
+                "not" => {
+                    if let Some((t, _)) = rest.destructure_cons() {
+                        return Ok(!check_type_with_eval(val, &t, env, editor, macros, state)?);
+                    }
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
+    }
+    // Fall back to the pure type-predicate (no eval needed).
+    let args = LispObject::cons(
+        val.clone(),
+        LispObject::cons(type_spec.clone(), LispObject::nil()),
+    );
+    match crate::primitives_cl::prim_cl_typep(&args)? {
+        LispObject::Nil => Ok(false),
+        _ => Ok(true),
+    }
 }
 
 fn eval(
@@ -2382,14 +2549,17 @@ fn eval_inner(
                     let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let type_spec = cdr.nth(1).unwrap_or(LispObject::nil());
                     let val = value_to_obj(eval(obj_to_value(form), env, editor, macros, state)?);
-                    let args = LispObject::cons(
-                        val.clone(),
-                        LispObject::cons(type_spec.clone(), LispObject::nil()),
-                    );
-                    let is_type = matches!(
-                        crate::primitives_cl::prim_cl_typep(&args),
-                        Ok(r) if !matches!(r, LispObject::Nil)
-                    );
+                    // `(satisfies PRED)` must call PRED — `prim_cl_typep`
+                    // can't (no eval access), so we handle it here. Otherwise
+                    // defer to `prim_cl_typep` for the usual combinators.
+                    let is_type = check_type_with_eval(
+                        &val,
+                        &type_spec,
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?;
                     if !is_type {
                         return Err(ElispError::Signal(Box::new(crate::error::SignalData {
                             symbol: LispObject::symbol("wrong-type-argument"),
