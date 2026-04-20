@@ -6183,30 +6183,40 @@ fn run_rele_ert_tests_detailed_inner(
     use crate::obarray;
     use std::sync::atomic::Ordering;
     let test_key = obarray::intern("ert--rele-test");
+    let test_struct_key = obarray::intern("ert--test");
     let skipped_key = obarray::intern("ert-test-skipped");
     let failed_key = obarray::intern("ert-test-failed");
     let mut stats = ErtRunStats::default();
     let mut results: Vec<ErtTestResult> = Vec::new();
-    let mut tests: Vec<(String, LispObject)> = Vec::new();
+    let mut tests: Vec<(String, LispObject, LispObject)> = Vec::new();
     {
         let ob = obarray::GLOBAL_OBARRAY.read();
         for sym_idx in 0..ob.symbol_count() {
             let id = obarray::SymbolId(sym_idx as u32);
             let thunk = ob.get_plist(id, test_key);
             if !thunk.is_nil() {
-                tests.push((ob.name(id).to_string(), thunk));
+                // R23: also grab the `ert--test` struct so we can
+                // expose it via `(ert-running-test)` while BODY runs.
+                let struct_obj = ob.get_plist(id, test_struct_key);
+                tests.push((ob.name(id).to_string(), thunk, struct_obj));
             }
         }
     }
-    // After collecting, immediately clear the registrations so the
-    // SAME tests don't get re-run by a later call. The obarray is
+    // After collecting, immediately clear the runner registration so
+    // the SAME tests don't get re-run by a later call. The obarray is
     // process-global; without this, a fresh `make_stdlib_interp` for
     // the next file would still see all tests registered by all
     // previous files.
+    //
+    // We only clear the `ert--rele-test` key (the closure the runner
+    // funcalls). The `ert--test` struct stays on the symbol so later
+    // `(ert-get-test 'X)` calls — e.g. from a wrapper test defined in
+    // a follow-up file — can still resolve it.
     obarray::GLOBAL_OBARRAY
         .write()
         .clear_plist_prop_globally(test_key);
-    for (name, thunk) in tests {
+    let _ = test_struct_key; // kept explicitly — do not clear.
+    for (name, thunk, test_struct) in tests {
         // Wrap the stored thunk in `(quote ...)` so eval hands funcall
         // the object as-is. R19: the thunk is now a
         // `(closure CAPTURED () BODY...)` form; evaluating that cons as
@@ -6247,11 +6257,23 @@ fn run_rele_ert_tests_detailed_inner(
             (None, None, None)
         };
 
+        // R23: publish the currently-running ert-test object so
+        // `(ert-running-test)` returns a non-nil value while BODY
+        // runs. erc-scenarios-common--make-bindings chains
+        // `(ert-test-tags (ert-running-test))` — without this, the
+        // accessor chain would either void-function or (if ert.el
+        // loaded enough) signal `wrong-type-argument: (ert-test nil)`.
+        crate::primitives::set_current_ert_test(test_struct.clone());
+
         let start = std::time::Instant::now();
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             interp.eval(call.clone())
         }));
         let elapsed_ms = start.elapsed().as_millis();
+
+        // Clear the current-test slot — later tests shouldn't be
+        // able to pick up a stale struct.
+        crate::primitives::set_current_ert_test(LispObject::nil());
 
         // Disarm the watchdog. Sending is best-effort: if the
         // watchdog already timed out and exited, the send just fails

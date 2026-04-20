@@ -1778,22 +1778,51 @@ fn eval_inner(
                     let after_args = cdr.rest()
                         .and_then(|r| r.rest())
                         .unwrap_or(LispObject::nil());
-                    // Skip optional docstring.
+                    // Skip optional docstring, but remember it so the
+                    // ert-test struct has a non-nil `documentation`
+                    // slot (some callers chain `(ert-test-documentation
+                    // (ert-get-test 'X))` and truncate the result).
                     let mut body = after_args;
+                    let mut docstring = LispObject::nil();
                     if let Some((maybe_doc, tail)) = body.destructure_cons() {
                         if maybe_doc.as_string().is_some() && !tail.is_nil() {
+                            docstring = maybe_doc;
                             body = tail;
                         }
                     }
-                    // Skip :keyword VALUE pairs (e.g. :tags, :expected-result).
+                    // Skip :keyword VALUE pairs (e.g. :tags, :expected-result)
+                    // but capture `:tags`'s VALUE so `(ert-test-tags
+                    // (ert-get-test 'X))` and `(memq :erc--graphical
+                    // (ert-test-tags (ert-running-test)))` resolve to a
+                    // meaningful list rather than nil. `:tags` usually
+                    // takes the shape `(quote (:expensive-test …))`, so
+                    // we eval the VALUE form in the current env — same
+                    // evaluation strategy real ERT uses.
+                    let mut tags = LispObject::nil();
                     loop {
                         match body.destructure_cons() {
                             Some((head, tail)) => {
-                                let is_kw = head.as_symbol()
+                                let kw_name = head.as_symbol();
+                                let is_kw = kw_name
                                     .as_deref()
-                                    .map(|s| s.starts_with(':'))
-                                    .unwrap_or(false);
+                                    .is_some_and(|s| s.starts_with(':'));
                                 if is_kw {
+                                    if kw_name.as_deref() == Some(":tags") {
+                                        if let Some((val_form, _)) = tail.destructure_cons() {
+                                            // Evaluate the VALUE form —
+                                            // best-effort; if it errors
+                                            // we leave `tags` as nil.
+                                            if let Ok(v) = eval(
+                                                obj_to_value(val_form),
+                                                env,
+                                                editor,
+                                                macros,
+                                                state,
+                                            ) {
+                                                tags = value_to_obj(v);
+                                            }
+                                        }
+                                    }
                                     body = tail.rest().unwrap_or(LispObject::nil());
                                 } else {
                                     break;
@@ -1823,7 +1852,24 @@ fn eval_inner(
                     );
                     let id = crate::obarray::intern(&name);
                     let test_key = crate::obarray::intern("ert--rele-test");
-                    crate::obarray::put_plist(id, test_key, closure);
+                    crate::obarray::put_plist(id, test_key, closure.clone());
+                    // R23: also store a full `ert-test` shape under
+                    // `ert--test` so `(ert-get-test 'NAME)`, wrapper
+                    // macros in tramp-tests and the accessors in
+                    // erc-scenarios-common can resolve the current
+                    // test. Real Emacs's `cl-defstruct ert-test`
+                    // accessors signal `wrong-type-argument: (ert-test
+                    // nil)` when they hit an unset slot — the fake
+                    // struct plus our Rust-side accessor stubs keep
+                    // that chain returning nil instead of signalling.
+                    let test_struct_key = crate::obarray::intern("ert--test");
+                    let test_obj = crate::primitives::make_ert_test_obj(
+                        &name,
+                        tags,
+                        docstring,
+                        closure,
+                    );
+                    crate::obarray::put_plist(id, test_struct_key, test_obj);
                     Ok(obj_to_value(LispObject::Symbol(id)))
                 }
                 "should" => {
