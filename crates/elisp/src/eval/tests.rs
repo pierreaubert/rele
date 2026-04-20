@@ -916,9 +916,20 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("buffer-invisibility-spec", LispObject::nil());
     interp.define("unicode-category-table", LispObject::nil());
     interp.define("case-replace", LispObject::t());
-    // rx macro is complex — stub to return nil so it doesn't crash.
-    // Real rx.el lives in emacs-lisp/rx.el which we don't load.
-    interp.define("rx", LispObject::primitive("ignore"));
+    // R18: register `rx` as a real macro (not a stub function) so that its
+    // symbolic operand names (`bow`, `eow`, `digit`, `bos`, …) aren't eagerly
+    // evaluated and raised as `void variable`. Expands to a literal regexp
+    // string via the `rele--rx-translate` primitive, which handles the common
+    // rx.el symbol table (anchors, POSIX classes, seq/or/group/+/*).
+    //
+    // This is intentionally narrow: unknown rx forms collapse to "", which is
+    // enough for the test files we load to pick up their top-level defvars
+    // without crashing. A full rx.el port is out of scope for R18.
+    interp
+        .eval(
+            read("(defmacro rx (&rest forms) (rele--rx-translate forms))").unwrap(),
+        )
+        .expect("defmacro rx should succeed");
     // `bol` / `eol` are rx anchor names; inside abbrev they're used as
     // variables in a `let` that builds a regexp. Stubs that shadow
     // them let the form eval without rx loaded.
