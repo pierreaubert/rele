@@ -1802,14 +1802,28 @@ fn eval_inner(
                             None => break,
                         }
                     }
-                    // Build (lambda () BODY...)
-                    let lambda = LispObject::cons(
-                        LispObject::symbol("lambda"),
-                        LispObject::cons(LispObject::nil(), body),
+                    // Capture the surrounding lexical env into a
+                    // `(closure CAPTURED () BODY...)`. Real Emacs files
+                    // that use `ert-deftest` routinely wrap the call in
+                    // an outer `let` (bindat-tests.el, ibuffer-tests.el,
+                    // …). With `lexical-binding: t` those let-bound
+                    // names are expected to be visible inside the test
+                    // body because a file-level `(lambda ...)` would
+                    // close over them. Storing a bare `(lambda () BODY)`
+                    // lost that env — by the time the runner invoked
+                    // the test later, the `let` had long since exited
+                    // so references to the let-bound variable raised
+                    // `void-variable`. Snapshotting here matches the
+                    // behaviour of the `lambda` special form.
+                    let captured = env.read().capture_as_alist();
+                    let closure = LispObject::closure_expr(
+                        captured,
+                        LispObject::nil(),
+                        body,
                     );
                     let id = crate::obarray::intern(&name);
                     let test_key = crate::obarray::intern("ert--rele-test");
-                    crate::obarray::put_plist(id, test_key, lambda);
+                    crate::obarray::put_plist(id, test_key, closure);
                     Ok(obj_to_value(LispObject::Symbol(id)))
                 }
                 "should" => {
