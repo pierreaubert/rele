@@ -1145,6 +1145,35 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     interp.define("apply", LispObject::primitive("apply"));
     interp.define("put", LispObject::primitive("put"));
     interp.define("get", LispObject::primitive("get"));
+
+    // R2: autoload-do-load machinery — the second-largest void-function
+    // bucket in the ERT baseline (136 hits). These primitives unblock
+    // tests that rely on autoload indirection.
+    //
+    // `autoload-do-load` is the Emacs C primitive that, given a LOADDEF
+    // cons `(autoload "file" ...)`, loads the named file and returns the
+    // now-materialized function definition.  In our headless interpreter
+    // we never actually load files; instead we just return whatever is
+    // already in the function cell (if the symbol is already fboundp)
+    // or nil (if not).  This is enough to let autoload-guarded code
+    // run without signalling `void-function: autoload-do-load`.
+    interp.define(
+        "autoload-do-load",
+        LispObject::primitive("autoload-do-load"),
+    );
+    // `autoload-compute-prefixes` scans loaded files for autoload
+    // cookie prefix groups.  Stub as nil — no file scanning in headless.
+    interp.define(
+        "autoload-compute-prefixes",
+        LispObject::primitive("autoload-compute-prefixes"),
+    );
+    // `load-history-filename-element` looks up an element in
+    // `load-history` by filename.  Stub returns nil; callers treat nil
+    // as "not loaded yet" which is correct for a fresh interpreter.
+    interp.define(
+        "load-history-filename-element",
+        LispObject::primitive("load-history-filename-element"),
+    );
 }
 
 pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> {
@@ -1951,6 +1980,14 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
         | "treesit-query-compile" | "treesit-query-capture"
         | "treesit-language-available-p"
         | "treesit-library-abi-version" => Ok(LispObject::nil()),
+
+        // R2: autoload-do-load machinery.
+        "autoload-do-load" => prim_autoload_do_load(args),
+        "autoload-compute-prefixes" => {
+            // (autoload-compute-prefixes FILE) — stub, return nil.
+            Ok(LispObject::nil())
+        }
+        "load-history-filename-element" => prim_load_history_filename_element(args),
 
         _ => Err(ElispError::VoidFunction(name.to_string())),
     }
@@ -5307,6 +5344,79 @@ fn prim_icalendar_unfolded_buffer_from_file(_args: &LispObject) -> ElispResult<L
     })
 }
 
+
+// ---- R2: autoload-do-load machinery ----------------------------------------
+//
+// `autoload-do-load` (Emacs C function `Fautoload_do_load`) is called with:
+//   (autoload-do-load LOADDEF &optional FUNNAME MACRO-ONLY)
+//
+// LOADDEF is a cons of the form `(autoload "filename" DOC INTERACTIVE TYPE)`.
+// In a real Emacs it loads the file and returns the materialized definition.
+// In our headless interpreter we skip actual file loading and instead:
+//   1. If FUNNAME is given and already has a non-nil function cell, return it.
+//   2. Otherwise return nil (signals "not loaded" to callers).
+//
+// This is sufficient to stop `void-function: autoload-do-load` errors while
+// letting callers that guard on the result work correctly.
+fn prim_autoload_do_load(args: &LispObject) -> ElispResult<LispObject> {
+    // At least one argument (LOADDEF) is required.
+    let _ = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+
+    // Optional second arg: FUNNAME.
+    let funname = args.nth(1);
+
+    if let Some(sym_obj) = funname {
+        if let Some(sym_name) = sym_obj.as_symbol() {
+            // Fast path: look up directly in the global obarray.
+            if let Some(sym_id) = crate::obarray::GLOBAL_OBARRAY.read().find(&sym_name) {
+                if let Some(def) = crate::obarray::get_function_cell(sym_id) {
+                    // Return the definition only if it's non-nil and not itself
+                    // an autoload stub (which would create infinite regress).
+                    let is_autoload_stub = def.first()
+                        .and_then(|head| head.as_symbol())
+                        .is_some_and(|s| s == "autoload");
+                    if !def.is_nil() && !is_autoload_stub {
+                        return Ok(def);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(LispObject::nil())
+}
+
+/// `(load-history-filename-element FILENAME)` — look up FILENAME in the
+/// `load-history` variable.  `load-history` is an alist of the form
+/// `((FILENAME . DEFS) ...)` where DEFS is a list of loaded symbols.
+/// Returns the matching element (cons) or nil if not found.
+fn prim_load_history_filename_element(args: &LispObject) -> ElispResult<LispObject> {
+    let filename_arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let filename = match filename_arg.as_string() {
+        Some(s) => s.clone(),
+        None => return Ok(LispObject::nil()),
+    };
+
+    // Read `load-history` from the global obarray value cell.
+    let load_history_id = crate::obarray::intern("load-history");
+    let load_history = crate::obarray::get_value_cell(load_history_id)
+        .unwrap_or(LispObject::nil());
+
+    // Walk the alist looking for an element whose car matches FILENAME.
+    let mut current = load_history;
+    while let Some((entry, rest)) = current.destructure_cons() {
+        if let Some((key, _)) = entry.destructure_cons() {
+            if let Some(key_str) = key.as_string() {
+                if *key_str == filename {
+                    return Ok(entry);
+                }
+            }
+        }
+        current = rest;
+    }
+
+    Ok(LispObject::nil())
+}
 
 #[cfg(test)]
 mod tests {
