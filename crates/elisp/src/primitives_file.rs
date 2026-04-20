@@ -683,6 +683,87 @@ pub fn prim_float_time(_args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::float(now.as_secs_f64()))
 }
 
+// ---- Additional P3 primitives -----------------------------------------
+
+pub fn prim_directory_name_p(args: &LispObject) -> ElispResult<LispObject> {
+    let s = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    Ok(LispObject::from(s.ends_with('/')))
+}
+
+pub fn prim_file_accessible_directory_p(args: &LispObject) -> ElispResult<LispObject> {
+    let s = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let is_dir = std::path::Path::new(&s).is_dir();
+    Ok(LispObject::from(is_dir))
+}
+
+pub fn prim_make_directory_internal(args: &LispObject) -> ElispResult<LispObject> {
+    let path = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    #[allow(clippy::disallowed_methods, reason = "stub; synchronous primitive")]
+    match std::fs::create_dir(&path) {
+        Ok(()) => Ok(LispObject::nil()),
+        Err(e) => {
+            let msg = e.to_string();
+            Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                symbol: LispObject::symbol("file-error"),
+                data: LispObject::cons(
+                    LispObject::string("cannot create"),
+                    LispObject::cons(LispObject::string(&path),
+                        LispObject::cons(LispObject::string(&msg), LispObject::nil())
+                    ),
+                ),
+            })))
+        }
+    }
+}
+
+pub fn prim_rfc822_addresses(args: &LispObject) -> ElispResult<LispObject> {
+    let s = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let mut addresses: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = s.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+                current.push(ch);
+            }
+            ',' if !in_quotes => {
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    addresses.push(trimmed.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        addresses.push(trimmed.to_string());
+    }
+
+    let mut result = LispObject::nil();
+    for addr in addresses.into_iter().rev() {
+        result = LispObject::cons(LispObject::string(&addr), result);
+    }
+    Ok(result)
+}
+
+pub fn prim_url_expand_file_name(args: &LispObject) -> ElispResult<LispObject> {
+    let url = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    if url.starts_with("file://") {
+        let path = &url[7..];
+        prim_expand_file_name(&LispObject::cons(LispObject::string(path), LispObject::nil()))
+    } else if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("ftp://") {
+        Ok(LispObject::string(&url))
+    } else {
+        prim_expand_file_name(&LispObject::cons(LispObject::string(&url), LispObject::nil()))
+    }
+}
+
 // ---- Dispatch ---------------------------------------------------------
 
 pub fn call_file_primitive(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
@@ -731,6 +812,11 @@ pub fn call_file_primitive(name: &str, args: &LispObject) -> Option<ElispResult<
         "set-time-zone-rule" => prim_set_time_zone_rule(args),
         "current-time" => prim_current_time(args),
         "float-time" => prim_float_time(args),
+        "directory-name-p" => prim_directory_name_p(args),
+        "file-accessible-directory-p" => prim_file_accessible_directory_p(args),
+        "make-directory-internal" => prim_make_directory_internal(args),
+        "rfc822-addresses" => prim_rfc822_addresses(args),
+        "url-expand-file-name" => prim_url_expand_file_name(args),
         _ => return None,
     })
 }
@@ -780,6 +866,11 @@ pub const FILE_PRIMITIVE_NAMES: &[&str] = &[
     "set-time-zone-rule",
     "current-time",
     "float-time",
+    "directory-name-p",
+    "file-accessible-directory-p",
+    "make-directory-internal",
+    "rfc822-addresses",
+    "url-expand-file-name",
 ];
 
 #[cfg(test)]
@@ -867,5 +958,168 @@ mod tests {
         assert_eq!(count, 1, "setenv must replace, not duplicate");
         let head = list.first().and_then(|v| v.as_string().map(|s| s.to_string()));
         assert_eq!(head.as_deref(), Some("R2_DUP=new"));
+    }
+
+    // ---- P3 Primitive Tests ------------------------------------------------
+
+    #[test]
+    fn directory_name_p_recognizes_trailing_slash() {
+        let args = LispObject::cons(LispObject::string("/home/user/"), LispObject::nil());
+        let result = prim_directory_name_p(&args).unwrap();
+        assert!(matches!(result, LispObject::True));
+
+        let args2 = LispObject::cons(LispObject::string("/home/user"), LispObject::nil());
+        let result2 = prim_directory_name_p(&args2).unwrap();
+        assert!(matches!(result2, LispObject::Nil));
+    }
+
+    #[test]
+    fn directory_name_p_root() {
+        let args = LispObject::cons(LispObject::string("/"), LispObject::nil());
+        let result = prim_directory_name_p(&args).unwrap();
+        assert!(matches!(result, LispObject::True));
+    }
+
+    #[test]
+    fn file_accessible_directory_p_true_on_existing_dir() {
+        let tempdir = std::env::temp_dir();
+        let path = tempdir.to_string_lossy();
+        let args = LispObject::cons(LispObject::string(&path), LispObject::nil());
+        let result = prim_file_accessible_directory_p(&args).unwrap();
+        assert!(matches!(result, LispObject::True));
+    }
+
+    #[test]
+    fn file_accessible_directory_p_false_on_nonexistent() {
+        let args = LispObject::cons(
+            LispObject::string("/nonexistent/path/that/definitely/does/not/exist"),
+            LispObject::nil(),
+        );
+        let result = prim_file_accessible_directory_p(&args).unwrap();
+        assert!(matches!(result, LispObject::Nil));
+    }
+
+    #[test]
+    fn rfc822_addresses_single_address() {
+        let args = LispObject::cons(LispObject::string("user@example.com"), LispObject::nil());
+        let result = prim_rfc822_addresses(&args).unwrap();
+        let addr = result.first().and_then(|a| a.as_string());
+        assert_eq!(addr.map(|s| s.to_string()), Some("user@example.com".into()));
+    }
+
+    #[test]
+    fn rfc822_addresses_multiple_comma_separated() {
+        let args = LispObject::cons(
+            LispObject::string("alice@example.com, bob@example.com, charlie@example.com"),
+            LispObject::nil(),
+        );
+        let result = prim_rfc822_addresses(&args).unwrap();
+
+        let mut addrs: Vec<String> = Vec::new();
+        let mut cur = result;
+        while let Some((car, cdr)) = cur.destructure_cons() {
+            if let Some(s) = car.as_string() {
+                addrs.push(s.to_string());
+            }
+            cur = cdr;
+        }
+
+        assert_eq!(addrs.len(), 3);
+        assert_eq!(addrs[0], "alice@example.com");
+        assert_eq!(addrs[1], "bob@example.com");
+        assert_eq!(addrs[2], "charlie@example.com");
+    }
+
+    #[test]
+    fn rfc822_addresses_with_quoted_names() {
+        let args = LispObject::cons(
+            LispObject::string(r#""Alice Smith" <alice@example.com>, bob@example.com"#),
+            LispObject::nil(),
+        );
+        let result = prim_rfc822_addresses(&args).unwrap();
+
+        let mut addrs: Vec<String> = Vec::new();
+        let mut cur = result;
+        while let Some((car, cdr)) = cur.destructure_cons() {
+            if let Some(s) = car.as_string() {
+                addrs.push(s.to_string());
+            }
+            cur = cdr;
+        }
+
+        assert_eq!(addrs.len(), 2);
+        assert!(addrs[0].contains("Alice Smith"));
+        assert_eq!(addrs[1], "bob@example.com");
+    }
+
+    #[test]
+    fn rfc822_addresses_respects_quoted_commas() {
+        let args = LispObject::cons(
+            LispObject::string(r#""Smith, Jr." <jr@example.com>, alice@example.com"#),
+            LispObject::nil(),
+        );
+        let result = prim_rfc822_addresses(&args).unwrap();
+
+        let mut addrs: Vec<String> = Vec::new();
+        let mut cur = result;
+        while let Some((car, cdr)) = cur.destructure_cons() {
+            if let Some(s) = car.as_string() {
+                addrs.push(s.to_string());
+            }
+            cur = cdr;
+        }
+
+        assert_eq!(addrs.len(), 2);
+    }
+
+    #[test]
+    fn rfc822_addresses_whitespace_handling() {
+        let args = LispObject::cons(
+            LispObject::string("  alice@example.com  ,  bob@example.com  "),
+            LispObject::nil(),
+        );
+        let result = prim_rfc822_addresses(&args).unwrap();
+
+        let mut addrs: Vec<String> = Vec::new();
+        let mut cur = result;
+        while let Some((car, cdr)) = cur.destructure_cons() {
+            if let Some(s) = car.as_string() {
+                addrs.push(s.to_string());
+            }
+            cur = cdr;
+        }
+
+        assert_eq!(addrs.len(), 2);
+        assert_eq!(addrs[0], "alice@example.com");
+        assert_eq!(addrs[1], "bob@example.com");
+    }
+
+    #[test]
+    fn url_expand_file_name_local_file() {
+        let args = LispObject::cons(LispObject::string("file:///tmp/test.txt"), LispObject::nil());
+        let result = prim_url_expand_file_name(&args).unwrap();
+        let path = result.as_string().map(|s| s.to_string());
+        assert!(path.is_some());
+    }
+
+    #[test]
+    fn url_expand_file_name_http_url() {
+        let args = LispObject::cons(
+            LispObject::string("https://example.com/page.html"),
+            LispObject::nil(),
+        );
+        let result = prim_url_expand_file_name(&args).unwrap();
+        let url = result.as_string().map(|s| s.to_string());
+        assert_eq!(url, Some("https://example.com/page.html".into()));
+    }
+
+    #[test]
+    fn url_expand_file_name_relative_path() {
+        let args = LispObject::cons(LispObject::string("test.txt"), LispObject::nil());
+        let result = prim_url_expand_file_name(&args).unwrap();
+        let path = result.as_string().map(|s| s.to_string());
+        assert!(path.is_some());
+        let p = path.unwrap();
+        assert!(p.starts_with('/') || p.contains(':'));
     }
 }
