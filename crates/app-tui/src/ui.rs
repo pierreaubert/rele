@@ -162,6 +162,11 @@ fn draw_window_tree(frame: &mut Frame, state: &mut TuiAppState, area: Rect) {
             .windows
             .remap_focus(state.focused_window, &hide)
             .min(leaf_count.saturating_sub(1));
+        // Keep stored focus in sync so status bar and key handling
+        // see the same window the user actually sees.
+        if state.focused_window != new_focus {
+            state.focused_window = new_focus;
+        }
         (pruned, new_focus)
     };
 
@@ -226,15 +231,14 @@ fn draw_separator(frame: &mut Frame, state: &TuiAppState, sep: crate::windows::S
     }
 }
 
-/// Render the always-on *Diagnostics* panel between the status bar and
-/// the minibuffer. Shows up to `DIAG_PANEL_MAX_ROWS` rows, oldest-first
-/// (sorted by line). The row covering the cursor's current line is
-/// highlighted so the user can see where their cursor sits relative to
-/// the diagnostic list.
+/// Render the *Diagnostics* window content.  Only called from
+/// `draw_window_tree` when the Diagnostics leaf is present in the
+/// (possibly pruned) render tree — i.e. the active buffer has at
+/// least one diagnostic.
 ///
 /// The last row is an overflow indicator (`… (+N more)`) when the
-/// buffer has more diagnostics than fit. Use `M-g n` / `M-g p` to cycle
-/// through all of them, not just the visible ones.
+/// buffer has more diagnostics than fit.  Use `M-g n` / `M-g p` to
+/// cycle through all of them, not just the visible ones.
 fn draw_diagnostics_panel(frame: &mut Frame, state: &TuiAppState, area: Rect) {
     let Some(lsp) = state.lsp_buffer_state.as_ref() else {
         return;
@@ -627,10 +631,23 @@ fn push_highlighted_spans(
 fn draw_status_bar(frame: &mut Frame, state: &TuiAppState, area: Rect) {
     // The bottom status bar describes the *focused* window (Emacs
     // behaviour: `mode-line-format` is active-window-dependent).
-    let content = state
+    let mut content = state
         .windows
         .content_at(state.focused_window)
         .unwrap_or(WindowContent::Buffer);
+    // When the Diagnostics panel is auto-hidden (no diagnostics),
+    // the focused window may still point at the pruned leaf. Fall
+    // back to Buffer so the status bar doesn't show a stale
+    // "*Diagnostics*" label.
+    if content == WindowContent::Diagnostics {
+        let has_diags = state
+            .lsp_buffer_state
+            .as_ref()
+            .is_some_and(|s| !s.diagnostics.is_empty());
+        if !has_diags {
+            content = WindowContent::Buffer;
+        }
+    }
     render_mode_line(frame, state, area, content, /* focused = */ true);
 }
 

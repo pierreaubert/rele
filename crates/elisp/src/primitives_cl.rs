@@ -69,7 +69,7 @@ fn nth_of(list: &LispObject, n: usize) -> LispObject {
     cur.first().unwrap_or(LispObject::nil())
 }
 
-macro_rules! cl_nth_fn {
+macro_rules! cl_nth_fn	 {
     ($name:ident, $n:expr) => {
         pub fn $name(args: &LispObject) -> ElispResult<LispObject> {
             let list = args.first().unwrap_or(LispObject::nil());
