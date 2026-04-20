@@ -589,10 +589,10 @@ pub fn prim_color_values_from_color_spec(args: &LispObject) -> ElispResult<LispO
 }
 
 pub fn prim_color_blend(args: &LispObject) -> ElispResult<LispObject> {
-    let c1 = args.nth(0).and_then(|a| a.as_string()).map(|s| s.clone()).unwrap_or_default();
-    let c2 = args.nth(1).and_then(|a| a.as_string()).map(|s| s.clone()).unwrap_or_default();
+    let c1 = args.nth(0).and_then(|a| a.as_string().cloned()).unwrap_or_default();
+    let c2 = args.nth(1).and_then(|a| a.as_string().cloned()).unwrap_or_default();
     let alpha = match args.nth(2).and_then(|a| a.as_float()) {
-        Some(&f) => f.max(0.0).min(1.0),
+        Some(f) => f.max(0.0).min(1.0),
         None => 0.5,
     };
     let parse = |s: &str| -> Option<(u8, u8, u8)> {
@@ -616,17 +616,17 @@ pub fn prim_color_blend(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_color_name_to_rgb(args: &LispObject) -> ElispResult<LispObject> {
-    match args.first().and_then(|a| a.as_string()) {
+    match args.first().and_then(|a| a.as_string().cloned()) {
         Some(name) if name.starts_with('#') && name.len() == 7 && u32::from_str_radix(&name[1..], 16).is_ok() => {
-            Ok(LispObject::string(name))
+            Ok(LispObject::string(&name))
         }
         _ => Ok(LispObject::nil()),
     }
 }
 
 pub fn prim_color_distance(args: &LispObject) -> ElispResult<LispObject> {
-    let c1 = args.nth(0).and_then(|a| a.as_string()).map(|s| s.clone()).unwrap_or_default();
-    let c2 = args.nth(1).and_then(|a| a.as_string()).map(|s| s.clone()).unwrap_or_default();
+    let c1 = args.nth(0).and_then(|a| a.as_string().cloned()).unwrap_or_default();
+    let c2 = args.nth(1).and_then(|a| a.as_string().cloned()).unwrap_or_default();
     let parse = |s: &str| -> Option<(f64, f64, f64)> {
         if !s.starts_with('#') || s.len() != 7 { return None; }
         u32::from_str_radix(&s[1..], 16).ok().map(|rgb| (

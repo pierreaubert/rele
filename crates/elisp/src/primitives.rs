@@ -1562,10 +1562,6 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
         "float-time" => prim_float_time(args),
         "network-lookup-address-info" => Ok(LispObject::nil()),
         "logb" => prim_logb(args),
-        "frexp" => prim_frexp(args),
-        "ldexp" => prim_ldexp(args),
-        "copysign" => prim_copysign(args),
-        "isnan" => prim_isnan(args),
         "font-spec" | "font-family-list" | "font-info" | "font-face-attributes" => {
             Ok(LispObject::nil())
         }
@@ -1794,7 +1790,6 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
         | "truncate-string-pixelwise" => {
             Ok(args.first().unwrap_or(LispObject::nil()))
         }
-        "substring-no-properties" => prim_substring(args),
         "string-pixel-width" => Ok(LispObject::integer(0)),
         "text-char-description" | "single-key-description" => prim_prin1_to_string(args),
         // Timer / thread — no-ops.
