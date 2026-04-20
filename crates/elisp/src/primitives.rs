@@ -185,6 +185,12 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     interp.define("identity", LispObject::primitive("identity"));
     interp.define("ignore", LispObject::primitive("ignore"));
     interp.define("type-of", LispObject::primitive("type-of"));
+    // R18: helper used by the `rx` macro expansion to translate an rx
+    // form list into an Emacs regexp string at macroexpansion time.
+    interp.define(
+        "rele--rx-translate",
+        LispObject::primitive("rele--rx-translate"),
+    );
 
     // String — extended
     interp.define("upcase", LispObject::primitive("upcase"));
@@ -1278,6 +1284,7 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
         // Misc
         "identity" => prim_identity(args),
         "ignore" => prim_ignore(args),
+        "rele--rx-translate" => prim_rele_rx_translate(args),
 
         // Records / structs
         "record" => prim_record(args),
@@ -3163,6 +3170,150 @@ fn prim_ignore(args: &LispObject) -> ElispResult<LispObject> {
     // Consume all args, return nil
     let _ = args;
     Ok(LispObject::nil())
+}
+
+// ---------------------------------------------------------------------------
+// `rx` — narrow translator from Emacs's `rx` S-expression regexp notation
+// into an Emacs regexp string. Not a full re-implementation of rx.el: we
+// only handle the symbols & forms that show up in loaded Emacs test files
+// (seccomp tests, epg tests, mail-utils, ucs-normalize). Unknown forms fall
+// through to the empty string so that `rx`-using code can still load its
+// top-level `defvar`s and `defun`s. See R18.
+// ---------------------------------------------------------------------------
+
+/// Translate a single `rx` symbol to an Emacs regexp fragment.
+/// Returns `None` for symbols we don't recognise — callers treat that as
+/// "unknown symbol, emit empty string" so that test files don't crash at
+/// load time on rx forms we can't fully translate.
+fn rx_symbol_to_regexp(sym: &str) -> Option<&'static str> {
+    Some(match sym {
+        // Anchors (line / buffer / string).
+        "bol" | "line-start" => "^",
+        "eol" | "line-end" => "$",
+        "bos" | "buffer-start" | "bot" | "point-min" | "string-start" => "\\`",
+        "eos" | "buffer-end" | "eot" | "point-max" | "string-end" => "\\'",
+
+        // Word / symbol boundaries — these are the R18 target cases.
+        "bow" | "word-start" => "\\<",
+        "eow" | "word-end" => "\\>",
+        "word-boundary" => "\\b",
+        "not-word-boundary" => "\\B",
+        "symbol-start" => "\\_<",
+        "symbol-end" => "\\_>",
+
+        // POSIX character classes.
+        "digit" | "num" | "numeric" => "[[:digit:]]",
+        "alpha" | "alphabetic" | "letter" => "[[:alpha:]]",
+        "alnum" | "alphanumeric" => "[[:alnum:]]",
+        "upper" | "upper-case" => "[[:upper:]]",
+        "lower" | "lower-case" => "[[:lower:]]",
+        "space" | "whitespace" => "[[:space:]]",
+        "blank" => "[[:blank:]]",
+        "punct" => "[[:punct:]]",
+        "cntrl" | "control" => "[[:cntrl:]]",
+        "print" | "printing" => "[[:print:]]",
+        "graph" | "graphic" => "[[:graph:]]",
+        "hex-digit" | "hex" | "xdigit" => "[[:xdigit:]]",
+        "ascii" => "[[:ascii:]]",
+        "nonascii" => "[[:nonascii:]]",
+
+        // Any-char shorthands.
+        "any" | "anything" => ".",
+        "nonl" | "not-newline" => ".",
+
+        // Word constituent.
+        "word" | "wordchar" => "\\w",
+        "not-wordchar" => "\\W",
+
+        // Empty sequence — self-evaluates to "" regexp.
+        "unmatchable" => "\\`\\'", // never matches (valid but unused)
+        _ => return None,
+    })
+}
+
+/// Recursive rx-form → regexp translator. `form` is the unevaluated Lisp
+/// structure (symbol, string, or cons). Unknown shapes collapse to "" so
+/// that load-time expansion never errors.
+fn rx_form_to_regexp(form: &LispObject) -> String {
+    match form {
+        LispObject::Symbol(_) => {
+            let Some(name) = form.as_symbol() else {
+                return String::new();
+            };
+            rx_symbol_to_regexp(&name)
+                .map(String::from)
+                .unwrap_or_default()
+        }
+        LispObject::String(s) => crate::emacs::search::regexp_quote(s),
+        LispObject::Cons(_) => {
+            let head = form.first().unwrap_or(LispObject::nil());
+            let tail = form.rest().unwrap_or(LispObject::nil());
+            let head_name = head.as_symbol().unwrap_or_default();
+            match head_name.as_str() {
+                // Grouping forms that just concatenate their children.
+                "seq" | ":" | "sequence" | "and" | "" => rx_seq(&tail),
+                "or" | "|" => rx_or(&tail),
+                "zero-or-more" | "0+" | "*" | "*?" => {
+                    format!("{}*", rx_seq(&tail))
+                }
+                "one-or-more" | "1+" | "+" | "+?" => {
+                    format!("{}+", rx_seq(&tail))
+                }
+                "zero-or-one" | "optional" | "opt" | "?" | "??" => {
+                    format!("{}?", rx_seq(&tail))
+                }
+                "group" | "submatch" => {
+                    format!("\\({}\\)", rx_seq(&tail))
+                }
+                "regexp" | "regex" => {
+                    // (regexp STR) — STR used as-is.
+                    tail.first()
+                        .and_then(|x| match x {
+                            LispObject::String(s) => Some(s.to_string()),
+                            _ => None,
+                        })
+                        .unwrap_or_default()
+                }
+                "literal" | "eval" => {
+                    // Can't evaluate at rx-time here; emit empty so the
+                    // surrounding regexp stays valid.
+                    String::new()
+                }
+                _ => String::new(),
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// Concatenate translations of a list of rx forms.
+fn rx_seq(list: &LispObject) -> String {
+    let mut out = String::new();
+    let mut cur = list.clone();
+    while let Some((car, cdr)) = cur.destructure_cons() {
+        out.push_str(&rx_form_to_regexp(&car));
+        cur = cdr;
+    }
+    out
+}
+
+/// Same as `rx_seq` but joins children with `\|` (alternation).
+fn rx_or(list: &LispObject) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = list.clone();
+    while let Some((car, cdr)) = cur.destructure_cons() {
+        parts.push(rx_form_to_regexp(&car));
+        cur = cdr;
+    }
+    parts.join("\\|")
+}
+
+/// Primitive `rele--rx-translate`: called from the `rx` macro body with the
+/// unevaluated `&rest` argument list. Wraps the list in an implicit `seq`
+/// and returns the resulting Emacs regexp as a string.
+fn prim_rele_rx_translate(args: &LispObject) -> ElispResult<LispObject> {
+    let forms = args.first().unwrap_or(LispObject::nil());
+    Ok(LispObject::string(&rx_seq(&forms)))
 }
 
 // ---------------------------------------------------------------------------
