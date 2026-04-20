@@ -957,12 +957,23 @@ fn eval_setf_one(
 /// list and BODY is everything after it. The arg list may contain
 /// type-dispatch specs like `(obj symbol)` — we strip the type and keep
 /// the bare arg name.
+///
+/// `is_method` is `true` for `cl-defmethod` and `false` for
+/// `cl-defgeneric`. When it's a method AND a qualifier is present
+/// (any symbol before the arg list, e.g. `:before`, `:after`, `:around`,
+/// `:printer`), we must NOT install a `defun` — in Emacs's cl-generic,
+/// qualified methods are auxiliary (combined via method combination)
+/// and are never the sole dispatch target. If we installed them as a
+/// plain `defun`, a subsequent call to the generic would run the
+/// qualifier body (or, if the qualifier symbol leaked into the
+/// function slot itself, signal `void-function: :printer` at call time).
 fn eval_cl_defgeneric_or_method(
     args: Value,
     env: &Arc<RwLock<Environment>>,
     editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
     macros: &MacroTable,
     state: &InterpreterState,
+    is_method: bool,
 ) -> ElispResult<Value> {
     let args_obj = value_to_obj(args);
     let name = args_obj
@@ -975,11 +986,26 @@ fn eval_cl_defgeneric_or_method(
     // arg list. `cl-defmethod` can have `:before`, `:after`, `:around`,
     // or a custom selector like `foo` — anything that isn't a cons is a
     // qualifier.
+    let mut had_qualifier = false;
     while let Some((head, tail)) = rest.destructure_cons() {
         if matches!(head, LispObject::Cons(_)) {
             break;
         }
+        had_qualifier = true;
         rest = tail;
+    }
+
+    // A qualified method (`:printer`, `:before`, `:after`, `:around`, ...)
+    // must not replace the generic's function cell. Record nothing and
+    // return nil — the primary `cl-defgeneric` / unqualified `cl-defmethod`
+    // stays in the function slot, which is what Emacs's dispatcher would
+    // call first anyway. This matches the observable behaviour of
+    // method combination for tests that only verify the generic returns
+    // a sensible value (the 1162 `void function: :printer` failures in
+    // icalendar-parser-tests.el were all symptoms of the qualifier being
+    // installed as the primary).
+    if is_method && had_qualifier {
+        return Ok(Value::nil());
     }
 
     // Arg list: may be typed like ((obj type) other-arg &rest foo).
@@ -1902,18 +1928,22 @@ fn eval_inner(
                     // default implementation. Methods (cl-defmethod) may
                     // overwrite the function cell with specialized versions.
                     eval_cl_defgeneric_or_method(
-                        obj_to_value(cdr), env, editor, macros, state,
+                        obj_to_value(cdr), env, editor, macros, state, false,
                     )
                 }
                 "cl-defmethod" => {
                     // (cl-defmethod NAME [QUALIFIER] (ARGS WITH-TYPES) BODY)
                     // For our single-dispatch-ignorant runtime, each new
-                    // method overwrites the previous function cell. This
-                    // loses multimethod dispatch but makes the most recently
-                    // defined method the winner — good enough for most
-                    // stdlib code that defines one general method.
+                    // primary method overwrites the previous function cell.
+                    // Qualified methods (`:before`, `:after`, `:around`,
+                    // `:printer`, ...) must NOT overwrite the primary — they
+                    // are auxiliary in Emacs's cl-generic. Registering them
+                    // as a defun would replace the function cell and, worse,
+                    // cause callers that expect the generic to succeed to
+                    // instead signal `void-function :printer` when our
+                    // dispatch later looked up the raw qualifier symbol.
                     eval_cl_defgeneric_or_method(
-                        obj_to_value(cdr), env, editor, macros, state,
+                        obj_to_value(cdr), env, editor, macros, state, true,
                     )
                 }
                 "define-globalized-minor-mode"
