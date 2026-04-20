@@ -966,7 +966,7 @@ mod tests {
     fn directory_name_p_recognizes_trailing_slash() {
         let args = LispObject::cons(LispObject::string("/home/user/"), LispObject::nil());
         let result = prim_directory_name_p(&args).unwrap();
-        assert!(matches!(result, LispObject::True));
+        assert!(matches!(result, LispObject::T));
 
         let args2 = LispObject::cons(LispObject::string("/home/user"), LispObject::nil());
         let result2 = prim_directory_name_p(&args2).unwrap();
@@ -977,7 +977,7 @@ mod tests {
     fn directory_name_p_root() {
         let args = LispObject::cons(LispObject::string("/"), LispObject::nil());
         let result = prim_directory_name_p(&args).unwrap();
-        assert!(matches!(result, LispObject::True));
+        assert!(matches!(result, LispObject::T));
     }
 
     #[test]
@@ -986,7 +986,7 @@ mod tests {
         let path = tempdir.to_string_lossy();
         let args = LispObject::cons(LispObject::string(&path), LispObject::nil());
         let result = prim_file_accessible_directory_p(&args).unwrap();
-        assert!(matches!(result, LispObject::True));
+        assert!(matches!(result, LispObject::T));
     }
 
     #[test]
@@ -1003,8 +1003,8 @@ mod tests {
     fn rfc822_addresses_single_address() {
         let args = LispObject::cons(LispObject::string("user@example.com"), LispObject::nil());
         let result = prim_rfc822_addresses(&args).unwrap();
-        let addr = result.first().and_then(|a| a.as_string());
-        assert_eq!(addr.map(|s| s.to_string()), Some("user@example.com".into()));
+        let addr = result.first().and_then(|a| a.as_string().cloned());
+        assert_eq!(addr, Some("user@example.com".into()));
     }
 
     #[test]
