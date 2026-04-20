@@ -1846,6 +1846,59 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("print-circle", LispObject::nil());
     interp.define("print-gensym", LispObject::nil());
 
+    // R5: void-variable fixtures round 2 — legitimate Emacs globals
+    // These variables are referenced at load time by various stdlib files.
+    // Each default matches the Emacs default for a fresh non-interactive session.
+    // Source: Emacs 29.3 lisp files (see commit message for file locations).
+
+    // eshell/esh-util.el (79 hits)
+    interp.define("eshell-last-output-end", LispObject::nil());
+
+    // doc/misc/shortdoc.el (3 hits, R1 regression)
+    interp.define("shortdoc--groups", LispObject::nil());
+
+    // lisp/net/erc/*.el (18+ hits)
+    interp.define("erc-modules", LispObject::nil());
+    interp.define("erc-autojoin-delay", LispObject::nil());
+    interp.define("erc-reuse-buffers", LispObject::nil());
+
+    // lisp/emacs-lisp/macroexp.el (8 hits)
+    interp.define("macroexp--dynvars", LispObject::nil());
+
+    // lisp/repeat.el / lisp/keyboard.c (8 hits)
+    interp.define("executing-kbd-macro", LispObject::nil());
+
+    // lisp/crypt.el (7 hits)
+    interp.define("require-public-key", LispObject::nil());
+
+    // lisp/dired.el and others (6 hits)
+    interp.define("delete-by-moving-to-trash", LispObject::nil());
+
+    // lisp/emacs-lisp/lisp-mode.el (6 hits)
+    interp.define("syntax-propertize--done", LispObject::nil());
+
+    // lisp/search.c (6 hits)
+    interp.define("parse-sexp-lookup-properties", LispObject::nil());
+
+    // lisp/window.el (6 hits)
+    interp.define("minibuffer-auto-raise", LispObject::nil());
+
+    // lisp/so-long.el (6 hits)
+    interp.define("so-long-file-local-mode-function", LispObject::nil());
+
+    // lisp/frame.c (4 hits)
+    interp.define("window-system", LispObject::nil());
+
+    // lisp/mh-e/*.el (18+ hits, mh-e is email client)
+    interp.define("mh-sys-path", LispObject::nil());
+    interp.define("mh-cmd-note", LispObject::integer(0));
+
+    // lisp/net/tramp*.el (4+ hits)
+    interp.define("tramp-methods", LispObject::nil());
+
+    // lisp/mail/eshell.el (3+ hits)
+    interp.define("eshell-ls-use-in-dired", LispObject::nil());
+
     interp
 }
 
