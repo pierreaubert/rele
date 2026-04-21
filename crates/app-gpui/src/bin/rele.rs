@@ -35,6 +35,7 @@ fn main() {
             // Create state — load first file into the active buffer, rest as
             // stored buffers. If no files, open with the default scratch-like
             // welcome buffer.
+            #[allow(clippy::disallowed_methods)] // runs before UI is active; OK to block here
             let state = if let Some(first_file) = files.first() {
                 match std::fs::read_to_string(first_file) {
                     Ok(content) => {
@@ -56,6 +57,7 @@ fn main() {
             state.update(cx, |s, _cx| s.install_elisp_editor_callbacks());
 
             // Create additional buffers for remaining files.
+            #[allow(clippy::disallowed_methods)] // runs before UI is active; OK to block here
             state.update(cx, |s, _cx| {
                 for file in files.iter().skip(1) {
                     match std::fs::read_to_string(file) {
@@ -128,8 +130,17 @@ fn register_actions(cx: &mut App) {
                 .await;
             if let Some(file) = file {
                 let path = file.path().to_path_buf();
-                // Guard against excessively large files (50 MB)
-                match std::fs::metadata(&path) {
+                match tokio::fs::metadata(&path).await {
+                    Err(e) => {
+                        error!("Cannot read file metadata {}: {}", path.display(), e);
+                        rfd::AsyncMessageDialog::new()
+                            .set_level(rfd::MessageLevel::Error)
+                            .set_title("Open Failed")
+                            .set_description(format!("Cannot open '{}': {}", path.display(), e))
+                            .show()
+                            .await;
+                        return;
+                    }
                     Ok(meta) if meta.len() > 50 * 1024 * 1024 => {
                         error!("File too large: {} ({} bytes)", path.display(), meta.len());
                         rfd::AsyncMessageDialog::new()
@@ -144,23 +155,12 @@ fn register_actions(cx: &mut App) {
                             .await;
                         return;
                     }
-                    Err(e) => {
-                        error!("Cannot read file metadata {}: {}", path.display(), e);
-                        rfd::AsyncMessageDialog::new()
-                            .set_level(rfd::MessageLevel::Error)
-                            .set_title("Open Failed")
-                            .set_description(format!("Cannot open '{}': {}", path.display(), e))
-                            .show()
-                            .await;
-                        return;
-                    }
-                    _ => {}
+                    Ok(_) => {}
                 }
-                match std::fs::read_to_string(&path) {
+                match tokio::fs::read_to_string(&path).await {
                     Ok(content) => {
                         cx.update(|cx| {
                             state.update(cx, |s, _cx| {
-                                // Open as a new buffer (or switch to existing one)
                                 s.open_file_as_buffer(path.clone(), &content);
                                 s.add_recent_file(path);
                             });
@@ -191,15 +191,22 @@ fn register_actions(cx: &mut App) {
         let path = state.read(cx).document.file_path().cloned();
 
         if let Some(path) = path {
-            match std::fs::write(&path, &text) {
-                Ok(()) => state.update(cx, |s, _cx| {
-                    s.document.mark_clean();
-                    s.lsp_did_save();
-                }),
-                Err(e) => error!("Failed to save file {}: {}", path.display(), e),
-            }
+            let saved_path = path.clone();
+            cx.spawn(async move |cx| {
+                match tokio::fs::write(&path, &text).await {
+                    Ok(()) => {
+                        cx.update(|cx| {
+                            state.update(cx, |s, _cx| {
+                                s.document.mark_clean();
+                                s.lsp_did_save();
+                            });
+                        });
+                    }
+                    Err(e) => error!("Failed to save file {}: {}", saved_path.display(), e),
+                }
+            })
+            .detach();
         } else {
-            // No file path — trigger Save As
             cx.spawn(async move |cx| {
                 let file = rfd::AsyncFileDialog::new()
                     .add_filter("Markdown", &["md"])
@@ -207,7 +214,7 @@ fn register_actions(cx: &mut App) {
                     .await;
                 if let Some(file) = file {
                     let path = file.path().to_path_buf();
-                    match std::fs::write(&path, &text) {
+                    match tokio::fs::write(&path, &text).await {
                         Ok(()) => {
                             cx.update(|cx| {
                                 state.update(cx, |s, _cx| {
@@ -236,7 +243,7 @@ fn register_actions(cx: &mut App) {
                 .await;
             if let Some(file) = file {
                 let path = file.path().to_path_buf();
-                match std::fs::write(&path, &text) {
+                match tokio::fs::write(&path, &text).await {
                     Ok(()) => {
                         cx.update(|cx| {
                             state.update(cx, |s, _cx| {

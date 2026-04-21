@@ -5857,6 +5857,7 @@ fn emacs_source_root() -> Option<&'static str> {
         let home_emacs = format!("{home}/emacs");
         let candidates: &[&str] = &[
             "/Volumes/SSD2TB/src/emacs",
+            "/Volumes/home_ext1/Src/emacs",
             "/usr/src/emacs",
             "/usr/local/src/emacs",
             &home_src,
@@ -6401,6 +6402,15 @@ fn test_emacs_ert_can_run_a_test() {
         .stack_size(16 * 1024 * 1024)
         .spawn(|| {
             let interp = make_stdlib_interp();
+            // Clear stale ert registrations from prior tests that
+            // loaded real .el files into the global obarray.
+            {
+                let key = crate::obarray::intern("ert--rele-test");
+                crate::obarray::GLOBAL_OBARRAY
+                    .write()
+                    .clear_plist_prop_globally(key);
+            }
+
             interp
                 .eval(read("(ert-deftest rele-smoke () (should (= (+ 1 2) 3)))").unwrap())
                 .unwrap();
@@ -6438,6 +6448,17 @@ fn test_ert_run_detail_is_populated() {
         .stack_size(16 * 1024 * 1024)
         .spawn(|| {
             let interp = make_stdlib_interp();
+            // Clear stale ert registrations left by prior tests
+            // (the obarray is process-global). Without this we'd
+            // pick up hundreds of real-Emacs ert-deftests that hang
+            // in primitives unreachable by the eval-ops watchdog.
+            {
+                let key = crate::obarray::intern("ert--rele-test");
+                crate::obarray::GLOBAL_OBARRAY
+                    .write()
+                    .clear_plist_prop_globally(key);
+            }
+
             interp
                 .eval(read("(ert-deftest rele-pass () (should (= (+ 1 2) 3)))").unwrap())
                 .unwrap();
@@ -6494,6 +6515,13 @@ fn test_ert_run_per_test_timeout() {
         .stack_size(16 * 1024 * 1024)
         .spawn(|| {
             let interp = make_stdlib_interp();
+            // Clear stale ert registrations from parallel tests.
+            {
+                let key = crate::obarray::intern("ert--rele-test");
+                crate::obarray::GLOBAL_OBARRAY
+                    .write()
+                    .clear_plist_prop_globally(key);
+            }
             interp
                 .eval(
                     read(
@@ -6506,10 +6534,10 @@ fn test_ert_run_per_test_timeout() {
             interp
                 .eval(read("(ert-deftest rele-ok () (should (= 1 1)))").unwrap())
                 .unwrap();
-            let (stats, results) =
+            let (_stats, results) =
                 run_rele_ert_tests_detailed_with_timeout(&interp, 100);
-            assert_eq!(stats.timed_out, 1, "hang test should time out: {results:?}");
-            assert_eq!(stats.passed, 1, "non-hang test should still pass");
+            // Filter to only our tests — concurrent tests in the
+            // global obarray can sneak in between clear and run.
             let hang = results
                 .iter()
                 .find(|r| r.name == "rele-hang")
@@ -6520,6 +6548,11 @@ fn test_ert_run_per_test_timeout() {
                 "timeout detail should name the budget: {:?}",
                 hang.detail,
             );
+            let ok = results
+                .iter()
+                .find(|r| r.name == "rele-ok")
+                .expect("rele-ok missing");
+            assert_eq!(ok.result, "pass", "non-hang test should pass");
         })
         .expect("spawn");
     handle.join().expect("join");

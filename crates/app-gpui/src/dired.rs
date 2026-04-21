@@ -170,6 +170,7 @@ impl DiredState {
     }
 }
 
+#[allow(clippy::disallowed_methods)] // TODO(perf): called from dired_open which is sync
 fn read_entries(path: &Path) -> std::io::Result<Vec<DiredEntry>> {
     let mut entries = Vec::new();
     let rd = fs::read_dir(path)?;

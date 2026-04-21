@@ -7,76 +7,12 @@ use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
-pub struct Environment {
-    bindings: HashMap<SymbolId, LispObject>,
-    parent: Option<Arc<Environment>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Macro {
-    pub args: LispObject,
-    pub body: LispObject,
-}
-
-type MacroTable = Arc<RwLock<HashMap<String, Macro>>>;
-type FeatureList = Arc<RwLock<Vec<String>>>;
-
-const MAX_EVAL_DEPTH: usize = 1000;
-
-thread_local! {
-    static EVAL_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Match data populated by `string-match` / `looking-at` / etc.
-    /// Each successful match stores alternating (start, end) positions for
-    /// group 0..=N. Group 0 is the whole match; 1..=N are capture groups.
-    /// Used by `match-beginning`, `match-end`, `match-string`, `match-data`.
-    /// Thread-local so parallel tests don't stomp on each other (matches
-    /// Emacs semantics — match data is per-thread of execution).
-    static MATCH_DATA: std::cell::RefCell<Vec<Option<(usize, usize)>>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-    /// String the last match was run against. Needed by `match-string`.
-    static MATCH_STRING: std::cell::RefCell<Option<String>> =
-        const { std::cell::RefCell::new(None) };
-    /// Cache of compiled Rust regexes keyed by the post-`emacs_regex_to_rust`
-    /// pattern string. Re-using compiled `Regex` objects avoids repeated
-    /// `Regex::new` calls in tight loops (e.g. `mule-cmds` calling
-    /// `string-match` on the same pattern thousands of times).
-    static REGEX_CACHE: std::cell::RefCell<HashMap<String, regex::Regex>> =
-        std::cell::RefCell::new(HashMap::new());
-}
-
-/// Set match data after a regex match. `captures` is `Vec<Option<(start,
-/// end)>>` where index 0 is the whole match and later indices are capture
-/// groups (None for unmatched optional groups). `text` is the string that
-/// was matched against.
-fn set_match_data(captures: Vec<Option<(usize, usize)>>, text: Option<String>) {
-    MATCH_DATA.with(|d| *d.borrow_mut() = captures);
-    MATCH_STRING.with(|s| *s.borrow_mut() = text);
-}
-
-/// Get (start, end) for the Nth match group, or None if unmatched or N is
-/// out of range.
-fn get_match_group(n: usize) -> Option<(usize, usize)> {
-    MATCH_DATA.with(|d| d.borrow().get(n).and_then(|x| *x))
-}
-
-fn inc_eval_depth() -> Result<usize, ElispError> {
-    EVAL_DEPTH.with(|d| {
-        let new_depth = d.get() + 1;
-        if new_depth > MAX_EVAL_DEPTH {
-            Err(ElispError::StackOverflow)
-        } else {
-            d.set(new_depth);
-            Ok(new_depth)
-        }
-    })
-}
-
-fn dec_eval_depth() {
-    EVAL_DEPTH.with(|d| {
-        d.set(d.get().saturating_sub(1));
-    });
-}
+pub use environment::{Environment, is_callable_value};
+pub use macro_table::{Macro, MacroTable};
+pub use thread_locals::{
+    FeatureList, set_match_data, get_match_group, inc_eval_depth, dec_eval_depth,
+};
+use thread_locals::{MATCH_DATA, MATCH_STRING, REGEX_CACHE};
 
 macro_rules! eval_next {
     ($expr:expr, $env:expr, $editor:expr, $macros:expr, $state:expr) => {{
@@ -85,174 +21,6 @@ macro_rules! eval_next {
         dec_eval_depth();
         result
     }};
-}
-
-/// Returns true when `obj` is something that can appear in function position.
-fn is_callable_value(obj: &LispObject) -> bool {
-    match obj {
-        LispObject::Primitive(_) | LispObject::BytecodeFn(_) => true,
-        LispObject::Cons(cell) => {
-            let b = cell.lock();
-            if let LispObject::Symbol(id) = &b.0 {
-                let name = crate::obarray::symbol_name(*id);
-                name == "lambda" || name == "closure"
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
-}
-
-impl Environment {
-    pub fn new() -> Self {
-        Environment {
-            bindings: HashMap::new(),
-            parent: None,
-        }
-    }
-
-    pub fn with_parent(parent: Arc<Environment>) -> Self {
-        Environment {
-            bindings: HashMap::new(),
-            parent: Some(parent),
-        }
-    }
-
-    /// Look up `name` in value position.
-    ///
-    /// Walks the lexical env chain first; if the name is unbound there,
-    /// falls back to the symbol's value cell. This implements Lisp-2
-    /// value-position semantics: global vars live in the value cell, but
-    /// lexical bindings from `let`/`lambda` shadow them.
-    pub fn get(&self, name: &str) -> Option<LispObject> {
-        let id = obarray::intern(name);
-        self.get_id(id)
-    }
-
-    pub fn get_id(&self, id: SymbolId) -> Option<LispObject> {
-        if let Some(val) = self.bindings.get(&id).cloned() {
-            return Some(val);
-        }
-        if let Some(p) = self.parent.as_ref() {
-            if let Some(val) = p.get_id(id) {
-                return Some(val);
-            }
-        }
-        // Fallback: symbol's value cell (global binding).
-        obarray::get_value_cell(id)
-    }
-
-    /// Env-only lookup: does NOT fall back to the value cell.
-    /// Use for `boundp`-style checks and `defvar` initialization.
-    pub fn get_id_local(&self, id: SymbolId) -> Option<LispObject> {
-        if let Some(val) = self.bindings.get(&id).cloned() {
-            return Some(val);
-        }
-        self.parent.as_ref().and_then(|p| p.get_id_local(id))
-    }
-
-    /// Look up `name` in function position.
-    ///
-    /// Walks the lexical env chain for a callable binding (so lexical
-    /// shadowing of functions by lambdas works); falls back to the
-    /// symbol's function cell. If a lexical binding exists but isn't
-    /// callable, we still prefer it — matches prior behaviour.
-    pub fn get_function(&self, name: &str) -> Option<LispObject> {
-        let id = obarray::intern(name);
-        self.get_function_id(id)
-    }
-
-    pub fn get_function_id(&self, id: SymbolId) -> Option<LispObject> {
-        let mut first_found: Option<LispObject> = None;
-        if let Some(val) = self.bindings.get(&id).cloned() {
-            if is_callable_value(&val) {
-                return Some(val);
-            }
-            first_found = Some(val);
-        }
-        let mut parent = self.parent.as_ref();
-        while let Some(p) = parent {
-            if let Some(val) = p.bindings.get(&id).cloned() {
-                if is_callable_value(&val) {
-                    return Some(val);
-                }
-                if first_found.is_none() {
-                    first_found = Some(val);
-                }
-            }
-            parent = p.parent.as_ref();
-        }
-        // Function-cell fallback.
-        if let Some(fn_cell) = obarray::get_function_cell(id) {
-            return Some(fn_cell);
-        }
-        first_found
-    }
-
-    pub fn set(&mut self, name: &str, value: LispObject) {
-        let id = obarray::intern(name);
-        self.bindings.insert(id, value);
-    }
-
-    pub fn set_id(&mut self, id: SymbolId, value: LispObject) {
-        self.bindings.insert(id, value);
-    }
-
-    /// Remove a local binding, if any. Used by `dlet` to restore the
-    /// "variable was unbound" state when its body exits.
-    pub fn unset_id(&mut self, id: SymbolId) {
-        self.bindings.remove(&id);
-    }
-
-    pub fn define(&mut self, name: &str, value: LispObject) {
-        let id = obarray::intern(name);
-        self.bindings.insert(id, value);
-    }
-
-    pub fn define_id(&mut self, id: SymbolId, value: LispObject) {
-        self.bindings.insert(id, value);
-    }
-
-    /// Snapshot the lexical bindings in this env and its ancestors into an
-    /// alist `((sym . val) ...)`, innermost binding wins on conflict.
-    ///
-    /// Used by `(lambda ...)` evaluation to build a lexical closure.
-    /// Stops at the root env (`parent == None`) — the root is the global
-    /// env and globals are resolved dynamically at call time, so there's
-    /// no need to copy them into every closure.
-    ///
-    /// The captured alist is a pure snapshot: subsequent mutations of the
-    /// outer env (via `setq`) are NOT reflected in already-built closures.
-    /// This matches the Lean oracle, which also snapshots `env.lex.frames`
-    /// at lambda construction.
-    pub fn capture_as_alist(&self) -> LispObject {
-        let mut seen: HashSet<SymbolId> = HashSet::new();
-        let mut pairs: Vec<(SymbolId, LispObject)> = Vec::new();
-
-        // Walk `self` first, then ancestors — but exclude the root (which
-        // is the global env; its contents are available by falling back
-        // to the global at lookup time).
-        let mut cur: Option<&Environment> = Some(self);
-        while let Some(e) = cur {
-            if e.parent.is_none() {
-                break;
-            }
-            for (id, val) in &e.bindings {
-                if seen.insert(*id) {
-                    pairs.push((*id, val.clone()));
-                }
-            }
-            cur = e.parent.as_deref();
-        }
-
-        let mut alist = LispObject::nil();
-        for (id, val) in pairs.into_iter().rev() {
-            let pair = LispObject::cons(LispObject::Symbol(id), val);
-            alist = LispObject::cons(pair, alist);
-        }
-        alist
-    }
 }
 
 /// Dynamic binding stack entry: (variable, previous value or None if unbound).
@@ -4845,10 +4613,13 @@ mod builtins;
 mod dispatch;
 mod dynamic;
 mod editor;
+mod environment;
 mod error_forms;
 mod functions;
-mod special_forms;
+mod macro_table;
 pub mod state_cl;
+mod special_forms;
+mod thread_locals;
 
 // Re-export functions used internally and externally
 use builtins::{

@@ -381,6 +381,7 @@ pub fn register_builtin_commands(registry: &mut CommandRegistry) {
         |s, args| {
             if let Some(path_str) = args.string.as_ref() {
                 let path = std::path::PathBuf::from(path_str);
+                #[allow(clippy::disallowed_methods)] // TODO(perf): make command handler async
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     s.open_file_as_buffer(path, &content);
                 }

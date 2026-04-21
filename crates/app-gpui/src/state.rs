@@ -23,39 +23,53 @@ use rele_server::syntax::{
     Highlighter, TreeSitterHighlighter, language_for_extension,
 };
 
+/// Bridges the elisp interpreter to live editor state.
+///
+/// # Safety
+/// `state` must point to a valid, pinned `MdAppState` for the entire
+/// lifetime of this callback. The install-point
+/// (`install_elisp_editor_callbacks`) takes `&mut self`, so the
+/// pointer is valid as long as the `MdAppState` that created it is
+/// alive and not moved.
 struct ElispEditorCallbacks {
-    state: *mut MdAppState,
+    state: std::ptr::NonNull<MdAppState>,
+    _exclusive: std::marker::PhantomData<*mut MdAppState>,
 }
 
+// SAFETY: the pointer targets a single MdAppState owned by the GPUI
+// main view — it is only dereferenced from the main thread via the
+// `EditorCallbacks` trait methods. The `Send + Sync` bounds come
+// from the trait; we never actually send the pointer cross-thread.
 unsafe impl Send for ElispEditorCallbacks {}
 unsafe impl Sync for ElispEditorCallbacks {}
 
 impl EditorCallbacks for ElispEditorCallbacks {
     fn buffer_string(&self) -> String {
-        unsafe { (*self.state).document.text() }
+        unsafe { self.state.as_ref().document.text() }
     }
 
     fn buffer_size(&self) -> usize {
-        unsafe { (*self.state).document.len_chars() }
+        unsafe { self.state.as_ref().document.len_chars() }
     }
 
     fn point(&self) -> usize {
-        unsafe { (*self.state).cursor.position }
+        unsafe { self.state.as_ref().cursor.position }
     }
 
     fn insert(&mut self, text: &str) {
-        unsafe { (*self.state).insert_text(text) }
+        unsafe { self.state.as_mut().insert_text(text) }
     }
 
     fn delete_char(&mut self, n: i64) {
         unsafe {
+            let s = self.state.as_mut();
             if n > 0 {
                 for _ in 0..n as usize {
-                    (*self.state).delete_forward();
+                    s.delete_forward();
                 }
             } else if n < 0 {
                 for _ in 0..(-n) as usize {
-                    (*self.state).backspace();
+                    s.backspace();
                 }
             }
         }
@@ -63,10 +77,7 @@ impl EditorCallbacks for ElispEditorCallbacks {
 
     fn goto_char(&mut self, pos: usize) {
         unsafe {
-            let s = &mut *self.state;
-            // Clamp to buffer length so subsequent rope queries
-            // (char_to_line etc.) don't panic when callers pass a
-            // position past EOF — matches the TUI's behaviour.
+            let s = self.state.as_mut();
             s.cursor.position = pos.min(s.document.len_chars());
             s.cursor.clear_selection();
         }
@@ -74,23 +85,25 @@ impl EditorCallbacks for ElispEditorCallbacks {
 
     fn forward_char(&mut self, n: i64) {
         unsafe {
+            let s = self.state.as_mut();
             if n > 0 {
                 for _ in 0..n as usize {
-                    (*self.state).move_right(false);
+                    s.move_right(false);
                 }
             } else if n < 0 {
                 for _ in 0..(-n) as usize {
-                    (*self.state).move_left(false);
+                    s.move_left(false);
                 }
             }
         }
     }
 
+    #[allow(clippy::disallowed_methods)] // TODO(perf): elisp callbacks run in cx.spawn; use spawn_blocking
     fn find_file(&mut self, path: &str) -> bool {
         unsafe {
             let path_buf = std::path::PathBuf::from(path);
             if let Ok(content) = std::fs::read_to_string(&path_buf) {
-                (*self.state).open_file_as_buffer(path_buf, &content);
+                self.state.as_mut().open_file_as_buffer(path_buf, &content);
                 true
             } else {
                 false
@@ -99,48 +112,46 @@ impl EditorCallbacks for ElispEditorCallbacks {
     }
 
     fn save_buffer(&mut self) -> bool {
-        unsafe { (*self.state).save_file_from_elisp() }
+        unsafe { self.state.as_mut().save_file_from_elisp() }
     }
 
-    // ---- Navigation primitives used by elisp defuns ----
-    // (These are what new elisp-defined navigation commands call
-    //  instead of the hardcoded Rust command-registry closures.)
     fn point_min(&self) -> usize {
         0
     }
     fn point_max(&self) -> usize {
-        unsafe { (*self.state).document.len_chars() }
+        unsafe { self.state.as_ref().document.len_chars() }
     }
     fn forward_line(&mut self, n: i64) {
         unsafe {
+            let s = self.state.as_mut();
             if n > 0 {
                 for _ in 0..n as usize {
-                    (*self.state).move_down(false);
+                    s.move_down(false);
                 }
             } else if n < 0 {
                 for _ in 0..(-n) as usize {
-                    (*self.state).move_up(false);
+                    s.move_up(false);
                 }
             }
         }
     }
     fn move_beginning_of_line(&mut self) {
-        unsafe { (*self.state).move_to_line_start(false) }
+        unsafe { self.state.as_mut().move_to_line_start(false) }
     }
     fn move_end_of_line(&mut self) {
-        unsafe { (*self.state).move_to_line_end(false) }
+        unsafe { self.state.as_mut().move_to_line_end(false) }
     }
     fn move_beginning_of_buffer(&mut self) {
-        unsafe { (*self.state).move_to_doc_start(false) }
+        unsafe { self.state.as_mut().move_to_doc_start(false) }
     }
     fn move_end_of_buffer(&mut self) {
-        unsafe { (*self.state).move_to_doc_end(false) }
+        unsafe { self.state.as_mut().move_to_doc_end(false) }
     }
     fn undo(&mut self) {
-        unsafe { (*self.state).undo() }
+        unsafe { self.state.as_mut().undo() }
     }
     fn redo(&mut self) {
-        unsafe { (*self.state).redo() }
+        unsafe { self.state.as_mut().redo() }
     }
 }
 
@@ -554,8 +565,12 @@ impl MdAppState {
     /// Calling this function when `self` will later be moved is
     /// Undefined Behaviour.
     pub fn install_elisp_editor_callbacks(&mut self) {
+        // SAFETY: `self` is pinned in the GPUI view for the lifetime
+        // of the application. The pointer is only dereferenced from
+        // the main thread via EditorCallbacks methods.
         let callbacks = Box::new(ElispEditorCallbacks {
-            state: self as *mut MdAppState,
+            state: std::ptr::NonNull::from(&mut *self),
+            _exclusive: std::marker::PhantomData,
         });
         self.elisp.set_editor(callbacks);
         // Load the shared elisp command definitions — same `.el`
@@ -685,6 +700,7 @@ impl MdAppState {
     /// Create a file-backed buffer. Returns the id. Does not switch to it.
     /// If a buffer already exists for the same canonical path, returns its id
     /// without creating a duplicate.
+    #[allow(clippy::disallowed_methods)] // TODO(perf): canonicalize in callers' async context
     pub fn create_file_buffer(&mut self, path: PathBuf, content: &str) -> BufferId {
         // Canonicalize for reliable deduping (handles "./foo" vs "foo" etc.)
         let canonical = std::fs::canonicalize(&path).unwrap_or(path);
@@ -906,6 +922,7 @@ impl MdAppState {
 
     /// Open a file as a buffer. If a buffer for this path already exists,
     /// switches to it instead of creating a duplicate.
+    #[allow(clippy::disallowed_methods)] // TODO(perf): canonicalize in callers' async context
     pub fn open_file_as_buffer(&mut self, path: PathBuf, content: &str) -> BufferId {
         let canonical = std::fs::canonicalize(&path).unwrap_or(path);
         if let Some(id) = self.find_buffer_by_path(&canonical) {
@@ -967,6 +984,7 @@ impl MdAppState {
                         .unwrap_or_else(|_| PathBuf::from("."))
                         .join(raw)
                 };
+                #[allow(clippy::disallowed_methods)] // TODO(perf): make minibuffer_dispatch async
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     self.open_file_as_buffer(path, &content);
                 }
@@ -1069,6 +1087,7 @@ impl MdAppState {
 
     /// Open a dired buffer for the given directory. Creates a new buffer
     /// or switches to an existing dired buffer for the same path.
+    #[allow(clippy::disallowed_methods)] // TODO(perf): canonicalize in callers' async context
     pub fn dired_open(&mut self, path: PathBuf) {
         let canonical = std::fs::canonicalize(&path).unwrap_or(path);
 
@@ -1169,6 +1188,7 @@ impl MdAppState {
 
     /// Open the selected entry. If a directory, recurse into dired.
     /// If a file, open it as a buffer.
+    #[allow(clippy::disallowed_methods)] // TODO(perf): make dired_open_selected async
     pub fn dired_open_selected(&mut self) {
         if self.current_buffer_kind != BufferKind::Dired {
             return;
@@ -1240,6 +1260,7 @@ impl MdAppState {
     }
 
     /// Actually delete the marked files. Called after YesNo confirmation.
+    #[allow(clippy::disallowed_methods)] // TODO(perf): make dired_perform_marked_deletes async
     fn dired_perform_marked_deletes(&mut self) {
         if self.current_buffer_kind != BufferKind::Dired {
             return;
@@ -3503,6 +3524,7 @@ impl MdAppState {
     }
 
     /// Jump to an LSP location (open file + move cursor).
+    #[allow(clippy::disallowed_methods)] // TODO(perf): make jump_to_lsp_location async
     fn jump_to_lsp_location(&mut self, location: &lsp_types::Location) {
         let uri_str = location.uri.as_str();
         if let Some(path_str) = uri_str.strip_prefix("file://") {
@@ -3607,6 +3629,7 @@ impl Default for MdAppState {
 
 /// List entries in a directory for find-file completion.
 /// Directories are suffixed with "/" to make them visually distinct.
+#[allow(clippy::disallowed_methods)] // TODO(perf): make list_directory_entries async
 fn list_directory_entries(dir: &Path) -> Vec<String> {
     let mut out = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {

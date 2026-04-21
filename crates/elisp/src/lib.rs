@@ -6,14 +6,7 @@ pub mod gc;
 pub mod jit;
 pub mod obarray;
 mod object;
-mod primitives;
-mod primitives_buffer;
-pub mod primitives_cl;
-pub mod primitives_eieio;
-mod primitives_file;
-pub mod primitives_modules;
-mod primitives_value;
-mod primitives_window;
+pub mod primitives;
 mod reader;
 pub mod value;
 pub mod vm;
@@ -22,7 +15,17 @@ pub use error::{ElispError, ElispResult};
 pub use eval::Interpreter;
 pub use object::{global_cons_count, BytecodeFunction, LispObject};
 pub use primitives::add_primitives;
+pub use primitives::core::call_primitive;
 pub use reader::{detect_lexical_binding, read, read_all};
+
+// Re-export primitives submodules at crate root for compatibility
+pub use primitives::primitives_buffer;
+pub use primitives::primitives_cl;
+pub use primitives::primitives_eieio;
+pub use primitives::primitives_file;
+pub use primitives::primitives_modules;
+pub use primitives::primitives_value;
+pub use primitives::primitives_window;
 
 /// Does `name` resolve to a user-authored callable (defun / defmacro
 /// / bytecode) rather than a built-in primitive?

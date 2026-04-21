@@ -20,14 +20,17 @@ use crate::windows::{SplitSize, Window, WindowContent};
 
 /// Bridge the elisp interpreter uses to manipulate the active buffer.
 ///
-/// Holds a raw pointer to `TuiAppState`. Safety contract:
-/// `TuiAppState` must live in stable memory (not moved) for the
-/// lifetime of this callback — the TUI's `main()` keeps it on the
-/// stack inside `event_loop`, which doesn't move the value. If that
-/// invariant changes (e.g. we start boxing or returning state), the
-/// install-point needs updating.
+/// Bridges the elisp interpreter to live editor state.
+///
+/// # Safety
+/// `state` must point to a valid, pinned `TuiAppState` for the
+/// entire lifetime of this callback. The TUI's `main()` keeps state
+/// on the stack inside `event_loop`, which doesn't move the value.
+/// If that invariant changes (e.g. we start boxing or returning
+/// state), the install-point needs updating.
 struct ElispEditorCallbacks {
-    state: *mut TuiAppState,
+    state: std::ptr::NonNull<TuiAppState>,
+    _exclusive: std::marker::PhantomData<*mut TuiAppState>,
 }
 
 // SAFETY: TuiAppState lives for the whole process on a single thread
@@ -41,34 +44,35 @@ unsafe impl Sync for ElispEditorCallbacks {}
 impl EditorCallbacks for ElispEditorCallbacks {
     // ---- Queries ----
     fn buffer_string(&self) -> String {
-        unsafe { (*self.state).document.text() }
+        unsafe { self.state.as_ref().document.text() }
     }
     fn buffer_size(&self) -> usize {
-        unsafe { (*self.state).document.len_chars() }
+        unsafe { self.state.as_ref().document.len_chars() }
     }
     fn point(&self) -> usize {
-        unsafe { (*self.state).cursor.position }
+        unsafe { self.state.as_ref().cursor.position }
     }
     fn point_min(&self) -> usize {
         0
     }
     fn point_max(&self) -> usize {
-        unsafe { (*self.state).document.len_chars() }
+        unsafe { self.state.as_ref().document.len_chars() }
     }
 
     // ---- Mutations ----
     fn insert(&mut self, text: &str) {
-        unsafe { (*self.state).insert_text(text) }
+        unsafe { self.state.as_mut().insert_text(text) }
     }
     fn delete_char(&mut self, n: i64) {
         unsafe {
+            let s = self.state.as_mut();
             if n > 0 {
                 for _ in 0..n as usize {
-                    (*self.state).delete_forward();
+                    s.delete_forward();
                 }
             } else if n < 0 {
                 for _ in 0..(-n) as usize {
-                    (*self.state).backspace();
+                    s.backspace();
                 }
             }
         }
@@ -78,7 +82,7 @@ impl EditorCallbacks for ElispEditorCallbacks {
             let path_buf = std::path::PathBuf::from(path);
             #[allow(clippy::disallowed_methods)] // user-initiated
             if let Ok(content) = std::fs::read_to_string(&path_buf) {
-                (*self.state).open_file_as_buffer(path_buf, &content);
+                self.state.as_mut().open_file_as_buffer(path_buf, &content);
                 true
             } else {
                 false
@@ -86,62 +90,64 @@ impl EditorCallbacks for ElispEditorCallbacks {
         }
     }
     fn save_buffer(&mut self) -> bool {
-        unsafe { (*self.state).save_file().is_ok() }
+        unsafe { self.state.as_mut().save_file().is_ok() }
     }
 
     // ---- Navigation ----
     fn goto_char(&mut self, pos: usize) {
         unsafe {
-            let s = &mut *self.state;
+            let s = self.state.as_mut();
             s.cursor.position = pos.min(s.document.len_chars());
             s.cursor.clear_selection();
         }
     }
     fn forward_char(&mut self, n: i64) {
         unsafe {
+            let s = self.state.as_mut();
             if n > 0 {
                 for _ in 0..n as usize {
-                    (*self.state).move_right(false);
+                    s.move_right(false);
                 }
             } else if n < 0 {
                 for _ in 0..(-n) as usize {
-                    (*self.state).move_left(false);
+                    s.move_left(false);
                 }
             }
         }
     }
     fn forward_line(&mut self, n: i64) {
         unsafe {
+            let s = self.state.as_mut();
             if n > 0 {
                 for _ in 0..n as usize {
-                    (*self.state).move_down(false);
+                    s.move_down(false);
                 }
             } else if n < 0 {
                 for _ in 0..(-n) as usize {
-                    (*self.state).move_up(false);
+                    s.move_up(false);
                 }
             }
         }
     }
     fn move_beginning_of_line(&mut self) {
-        unsafe { (*self.state).move_to_line_start(false) }
+        unsafe { self.state.as_mut().move_to_line_start(false) }
     }
     fn move_end_of_line(&mut self) {
-        unsafe { (*self.state).move_to_line_end(false) }
+        unsafe { self.state.as_mut().move_to_line_end(false) }
     }
     fn move_beginning_of_buffer(&mut self) {
-        unsafe { (*self.state).move_to_buffer_start(false) }
+        unsafe { self.state.as_mut().move_to_buffer_start(false) }
     }
     fn move_end_of_buffer(&mut self) {
-        unsafe { (*self.state).move_to_buffer_end(false) }
+        unsafe { self.state.as_mut().move_to_buffer_end(false) }
     }
 
     // ---- Edit history ----
     fn undo(&mut self) {
-        unsafe { (*self.state).undo() }
+        unsafe { self.state.as_mut().undo() }
     }
     fn redo(&mut self) {
-        unsafe { (*self.state).redo() }
+        unsafe { self.state.as_mut().redo() }
     }
 }
 
@@ -781,8 +787,12 @@ impl TuiAppState {
     /// Called once from `run_tui` in `main.rs` right before entering
     /// the event loop.
     pub fn install_elisp_editor_callbacks(&mut self) {
+        // SAFETY: `self` lives on the stack in the event loop for
+        // the duration of the program. The pointer is only ever
+        // dereferenced from the same thread.
         let callbacks = Box::new(ElispEditorCallbacks {
-            state: self as *mut TuiAppState,
+            state: std::ptr::NonNull::from(&mut *self),
+            _exclusive: std::marker::PhantomData,
         });
         self.elisp.set_editor(callbacks);
         // Load the built-in elisp command definitions (navigation,
@@ -1796,8 +1806,10 @@ mod tests {
         // Scratch buffer — no file path. save_file must fail.
         assert!(s.document.file_path().is_none());
 
-        let state_ptr: *mut TuiAppState = &mut s;
-        let mut cb = ElispEditorCallbacks { state: state_ptr };
+        let mut cb = ElispEditorCallbacks {
+            state: std::ptr::NonNull::from(&mut s),
+            _exclusive: std::marker::PhantomData,
+        };
 
         assert!(
             !cb.save_buffer(),
