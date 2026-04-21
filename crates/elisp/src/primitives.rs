@@ -1182,6 +1182,32 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "load-history-filename-element",
         LispObject::primitive("load-history-filename-element"),
     );
+
+    // R23: ERT `ert-test` struct introspection stubs. Wrappers like
+    // tramp--test-deftest-with-stat and erc-scenarios-common--make-bindings
+    // call (ert-test-tags (ert-running-test)) and
+    // (ert-test-body (ert-get-test 'X)). Real Emacs's cl-defstruct
+    // accessors signal `wrong-type-argument: (ert-test nil)` on nil
+    // arguments, which fires 61 times in the round-2 baseline. These
+    // primitives accept nil gracefully and unpack our internal
+    // `(rele-ert-test NAME TAGS DOC BODY FILE)` tagged-list shape.
+    for name in [
+        "ert-get-test",
+        "ert-test-boundp",
+        "ert-running-test",
+        "ert-test-name",
+        "ert-test-tags",
+        "ert-test-body",
+        "ert-test-most-recent-result",
+        "ert-test-expected-result-type",
+        "ert-test-documentation",
+        "ert-test-file-name",
+        "ert-test-result-duration",
+        "ert-fail",
+        "ert-skip",
+    ] {
+        interp.define(name, LispObject::primitive(name));
+    }
 }
 
 pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> {
@@ -2012,6 +2038,32 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
             Ok(LispObject::nil())
         }
         "load-history-filename-element" => prim_load_history_filename_element(args),
+
+        // R23: ERT `ert-test` struct introspection stubs.
+        //
+        // Real Emacs `cl-defstruct ert-test ...` creates accessors that
+        // signal `wrong-type-argument: (ert-test nil)` when called with
+        // nil. Test files routinely chain them:
+        //   (ert-test-tags (ert-running-test))
+        //   (ert-test-body (ert-get-test 'name))
+        // which blows up 61 times across tramp-tests and erc-scenarios
+        // when we can't resolve a test or aren't "inside" one. These
+        // stubs accept nil gracefully and understand our internal
+        // ert-test shape: a tagged list `(rele-ert-test NAME TAGS DOC
+        // BODY FILE)`.
+        "ert-get-test" => prim_ert_get_test(args),
+        "ert-test-boundp" => prim_ert_test_boundp(args),
+        "ert-running-test" => prim_ert_running_test(args),
+        "ert-test-name" => prim_ert_test_name(args),
+        "ert-test-tags" => prim_ert_test_tags(args),
+        "ert-test-body" => prim_ert_test_body(args),
+        "ert-test-most-recent-result" => Ok(LispObject::nil()),
+        "ert-test-expected-result-type" => Ok(LispObject::symbol(":passed")),
+        "ert-test-documentation" => prim_ert_test_documentation(args),
+        "ert-test-file-name" => prim_ert_test_file_name(args),
+        "ert-test-result-duration" => Ok(LispObject::integer(0)),
+        "ert-fail" => prim_ert_fail(args),
+        "ert-skip" => prim_ert_skip(args),
 
         _ => Err(ElispError::VoidFunction(name.to_string())),
     }
@@ -5633,6 +5685,197 @@ fn prim_load_history_filename_element(args: &LispObject) -> ElispResult<LispObje
     }
 
     Ok(LispObject::nil())
+}
+
+// ---------------------------------------------------------------------------
+// R23: ERT `ert-test` struct stubs.
+//
+// Several real-Emacs test files (tramp-tests.el, erc-scenarios-*.el) call
+// `ert-deftest` wrapper macros that introspect the current test via
+// `(ert-test-tags (ert-running-test))` and `(ert-test-body (ert-get-test
+// 'name))`. Real Emacs's `cl-defstruct ert-test` accessors signal
+// `wrong-type-argument: (ert-test nil)` when the chain starts with a nil
+// lookup — this fired 61 times in the round-2 baseline (20 × tramp,
+// ≈40 × erc-scenarios).
+//
+// Our harness doesn't load enough of ert.el for those accessors to
+// exist, but nothing stops ert.el from being loaded later (and an early
+// partial load could still define them). These Rust-side stubs are the
+// durable fix: registered via `add_primitives`, they survive any ert.el
+// load and intercept the chain before it can signal.
+//
+// Representation: our `ert-deftest` stores `(rele-ert-test NAME TAGS
+// DOCSTRING BODY FILE)` on the symbol's `ert--test` plist entry. The
+// accessors below recognise that shape, fall back to `nil` on any
+// non-list, and treat `nil` itself as benign.
+
+/// Tag used on the head of our fake ert-test list.
+const RELE_ERT_TEST_TAG: &str = "rele-ert-test";
+
+thread_local! {
+    /// The `ert-test` struct object for the currently-running test, or
+    /// nil when no test is active. Set by the runner around each
+    /// `(funcall BODY)` call.
+    pub(crate) static CURRENT_ERT_TEST: std::cell::RefCell<LispObject>
+        = std::cell::RefCell::new(LispObject::nil());
+}
+
+/// Record the `ert-test` struct for the currently-running test. Pass
+/// nil to clear it.
+pub fn set_current_ert_test(test: LispObject) {
+    CURRENT_ERT_TEST.with(|cell| *cell.borrow_mut() = test);
+}
+
+/// Build the shared ert-test object for a test registered via
+/// `ert-deftest`. `tags` is the `:tags` form (nil if absent). `body`
+/// is the captured closure so `(funcall (ert-test-body ...))` works
+/// from wrapper macros.
+pub fn make_ert_test_obj(
+    name: &str,
+    tags: LispObject,
+    docstring: LispObject,
+    body: LispObject,
+) -> LispObject {
+    // (rele-ert-test NAME TAGS DOC BODY FILE)
+    let mut tail = LispObject::nil();
+    tail = LispObject::cons(LispObject::nil(), tail); // FILE slot
+    tail = LispObject::cons(body, tail);
+    tail = LispObject::cons(docstring, tail);
+    tail = LispObject::cons(tags, tail);
+    tail = LispObject::cons(LispObject::symbol(name), tail);
+    LispObject::cons(LispObject::symbol(RELE_ERT_TEST_TAG), tail)
+}
+
+/// Destructure a `(rele-ert-test NAME TAGS DOC BODY FILE)` cons into
+/// its five slots. Returns `None` if the value is nil, isn't a cons,
+/// or isn't tagged as a rele ert-test.
+fn unpack_rele_ert_test(
+    obj: &LispObject,
+) -> Option<(LispObject, LispObject, LispObject, LispObject, LispObject)> {
+    let (head, rest) = obj.destructure_cons()?;
+    if head.as_symbol().as_deref() != Some(RELE_ERT_TEST_TAG) {
+        return None;
+    }
+    let (name, rest) = rest.destructure_cons()?;
+    let (tags, rest) = rest.destructure_cons()?;
+    let (doc, rest) = rest.destructure_cons()?;
+    let (body, rest) = rest.destructure_cons()?;
+    let file = rest.destructure_cons().map(|(f, _)| f).unwrap_or_else(LispObject::nil);
+    Some((name, tags, doc, body, file))
+}
+
+fn prim_ert_get_test(args: &LispObject) -> ElispResult<LispObject> {
+    // (ert-get-test SYMBOL) — real Emacs signals an error if SYMBOL
+    // isn't a test. We return nil instead so `(if-let ((x (ert-get-test
+    // ...))) ...)` takes the else-branch cleanly rather than blowing up.
+    let sym = match args.first().and_then(|a| a.as_symbol_id()) {
+        Some(s) => s,
+        None => return Ok(LispObject::nil()),
+    };
+    let key = crate::obarray::intern("ert--test");
+    let v = crate::obarray::get_plist(sym, key);
+    if v.is_nil() {
+        Ok(LispObject::nil())
+    } else {
+        Ok(v)
+    }
+}
+
+fn prim_ert_test_boundp(args: &LispObject) -> ElispResult<LispObject> {
+    // (ert-test-boundp SYMBOL) — non-nil iff SYMBOL names a test.
+    let sym = match args.first().and_then(|a| a.as_symbol_id()) {
+        Some(s) => s,
+        None => return Ok(LispObject::nil()),
+    };
+    let key = crate::obarray::intern("ert--test");
+    if crate::obarray::get_plist(sym, key).is_nil() {
+        Ok(LispObject::nil())
+    } else {
+        Ok(LispObject::t())
+    }
+}
+
+fn prim_ert_running_test(_args: &LispObject) -> ElispResult<LispObject> {
+    // (ert-running-test) — return the ert-test object for the
+    // currently-executing test, or nil if none. Unlike real Emacs, this
+    // NEVER signals: callers that chain accessors (common in
+    // erc-scenarios-common--make-bindings) see a well-formed nil here
+    // rather than an unbound variable error.
+    Ok(CURRENT_ERT_TEST.with(|cell| cell.borrow().clone()))
+}
+
+fn prim_ert_test_name(args: &LispObject) -> ElispResult<LispObject> {
+    let obj = args.first().unwrap_or_else(LispObject::nil);
+    if obj.is_nil() {
+        return Ok(LispObject::nil());
+    }
+    if let Some((name, _, _, _, _)) = unpack_rele_ert_test(&obj) {
+        return Ok(name);
+    }
+    Ok(LispObject::nil())
+}
+
+fn prim_ert_test_tags(args: &LispObject) -> ElispResult<LispObject> {
+    let obj = args.first().unwrap_or_else(LispObject::nil);
+    if obj.is_nil() {
+        return Ok(LispObject::nil());
+    }
+    if let Some((_, tags, _, _, _)) = unpack_rele_ert_test(&obj) {
+        return Ok(tags);
+    }
+    Ok(LispObject::nil())
+}
+
+fn prim_ert_test_body(args: &LispObject) -> ElispResult<LispObject> {
+    let obj = args.first().unwrap_or_else(LispObject::nil);
+    if obj.is_nil() {
+        return Ok(LispObject::nil());
+    }
+    if let Some((_, _, _, body, _)) = unpack_rele_ert_test(&obj) {
+        return Ok(body);
+    }
+    Ok(LispObject::nil())
+}
+
+fn prim_ert_test_documentation(args: &LispObject) -> ElispResult<LispObject> {
+    let obj = args.first().unwrap_or_else(LispObject::nil);
+    if obj.is_nil() {
+        return Ok(LispObject::nil());
+    }
+    if let Some((_, _, doc, _, _)) = unpack_rele_ert_test(&obj) {
+        return Ok(doc);
+    }
+    Ok(LispObject::nil())
+}
+
+fn prim_ert_test_file_name(args: &LispObject) -> ElispResult<LispObject> {
+    let obj = args.first().unwrap_or_else(LispObject::nil);
+    if obj.is_nil() {
+        return Ok(LispObject::nil());
+    }
+    if let Some((_, _, _, _, file)) = unpack_rele_ert_test(&obj) {
+        return Ok(file);
+    }
+    Ok(LispObject::nil())
+}
+
+fn prim_ert_fail(args: &LispObject) -> ElispResult<LispObject> {
+    // (ert-fail DATA) — signal `ert-test-failed` with DATA.
+    let data = args.first().unwrap_or_else(LispObject::nil);
+    Err(ElispError::Signal(Box::new(crate::error::SignalData {
+        symbol: LispObject::symbol("ert-test-failed"),
+        data: LispObject::cons(data, LispObject::nil()),
+    })))
+}
+
+fn prim_ert_skip(args: &LispObject) -> ElispResult<LispObject> {
+    // (ert-skip &optional DATA) — signal `ert-test-skipped` so the
+    // runner reports the test as skipped.
+    let data = args.first().unwrap_or_else(LispObject::nil);
+    Err(ElispError::Signal(Box::new(crate::error::SignalData {
+        symbol: LispObject::symbol("ert-test-skipped"),
+        data: LispObject::cons(data, LispObject::nil()),
+    })))
 }
 
 #[cfg(test)]
