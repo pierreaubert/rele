@@ -27,9 +27,50 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub type BufferId = usize;
+pub type OverlayId = usize;
 
 static NEXT_BUFFER_ID: AtomicUsize = AtomicUsize::new(1);
 static NEXT_MARKER_ID: AtomicUsize = AtomicUsize::new(1);
+static NEXT_OVERLAY_ID: AtomicUsize = AtomicUsize::new(1);
+
+/// In-memory overlay. Owned by the [`Registry`] and keyed by
+/// [`OverlayId`]. Elisp-side, an overlay is represented as
+/// `(overlay . <OverlayId>)` — mirroring the marker representation.
+///
+/// Only the parts of the Emacs overlay protocol exercised by the
+/// `buffer-tests` / `overlay-tests` fixtures are modelled: start/end
+/// positions, front/rear advance flags, a property list, and the owning
+/// buffer id. There's no overlay tree / priority / no-redisplay logic
+/// because the rele elisp layer isn't a display engine.
+#[derive(Debug, Clone)]
+pub struct Overlay {
+    pub id: OverlayId,
+    pub buffer: BufferId,
+    /// 1-based inclusive start. `None` after `delete-overlay`.
+    pub start: Option<usize>,
+    /// 1-based exclusive end. `None` after `delete-overlay`.
+    pub end: Option<usize>,
+    pub front_advance: bool,
+    pub rear_advance: bool,
+    /// Property list as flat `Vec<(key, value)>` (avoids locking order
+    /// subtleties of a real alist).
+    pub plist: Vec<(crate::object::LispObject, crate::object::LispObject)>,
+}
+
+impl Overlay {
+    fn new(id: OverlayId, buffer: BufferId, start: usize, end: usize, fa: bool, ra: bool) -> Self {
+        let (a, b) = if start <= end { (start, end) } else { (end, start) };
+        Self {
+            id,
+            buffer,
+            start: Some(a),
+            end: Some(b),
+            front_advance: fa,
+            rear_advance: ra,
+            plist: Vec::new(),
+        }
+    }
+}
 
 /// Match data saved by the last successful regex search. Shared
 /// per-thread (real Emacs: per-buffer, but overwhelmingly the tests
@@ -276,6 +317,10 @@ pub struct Registry {
     pub buffers: HashMap<BufferId, StubBuffer>,
     pub by_name: HashMap<String, BufferId>,
     pub markers: HashMap<usize, Marker>,
+    /// All overlays ever created in this registry, keyed by id. Deleted
+    /// overlays keep their entry but with `start`/`end` set to `None`
+    /// (Emacs: "detached overlay") so `overlayp` still works.
+    pub overlays: HashMap<OverlayId, Overlay>,
     /// Stack of currently active buffer ids. Top is `current-buffer`.
     /// Always has at least one entry (the default `*scratch*`).
     pub stack: Vec<BufferId>,
@@ -407,6 +452,98 @@ impl Registry {
                 m.position = pos;
             })
             .or_insert(Marker { id, buffer, position: pos });
+    }
+
+    /// Create a fresh overlay in `buffer` spanning `[start, end)`.
+    /// Returns its id.
+    pub fn make_overlay(
+        &mut self,
+        buffer: BufferId,
+        start: usize,
+        end: usize,
+        front_advance: bool,
+        rear_advance: bool,
+    ) -> OverlayId {
+        let id = NEXT_OVERLAY_ID.fetch_add(1, Ordering::Relaxed);
+        let ov = Overlay::new(id, buffer, start, end, front_advance, rear_advance);
+        self.overlays.insert(id, ov);
+        id
+    }
+
+    pub fn overlay_get(&self, id: OverlayId) -> Option<&Overlay> {
+        self.overlays.get(&id)
+    }
+
+    pub fn overlay_get_mut(&mut self, id: OverlayId) -> Option<&mut Overlay> {
+        self.overlays.get_mut(&id)
+    }
+
+    /// Collect every *live* overlay in `buffer` that covers position
+    /// `pos`. Emacs semantics: an overlay `[S, E)` covers `P` iff
+    /// `S <= P < E`. A zero-length overlay (`S == E`) covers `P` iff
+    /// `P == S` — but only if the overlay is *empty* (tests call
+    /// `overlays-at` at the inner points).
+    ///
+    /// Order of the returned ids is unspecified (callers must not
+    /// depend on it — the test-suite `deftest-overlays-at-1` only
+    /// checks list length and membership).
+    pub fn overlays_at(&self, buffer: BufferId, pos: usize) -> Vec<OverlayId> {
+        let mut out = Vec::new();
+        for ov in self.overlays.values() {
+            if ov.buffer != buffer {
+                continue;
+            }
+            let Some(s) = ov.start else { continue };
+            let Some(e) = ov.end else { continue };
+            let covers = if s == e { pos == s } else { pos >= s && pos < e };
+            if covers {
+                out.push(ov.id);
+            }
+        }
+        out
+    }
+
+    /// Collect every *live* overlay in `buffer` that overlaps the
+    /// half-open range `[beg, end)`. Emacs includes an overlay iff its
+    /// span shares at least one position with the range; zero-length
+    /// overlays exactly at `beg` or `end` also count.
+    pub fn overlays_in(&self, buffer: BufferId, beg: usize, end: usize) -> Vec<OverlayId> {
+        let (b, e) = if beg <= end { (beg, end) } else { (end, beg) };
+        let mut out = Vec::new();
+        for ov in self.overlays.values() {
+            if ov.buffer != buffer {
+                continue;
+            }
+            let Some(s) = ov.start else { continue };
+            let Some(ee) = ov.end else { continue };
+            let overlaps = if s == ee {
+                // Zero-length overlay: lies in [b, e] inclusive.
+                s >= b && s <= e
+            } else if b == e {
+                // Zero-length query range: include any overlay whose
+                // span contains b (inclusive of the end boundary too,
+                // matching real Emacs at the edge case).
+                b >= s && b <= ee
+            } else {
+                s < e && ee > b
+            };
+            if overlaps {
+                out.push(ov.id);
+            }
+        }
+        out
+    }
+
+    /// Mark an overlay detached. Returns true if the id existed.
+    pub fn delete_overlay(&mut self, id: OverlayId) -> bool {
+        match self.overlays.get_mut(&id) {
+            Some(ov) => {
+                ov.start = None;
+                ov.end = None;
+                true
+            }
+            None => false,
+        }
     }
 }
 
