@@ -114,9 +114,7 @@ fn rust_analyzer_end_to_end() {
         }],
     };
     let mut registry = LspRegistry::new(config);
-    let mut rx = registry
-        .take_event_receiver()
-        .expect("event receiver");
+    let mut rx = registry.take_event_receiver().expect("event receiver");
 
     // 3. Start the server for this file. Returns immediately; init runs in
     //    the background and produces a ServerStarted event when done.
@@ -178,8 +176,7 @@ fn rust_analyzer_end_to_end() {
     //    assert on the diagnostics that follow because rust-analyzer tags
     //    in-flight diagnostics with the latest known version, which makes
     //    the "did the error clear?" check racy in practice.
-    let fixed_text =
-        "fn main() {\n    println!(\"hi\");\n    let _x: u32 = 0;\n}\n".to_string();
+    let fixed_text = "fn main() {\n    println!(\"hi\");\n    let _x: u32 = 0;\n}\n".to_string();
     let client = registry.client(&server_name).unwrap();
     let uri_for_change = uri.clone();
     let fixed_for_change = fixed_text.clone();

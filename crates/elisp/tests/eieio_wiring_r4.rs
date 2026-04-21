@@ -5,9 +5,9 @@
 //!    normal function-call dispatch path (the wiring in `functions.rs`).
 //! 2. `(eql A B)` implements Emacs/CL structural-equality semantics.
 
+use rele_elisp::LispObject;
 use rele_elisp::add_primitives;
 use rele_elisp::eval::Interpreter;
-use rele_elisp::LispObject;
 
 // ---- helper ----------------------------------------------------------
 
@@ -46,7 +46,11 @@ fn keyword_call_returns_slot_value() {
           (:name obj))
         "#,
     );
-    assert_eq!(result.as_string().map(|s| s.as_str()), Some("Cat"), "expected slot 'name' to be 'Cat'");
+    assert_eq!(
+        result.as_string().map(|s| s.as_str()),
+        Some("Cat"),
+        "expected slot 'name' to be 'Cat'"
+    );
 }
 
 /// When multiple slots exist, only the matching keyword is returned.

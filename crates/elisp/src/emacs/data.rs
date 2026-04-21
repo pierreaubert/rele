@@ -98,30 +98,70 @@ impl SubrArity {
 pub fn subr_arity(name: &str) -> Option<SubrArity> {
     Some(match name {
         // data.c
-        "car" | "cdr" | "car-safe" | "cdr-safe" | "not" | "null" | "atom"
-        | "symbolp" | "stringp" | "consp" | "listp" | "nlistp" | "numberp"
-        | "integerp" | "floatp" | "natnump" | "zerop" | "keywordp"
-        | "subrp" | "functionp" | "arrayp" | "sequencep" | "bufferp"
-        | "markerp" | "vectorp" | "booleanp" | "characterp" | "hash-table-p"
-        | "byte-code-function-p" | "char-or-string-p" | "symbol-name"
-        | "symbol-plist" | "symbol-function" | "symbol-value"
-        | "type-of" | "1+" | "1-" | "lognot" | "logcount" | "float"
-        | "identity" | "cadr" | "cddr"
-        | "caar" | "cdar" | "safe-length" | "length"
-        | "indirect-function" | "subr-name" | "subr-arity" => SubrArity::fixed(1),
+        "car"
+        | "cdr"
+        | "car-safe"
+        | "cdr-safe"
+        | "not"
+        | "null"
+        | "atom"
+        | "symbolp"
+        | "stringp"
+        | "consp"
+        | "listp"
+        | "nlistp"
+        | "numberp"
+        | "integerp"
+        | "floatp"
+        | "natnump"
+        | "zerop"
+        | "keywordp"
+        | "subrp"
+        | "functionp"
+        | "arrayp"
+        | "sequencep"
+        | "bufferp"
+        | "markerp"
+        | "vectorp"
+        | "booleanp"
+        | "characterp"
+        | "hash-table-p"
+        | "byte-code-function-p"
+        | "char-or-string-p"
+        | "symbol-name"
+        | "symbol-plist"
+        | "symbol-function"
+        | "symbol-value"
+        | "type-of"
+        | "1+"
+        | "1-"
+        | "lognot"
+        | "logcount"
+        | "float"
+        | "identity"
+        | "cadr"
+        | "cddr"
+        | "caar"
+        | "cdar"
+        | "safe-length"
+        | "length"
+        | "indirect-function"
+        | "subr-name"
+        | "subr-arity" => SubrArity::fixed(1),
 
-        "cons" | "eq" | "equal" | "=" | "<" | ">" | "<=" | ">="
-        | "/=" | "setcar" | "setcdr" | "setplist" | "fset" | "defalias"
-        | "aref" | "assq" | "assoc" | "memq" | "member" | "nth"
-        | "nthcdr" | "elt" | "mod" | "%" | "ash" | "put" | "get"
-        | "plist-get" | "plist-member" | "string=" | "string<"
-        | "rassq" | "rassoc" | "remhash" | "last" => SubrArity::fixed(2),
+        "cons" | "eq" | "equal" | "=" | "<" | ">" | "<=" | ">=" | "/=" | "setcar" | "setcdr"
+        | "setplist" | "fset" | "defalias" | "aref" | "assq" | "assoc" | "memq" | "member"
+        | "nth" | "nthcdr" | "elt" | "mod" | "%" | "ash" | "put" | "get" | "plist-get"
+        | "plist-member" | "string=" | "string<" | "rassq" | "rassoc" | "remhash" | "last" => {
+            SubrArity::fixed(2)
+        }
 
         "aset" | "plist-put" | "substring" | "define-key" => SubrArity::fixed(3),
 
-        "+" | "-" | "*" | "max" | "min" | "logand" | "logior" | "logxor"
-        | "list" | "append" | "concat" | "vconcat" | "nconc"
-        | "format" | "message" | "error" | "signal" => SubrArity::MANY,
+        "+" | "-" | "*" | "max" | "min" | "logand" | "logior" | "logxor" | "list" | "append"
+        | "concat" | "vconcat" | "nconc" | "format" | "message" | "error" | "signal" => {
+            SubrArity::MANY
+        }
 
         _ => return None,
     })

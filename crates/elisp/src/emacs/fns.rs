@@ -64,7 +64,11 @@ pub fn substring(s: &str, from: usize, to: Option<usize>) -> Option<String> {
         None => s.len(),
         Some(end) => {
             if end <= from {
-                return if end == from { Some(String::new()) } else { None };
+                return if end == from {
+                    Some(String::new())
+                } else {
+                    None
+                };
             }
             let skip = end - from - 1;
             // char_indices is already positioned after `from`, advance to `end`

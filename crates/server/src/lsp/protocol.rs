@@ -98,9 +98,8 @@ impl LspTransport {
     }
 
     async fn write_message(&self, msg: &JsonRpcMessage) -> Result<(), std::io::Error> {
-        let body = serde_json::to_string(msg).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })?;
+        let body = serde_json::to_string(msg)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
         let mut writer = self.writer.lock().await;
         writer.write_all(header.as_bytes()).await?;
@@ -294,7 +293,8 @@ mod tests {
 
     #[test]
     fn error_response_deserialization() {
-        let json = r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32600,"message":"Invalid Request"}}"#;
+        let json =
+            r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32600,"message":"Invalid Request"}}"#;
         let resp: JsonRpcResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.id, Some(2));
         assert!(resp.error.is_some());

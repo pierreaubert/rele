@@ -13,7 +13,7 @@
 //!   return, discard, dup, constant[N-192]
 
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlags};
+use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, types};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -948,7 +948,7 @@ mod tests {
         match result {
             NativeResult::Ok(bits) => {
                 let v = Value::fixnum(0); // dummy
-                                          // Reconstruct Value from bits
+                // Reconstruct Value from bits
                 let _ = v;
                 let n = i64_to_fixnum(bits as i64).expect("result should be fixnum");
                 assert_eq!(n, 7, "3 + 4 should be 7");
@@ -1704,8 +1704,8 @@ mod tests {
             // No args, two constants.
             argdesc: 0x0000,
             bytecode: vec![
-                192,        // constant 0 (arg-from-outside is absent; arg pushed by caller)
-                // Actually we want a test that mirrors (or X 7). Use arg 0:
+                192, // constant 0 (arg-from-outside is absent; arg pushed by caller)
+                    // Actually we want a test that mirrors (or X 7). Use arg 0:
             ],
             constants: vec![LispObject::Integer(7)],
             maxdepth: 2,
@@ -1721,11 +1721,11 @@ mod tests {
         let func = BytecodeFunction {
             argdesc: 0x0101,
             bytecode: vec![
-                0,          // stack-ref 0  (push arg)
-                133, 6, 0,  // goto-if-nil-else-pop 6
-                192,        // constant 0 → 42
-                135,        // return
-                135,        // end: return (nil branch lands here)
+                0, // stack-ref 0  (push arg)
+                133, 6, 0,   // goto-if-nil-else-pop 6
+                192, // constant 0 → 42
+                135, // return
+                135, // end: return (nil branch lands here)
             ],
             constants: vec![LispObject::Integer(42)],
             maxdepth: 3,
@@ -1786,11 +1786,15 @@ mod tests {
             interactive: None,
         };
         let mut jit = JitCompiler::new();
-        jit.compile_with_version(201, &func, 1).expect("should compile");
+        jit.compile_with_version(201, &func, 1)
+            .expect("should compile");
         // Version bumps to 2 somewhere else — lookup must drop the
         // stale entry and return None.
         assert!(jit.get_compiled_checked(201, 2).is_none());
-        assert!(!jit.is_compiled(201), "stale entry should have been dropped");
+        assert!(
+            !jit.is_compiled(201),
+            "stale entry should have been dropped"
+        );
         assert_eq!(jit.compiled_version(201), None);
     }
 
@@ -1805,7 +1809,8 @@ mod tests {
             interactive: None,
         };
         let mut jit = JitCompiler::new();
-        jit.compile_with_version(202, &func, 5).expect("should compile");
+        jit.compile_with_version(202, &func, 5)
+            .expect("should compile");
         jit.invalidate(202);
         assert_eq!(jit.compiled_version(202), None);
         assert!(!jit.is_compiled(202));

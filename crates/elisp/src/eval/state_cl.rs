@@ -6,10 +6,10 @@
 //! Dispatched from `call_stateful_primitive` when none of the earlier
 //! state-aware buckets match.
 
+use crate::EditorCallbacks;
 use crate::error::ElispResult;
 use crate::object::LispObject;
-use crate::value::{obj_to_value, value_to_obj, Value};
-use crate::EditorCallbacks;
+use crate::value::{Value, obj_to_value, value_to_obj};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -1376,13 +1376,27 @@ pub const STATEFUL_CL_NAMES: &[&str] = &[
     "cl-remove-if-not",
     "cl-delete-if",
     "cl-delete-if-not",
-    "cl-assoc", "cl-assoc-if", "cl-assoc-if-not",
-    "cl-rassoc", "cl-rassoc-if", "cl-rassoc-if-not",
-    "cl-search", "cl-mismatch", "cl-tree-equal",
-    "cl-substitute", "cl-substitute-if", "cl-substitute-if-not",
-    "cl-nsubstitute", "cl-nsubstitute-if", "cl-nsubstitute-if-not",
-    "cl-subst-if", "cl-subst-if-not",
-    "cl-nsubst-if", "cl-nsubst-if-not",
-    "cl-sublis", "cl-nsublis",
-    "cl-merge", "cl-stable-sort",
+    "cl-assoc",
+    "cl-assoc-if",
+    "cl-assoc-if-not",
+    "cl-rassoc",
+    "cl-rassoc-if",
+    "cl-rassoc-if-not",
+    "cl-search",
+    "cl-mismatch",
+    "cl-tree-equal",
+    "cl-substitute",
+    "cl-substitute-if",
+    "cl-substitute-if-not",
+    "cl-nsubstitute",
+    "cl-nsubstitute-if",
+    "cl-nsubstitute-if-not",
+    "cl-subst-if",
+    "cl-subst-if-not",
+    "cl-nsubst-if",
+    "cl-nsubst-if-not",
+    "cl-sublis",
+    "cl-nsublis",
+    "cl-merge",
+    "cl-stable-sort",
 ];

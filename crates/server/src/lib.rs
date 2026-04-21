@@ -32,7 +32,7 @@ pub use commands::{CommandArgs, CommandCategory, InteractiveSpec};
 /// handler, so keeping one source file keeps TUI and GPUI in lockstep.
 /// Embedded at compile time via `include_str!`.
 pub const BUILTIN_COMMANDS_EL: &str = include_str!("../lisp/commands.el");
-pub use document::{BufferId, BufferKind, DocumentBuffer, EditHistory, EditorCursor, StoredBuffer};
 pub use document::kill_ring::KillRing;
+pub use document::{BufferId, BufferKind, DocumentBuffer, EditHistory, EditorCursor, StoredBuffer};
 pub use error::{ServerError, ServerResult};
 pub use macros::{KeyboardMacro, MacroState, RecordedAction};

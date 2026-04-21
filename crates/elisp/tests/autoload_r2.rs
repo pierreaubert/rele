@@ -3,7 +3,7 @@
 //! Tests for the new `autoload-do-load`, `autoload-compute-prefixes`, and
 //! `load-history-filename-element` primitives added in stream R2.
 
-use rele_elisp::{add_primitives, Interpreter, LispObject};
+use rele_elisp::{Interpreter, LispObject, add_primitives};
 
 /// Helper: create a fresh interpreter with all primitives loaded.
 fn make_interp() -> Interpreter {
@@ -91,10 +91,7 @@ fn test_autoload_do_load_no_args_signals_wrong_arity() {
     );
     match err.unwrap_err() {
         rele_elisp::ElispError::WrongNumberOfArguments => {}
-        other => panic!(
-            "expected WrongNumberOfArguments, got {:?}",
-            other
-        ),
+        other => panic!("expected WrongNumberOfArguments, got {:?}", other),
     }
 }
 
@@ -104,8 +101,7 @@ fn test_autoload_do_load_no_args_signals_wrong_arity() {
 #[test]
 fn test_autoload_compute_prefixes_returns_nil() {
     let interp = make_interp();
-    let result =
-        eval_str(&interp, "(autoload-compute-prefixes \"some-file.el\")").unwrap();
+    let result = eval_str(&interp, "(autoload-compute-prefixes \"some-file.el\")").unwrap();
     assert_eq!(result, LispObject::nil());
 }
 
@@ -118,8 +114,11 @@ fn test_load_history_filename_element_empty_history() {
     // Use `set` (not `setq`) to write directly to the global symbol value
     // cell, which is where `prim_load_history_filename_element` reads from.
     eval_str(&interp, "(set 'load-history nil)").unwrap();
-    let result =
-        eval_str(&interp, "(load-history-filename-element \"nonexistent.el\")").unwrap();
+    let result = eval_str(
+        &interp,
+        "(load-history-filename-element \"nonexistent.el\")",
+    )
+    .unwrap();
     assert_eq!(result, LispObject::nil());
 }
 
@@ -139,8 +138,7 @@ fn test_load_history_filename_element_found() {
         "(set 'load-history '((\"foo.el\" . (some-fn)) (\"bar.el\" . (other-fn))))",
     )
     .unwrap();
-    let result =
-        eval_str(&interp, "(load-history-filename-element \"foo.el\")").unwrap();
+    let result = eval_str(&interp, "(load-history-filename-element \"foo.el\")").unwrap();
     // Should return the cons ("foo.el" . (some-fn)), so car is "foo.el".
     let car = result.first().expect("result should be a cons");
     assert_eq!(
@@ -154,13 +152,8 @@ fn test_load_history_filename_element_found() {
 #[test]
 fn test_load_history_filename_element_not_found() {
     let interp = make_interp();
-    eval_str(
-        &interp,
-        "(set 'load-history '((\"foo.el\" . (some-fn))))",
-    )
-    .unwrap();
-    let result =
-        eval_str(&interp, "(load-history-filename-element \"bar.el\")").unwrap();
+    eval_str(&interp, "(set 'load-history '((\"foo.el\" . (some-fn))))").unwrap();
+    let result = eval_str(&interp, "(load-history-filename-element \"bar.el\")").unwrap();
     assert_eq!(result, LispObject::nil());
 }
 

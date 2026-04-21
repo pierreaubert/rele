@@ -25,7 +25,7 @@
 //! inline, catch matching `throw`s, restore the stack, jump to the
 //! end-tag. Non-matching throws propagate.
 
-use rele_elisp::{add_primitives, primitives_modules, Interpreter, LispObject};
+use rele_elisp::{Interpreter, LispObject, add_primitives, primitives_modules};
 
 fn make_interp() -> Interpreter {
     let mut interp = Interpreter::new();

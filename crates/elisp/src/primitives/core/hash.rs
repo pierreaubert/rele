@@ -13,8 +13,9 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "hash-table-size" => Some(prim_hash_table_size(args)),
         "hash-table-weakness" => Some(Ok(LispObject::nil())),
         "copy-hash-table" => Some(prim_copy_hash_table(args)),
-        "sxhash-eq" | "sxhash-eql" | "sxhash-equal"
-        | "sxhash-equal-including-properties" => Some(prim_sxhash(args)),
+        "sxhash-eq" | "sxhash-eql" | "sxhash-equal" | "sxhash-equal-including-properties" => {
+            Some(prim_sxhash(args))
+        }
         _ => None,
     }
 }
@@ -79,8 +80,10 @@ fn prim_remhash(args: &LispObject) -> ElispResult<LispObject> {
     let key = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let table = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     if let LispObject::HashTable(h) = table {
-        let hk = crate::object::HashKey::from_lisp(&key, &h.lock().test);
-        h.lock().data.remove(&hk);
+        let mut guard = h.lock();
+        let hk = guard.make_key(&key);
+        guard.data.remove(&hk);
+        drop(guard);
         Ok(LispObject::nil())
     } else {
         Err(ElispError::WrongTypeArgument("hash-table".to_string()))

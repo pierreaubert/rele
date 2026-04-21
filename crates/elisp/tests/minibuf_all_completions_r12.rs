@@ -21,7 +21,7 @@
 //! symbol, and still return the bare `+` / `-` symbol when they stand
 //! alone as operators.
 
-use rele_elisp::{add_primitives, read, read_all, Interpreter, LispObject};
+use rele_elisp::{Interpreter, LispObject, add_primitives, read, read_all};
 
 fn make_interp() -> Interpreter {
     let mut interp = Interpreter::new();

@@ -249,8 +249,7 @@ impl DocumentBuffer {
             char_offset_to_utf16_col(&self.rope, start_line, start - start_line_char);
         let end_line = self.rope.char_to_line(end);
         let end_line_char = self.rope.line_to_char(end_line);
-        let end_col_utf16 =
-            char_offset_to_utf16_col(&self.rope, end_line, end - end_line_char);
+        let end_col_utf16 = char_offset_to_utf16_col(&self.rope, end_line, end - end_line_char);
         let start_byte = self.rope.char_to_byte(start);
         let old_end_byte = self.rope.char_to_byte(end);
         let start_byte_col = (start_byte - self.rope.line_to_byte(start_line)) as u32;

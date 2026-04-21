@@ -12,7 +12,7 @@
 
 use proptest::prelude::*;
 use rele_elisp_spec_tests::expr_gen::{
-    json_val_to_lisp, lisp_to_json_val, JsonVal, OracleInput, OracleOutput,
+    JsonVal, OracleInput, OracleOutput, json_val_to_lisp, lisp_to_json_val,
 };
 use std::process::Command;
 
@@ -88,9 +88,7 @@ fn arb_quote() -> impl Strategy<Value = JsonVal> {
 
 /// proptest strategy for (progn FORM...).
 fn arb_progn() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom()).prop_map(|(a, b)| {
-        JsonVal::list(vec![JsonVal::sym("progn"), a, b])
-    })
+    (arb_atom(), arb_atom()).prop_map(|(a, b)| JsonVal::list(vec![JsonVal::sym("progn"), a, b]))
 }
 
 fn arb_arith_op() -> impl Strategy<Value = &'static str> {
@@ -129,11 +127,7 @@ fn arb_let_arith() -> impl Strategy<Value = JsonVal> {
                 JsonVal::list(vec![JsonVal::sym("x"), JsonVal::int(a)]),
                 JsonVal::list(vec![JsonVal::sym("y"), JsonVal::int(b)]),
             ]),
-            JsonVal::list(vec![
-                JsonVal::sym(op),
-                JsonVal::sym("x"),
-                JsonVal::sym("y"),
-            ]),
+            JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("x"), JsonVal::sym("y")]),
         ])
     })
 }
@@ -148,18 +142,10 @@ fn arb_let_star_dep() -> impl Strategy<Value = JsonVal> {
                 JsonVal::list(vec![JsonVal::sym("x"), JsonVal::int(a)]),
                 JsonVal::list(vec![
                     JsonVal::sym("y"),
-                    JsonVal::list(vec![
-                        JsonVal::sym("+"),
-                        JsonVal::sym("x"),
-                        JsonVal::int(b),
-                    ]),
+                    JsonVal::list(vec![JsonVal::sym("+"), JsonVal::sym("x"), JsonVal::int(b)]),
                 ]),
             ]),
-            JsonVal::list(vec![
-                JsonVal::sym(op),
-                JsonVal::sym("x"),
-                JsonVal::sym("y"),
-            ]),
+            JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("x"), JsonVal::sym("y")]),
         ])
     })
 }
@@ -173,11 +159,7 @@ fn arb_lambda_apply() -> impl Strategy<Value = JsonVal> {
             JsonVal::list(vec![
                 JsonVal::sym("lambda"),
                 JsonVal::list(vec![JsonVal::sym("x"), JsonVal::sym("y")]),
-                JsonVal::list(vec![
-                    JsonVal::sym(op),
-                    JsonVal::sym("x"),
-                    JsonVal::sym("y"),
-                ]),
+                JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("x"), JsonVal::sym("y")]),
             ]),
             JsonVal::int(a),
             JsonVal::int(b),
@@ -242,17 +224,9 @@ fn arb_defun_call() -> impl Strategy<Value = JsonVal> {
                 JsonVal::sym("defun"),
                 JsonVal::sym("f"),
                 JsonVal::list(vec![JsonVal::sym("x"), JsonVal::sym("y")]),
-                JsonVal::list(vec![
-                    JsonVal::sym(op),
-                    JsonVal::sym("x"),
-                    JsonVal::sym("y"),
-                ]),
+                JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("x"), JsonVal::sym("y")]),
             ]),
-            JsonVal::list(vec![
-                JsonVal::sym("f"),
-                JsonVal::int(a),
-                JsonVal::int(b),
-            ]),
+            JsonVal::list(vec![JsonVal::sym("f"), JsonVal::int(a), JsonVal::int(b)]),
         ])
     })
 }
@@ -273,11 +247,7 @@ fn arb_setq_let() -> impl Strategy<Value = JsonVal> {
                 JsonVal::sym("x"),
                 JsonVal::int(b),
             ]),
-            JsonVal::list(vec![
-                JsonVal::sym(op),
-                JsonVal::sym("x"),
-                JsonVal::int(c),
-            ]),
+            JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("x"), JsonVal::int(c)]),
         ])
     })
 }
@@ -295,11 +265,7 @@ fn arb_setq_compound() -> impl Strategy<Value = JsonVal> {
             JsonVal::list(vec![
                 JsonVal::sym("setq"),
                 JsonVal::sym("x"),
-                JsonVal::list(vec![
-                    JsonVal::sym(op),
-                    JsonVal::sym("x"),
-                    JsonVal::sym("y"),
-                ]),
+                JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("x"), JsonVal::sym("y")]),
             ]),
             JsonVal::sym("x"),
         ])
@@ -316,11 +282,7 @@ fn arb_dlet_arith() -> impl Strategy<Value = JsonVal> {
                 JsonVal::list(vec![JsonVal::sym("x"), JsonVal::int(a)]),
                 JsonVal::list(vec![JsonVal::sym("y"), JsonVal::int(b)]),
             ]),
-            JsonVal::list(vec![
-                JsonVal::sym(op),
-                JsonVal::sym("x"),
-                JsonVal::sym("y"),
-            ]),
+            JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("x"), JsonVal::sym("y")]),
         ])
     })
 }
@@ -342,11 +304,7 @@ fn arb_make_adder_closure() -> impl Strategy<Value = JsonVal> {
                 JsonVal::list(vec![
                     JsonVal::sym("lambda"),
                     JsonVal::list(vec![JsonVal::sym("y")]),
-                    JsonVal::list(vec![
-                        JsonVal::sym(op),
-                        JsonVal::sym("a"),
-                        JsonVal::sym("y"),
-                    ]),
+                    JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("a"), JsonVal::sym("y")]),
                 ]),
             ]),
             JsonVal::list(vec![
@@ -372,11 +330,7 @@ fn arb_letbound_fn_sym_call() -> impl Strategy<Value = JsonVal> {
                 JsonVal::list(vec![
                     JsonVal::sym("lambda"),
                     JsonVal::list(vec![JsonVal::sym("y")]),
-                    JsonVal::list(vec![
-                        JsonVal::sym(op),
-                        JsonVal::sym("y"),
-                        JsonVal::int(b),
-                    ]),
+                    JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("y"), JsonVal::int(b)]),
                 ]),
             ])]),
             JsonVal::list(vec![JsonVal::sym("f"), JsonVal::int(a)]),
@@ -400,11 +354,7 @@ fn arb_curried_lambda() -> impl Strategy<Value = JsonVal> {
                     JsonVal::list(vec![
                         JsonVal::sym("lambda"),
                         JsonVal::list(vec![JsonVal::sym("b")]),
-                        JsonVal::list(vec![
-                            JsonVal::sym(op),
-                            JsonVal::sym("a"),
-                            JsonVal::sym("b"),
-                        ]),
+                        JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("a"), JsonVal::sym("b")]),
                     ]),
                 ]),
                 JsonVal::int(a),
@@ -487,11 +437,7 @@ fn arb_mapcar_closure() -> impl Strategy<Value = JsonVal> {
                 JsonVal::list(vec![
                     JsonVal::sym("lambda"),
                     JsonVal::list(vec![JsonVal::sym("x")]),
-                    JsonVal::list(vec![
-                        JsonVal::sym(op),
-                        JsonVal::sym("x"),
-                        JsonVal::sym("k"),
-                    ]),
+                    JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("x"), JsonVal::sym("k")]),
                 ]),
                 JsonVal::list(vec![
                     JsonVal::sym("list"),
@@ -522,11 +468,7 @@ fn arb_lambda_from_let_escape() -> impl Strategy<Value = JsonVal> {
                 JsonVal::list(vec![
                     JsonVal::sym("lambda"),
                     JsonVal::list(vec![JsonVal::sym("y")]),
-                    JsonVal::list(vec![
-                        JsonVal::sym(op),
-                        JsonVal::sym("x"),
-                        JsonVal::sym("y"),
-                    ]),
+                    JsonVal::list(vec![JsonVal::sym(op), JsonVal::sym("x"), JsonVal::sym("y")]),
                 ]),
             ]),
             JsonVal::int(b),
@@ -606,10 +548,7 @@ fn smoke_test_rust_eval_integer() {
 
 #[test]
 fn smoke_test_rust_eval_quote() {
-    let expr = JsonVal::list(vec![
-        JsonVal::sym("quote"),
-        JsonVal::sym("hello"),
-    ]);
+    let expr = JsonVal::list(vec![JsonVal::sym("quote"), JsonVal::sym("hello")]);
     let result = eval_rust(&expr);
     assert_eq!(result, Ok(JsonVal::sym("hello")));
 }
@@ -627,7 +566,11 @@ fn probe_make_adder_closure() {
             JsonVal::list(vec![
                 JsonVal::sym("lambda"),
                 JsonVal::list(vec![JsonVal::sym("y")]),
-                JsonVal::list(vec![JsonVal::sym("+"), JsonVal::sym("a"), JsonVal::sym("y")]),
+                JsonVal::list(vec![
+                    JsonVal::sym("+"),
+                    JsonVal::sym("a"),
+                    JsonVal::sym("y"),
+                ]),
             ]),
         ]),
         JsonVal::list(vec![
@@ -649,7 +592,11 @@ fn probe_letbound_fn_sym_call() {
             JsonVal::list(vec![
                 JsonVal::sym("lambda"),
                 JsonVal::list(vec![JsonVal::sym("y")]),
-                JsonVal::list(vec![JsonVal::sym("+"), JsonVal::sym("y"), JsonVal::int(100)]),
+                JsonVal::list(vec![
+                    JsonVal::sym("+"),
+                    JsonVal::sym("y"),
+                    JsonVal::int(100),
+                ]),
             ]),
         ])]),
         JsonVal::list(vec![JsonVal::sym("f"), JsonVal::int(5)]),
@@ -669,7 +616,11 @@ fn probe_curried_lambda() {
                 JsonVal::list(vec![
                     JsonVal::sym("lambda"),
                     JsonVal::list(vec![JsonVal::sym("b")]),
-                    JsonVal::list(vec![JsonVal::sym("+"), JsonVal::sym("a"), JsonVal::sym("b")]),
+                    JsonVal::list(vec![
+                        JsonVal::sym("+"),
+                        JsonVal::sym("a"),
+                        JsonVal::sym("b"),
+                    ]),
                 ]),
             ]),
             JsonVal::int(7),
@@ -701,7 +652,11 @@ fn probe_closure_snapshot_after_setq() {
                     JsonVal::sym("x"),
                 ]),
             ])]),
-            JsonVal::list(vec![JsonVal::sym("setq"), JsonVal::sym("x"), JsonVal::int(99)]),
+            JsonVal::list(vec![
+                JsonVal::sym("setq"),
+                JsonVal::sym("x"),
+                JsonVal::int(99),
+            ]),
             JsonVal::list(vec![JsonVal::sym("f")]),
         ]),
     ]);
@@ -725,7 +680,11 @@ fn probe_lambda_from_let_escape() {
             JsonVal::list(vec![
                 JsonVal::sym("lambda"),
                 JsonVal::list(vec![JsonVal::sym("y")]),
-                JsonVal::list(vec![JsonVal::sym("+"), JsonVal::sym("x"), JsonVal::sym("y")]),
+                JsonVal::list(vec![
+                    JsonVal::sym("+"),
+                    JsonVal::sym("x"),
+                    JsonVal::sym("y"),
+                ]),
             ]),
         ]),
         JsonVal::int(3),
@@ -782,4 +741,3 @@ fn probe_mapcar_closure() {
         "mapcar with closure capturing let-bound k should produce (101 102 103)"
     );
 }
-

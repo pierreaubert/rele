@@ -12,9 +12,9 @@
 //! These tests exercise the fix at the interpreter level without pulling
 //! in the full stdlib.
 
+use rele_elisp::LispObject;
 use rele_elisp::add_primitives;
 use rele_elisp::eval::Interpreter;
-use rele_elisp::LispObject;
 
 fn make_interp() -> Interpreter {
     let mut interp = Interpreter::new();

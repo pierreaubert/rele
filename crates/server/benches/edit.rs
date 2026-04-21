@@ -107,27 +107,19 @@ fn bench_word_count(c: &mut Criterion) {
     let mut group = c.benchmark_group("word_count");
     for &size in &[100usize, 10_000, 100_000] {
         // "Cold" — fresh buffer every iteration, cache cannot be consulted.
-        group.bench_with_input(
-            BenchmarkId::new("cold", size),
-            &size,
-            |b, &size| {
-                b.iter_batched(
-                    || fixture(size),
-                    |buf| black_box(buf.word_count()),
-                    criterion::BatchSize::SmallInput,
-                );
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("cold", size), &size, |b, &size| {
+            b.iter_batched(
+                || fixture(size),
+                |buf| black_box(buf.word_count()),
+                criterion::BatchSize::SmallInput,
+            );
+        });
         // "Warm" — same buffer, so every iteration hits the cache.
-        group.bench_with_input(
-            BenchmarkId::new("warm", size),
-            &size,
-            |b, &size| {
-                let buf = fixture(size);
-                buf.word_count(); // prime cache
-                b.iter(|| black_box(buf.word_count()));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("warm", size), &size, |b, &size| {
+            let buf = fixture(size);
+            buf.word_count(); // prime cache
+            b.iter(|| black_box(buf.word_count()));
+        });
     }
     group.finish();
 }

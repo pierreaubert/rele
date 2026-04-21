@@ -737,9 +737,11 @@ fn test_condition_case_no_match() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     // Handler doesn't match: error propagates
-    assert!(interp
-        .eval(read("(condition-case nil (/ 1 0) (void-variable 42))").unwrap())
-        .is_err());
+    assert!(
+        interp
+            .eval(read("(condition-case nil (/ 1 0) (void-variable 42))").unwrap())
+            .is_err()
+    );
 }
 
 #[test]
@@ -842,7 +844,10 @@ pub fn make_stdlib_interp() -> Interpreter {
     );
     // Default emacs-path-related variables.
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    interp.define("user-emacs-directory", LispObject::string(&format!("{home}/.emacs.d/")));
+    interp.define(
+        "user-emacs-directory",
+        LispObject::string(&format!("{home}/.emacs.d/")),
+    );
     interp.define("user-full-name", LispObject::string(""));
     interp.define("user-login-name", LispObject::string(""));
     interp.define("user-real-login-name", LispObject::string(""));
@@ -926,9 +931,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     // enough for the test files we load to pick up their top-level defvars
     // without crashing. A full rx.el port is out of scope for R18.
     interp
-        .eval(
-            read("(defmacro rx (&rest forms) (rele--rx-translate forms))").unwrap(),
-        )
+        .eval(read("(defmacro rx (&rest forms) (rele--rx-translate forms))").unwrap())
         .expect("defmacro rx should succeed");
     // `bol` / `eol` are rx anchor names; inside abbrev they're used as
     // variables in a `let` that builds a regexp. Stubs that shadow
@@ -1418,10 +1421,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("use-cjk-char-width-table", LispObject::primitive("ignore"));
     interp.define("display-multi-font-p", LispObject::primitive("ignore"));
     interp.define("char-charset", LispObject::primitive("ignore"));
-    interp.define(
-        "w32-add-charset-info",
-        LispObject::primitive("ignore"),
-    );
+    interp.define("w32-add-charset-info", LispObject::primitive("ignore"));
     interp.define("regexp-opt", LispObject::primitive("ignore"));
     interp.define("compose-region-internal", LispObject::primitive("ignore"));
     interp.define("compose-string-internal", LispObject::primitive("ignore"));
@@ -1436,14 +1436,8 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("font-put", LispObject::primitive("ignore"));
     interp.define("font-object-p", LispObject::primitive("ignore"));
     interp.define("get-char-code-property", LispObject::primitive("ignore"));
-    interp.define(
-        "ctext-non-standard-encodings",
-        LispObject::nil(),
-    );
-    interp.define(
-        "nonascii-translation-table",
-        LispObject::nil(),
-    );
+    interp.define("ctext-non-standard-encodings", LispObject::nil());
+    interp.define("nonascii-translation-table", LispObject::nil());
     interp.define("save-buffer", LispObject::primitive("ignore"));
     interp.define("match-data--translate", LispObject::primitive("ignore"));
 
@@ -1451,10 +1445,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("make-obsolete", LispObject::primitive("ignore"));
     interp.define("make-obsolete-variable", LispObject::primitive("ignore"));
     interp.define("oclosure-define", LispObject::primitive("ignore"));
-    interp.define(
-        "declare-function",
-        LispObject::primitive("ignore"),
-    );
+    interp.define("declare-function", LispObject::primitive("ignore"));
     interp.define("defvar-local", LispObject::primitive("ignore"));
     interp.define(
         "internal-make-var-non-special",
@@ -1489,7 +1480,10 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("next-overlay-change", LispObject::primitive("ignore"));
     interp.define("previous-overlay-change", LispObject::primitive("ignore"));
     interp.define("remove-overlays", LispObject::primitive("remove-overlays"));
-    interp.define("overlay-properties", LispObject::primitive("overlay-properties"));
+    interp.define(
+        "overlay-properties",
+        LispObject::primitive("overlay-properties"),
+    );
     interp.define("overlay-buffer", LispObject::primitive("overlay-buffer"));
     interp.define("overlayp", LispObject::primitive("overlayp"));
     // Frames: we never have any.
@@ -1499,7 +1493,10 @@ pub fn make_stdlib_interp() -> Interpreter {
     // `buffer-local-variables` / `buffer-local-value` are registered
     // as real primitives in add_primitives — don't shadow them.
     // tree-sitter — always absent in this runtime.
-    interp.define("treesit-language-available-p", LispObject::primitive("ignore"));
+    interp.define(
+        "treesit-language-available-p",
+        LispObject::primitive("ignore"),
+    );
     interp.define("treesit-ready-p", LispObject::primitive("ignore"));
     interp.define("treesit-parser-create", LispObject::primitive("ignore"));
     interp.define("indent-line-to", LispObject::primitive("ignore"));
@@ -1536,7 +1533,10 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("this-command-keys", LispObject::primitive("ignore"));
     interp.define("this-command-keys-vector", LispObject::primitive("ignore"));
     interp.define("this-single-command-keys", LispObject::primitive("ignore"));
-    interp.define("this-single-command-raw-keys", LispObject::primitive("ignore"));
+    interp.define(
+        "this-single-command-raw-keys",
+        LispObject::primitive("ignore"),
+    );
     interp.define("recent-keys", LispObject::primitive("ignore"));
     interp.define("set-input-mode", LispObject::primitive("ignore"));
     interp.define("current-input-mode", LispObject::primitive("ignore"));
@@ -1564,14 +1564,20 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("posn-at-x-y", LispObject::primitive("ignore"));
     interp.define("x-popup-menu", LispObject::primitive("ignore"));
     interp.define("x-popup-dialog", LispObject::primitive("ignore"));
-    interp.define("set-clipboard-coding-system", LispObject::primitive("ignore"));
+    interp.define(
+        "set-clipboard-coding-system",
+        LispObject::primitive("ignore"),
+    );
     interp.define("gui-set-selection", LispObject::primitive("ignore"));
     interp.define("gui-get-selection", LispObject::primitive("ignore"));
     interp.define("gui-selection-owner-p", LispObject::primitive("ignore"));
     interp.define("gui-selection-exists-p", LispObject::primitive("ignore"));
     interp.define("x-own-selection-internal", LispObject::primitive("ignore"));
     interp.define("x-get-selection-internal", LispObject::primitive("ignore"));
-    interp.define("x-disown-selection-internal", LispObject::primitive("ignore"));
+    interp.define(
+        "x-disown-selection-internal",
+        LispObject::primitive("ignore"),
+    );
     interp.define("x-selection-owner-p", LispObject::primitive("ignore"));
     interp.define("x-selection-exists-p", LispObject::primitive("ignore"));
     interp.define("process-list", LispObject::primitive("ignore"));
@@ -1584,10 +1590,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("display-popup-menus-p", LispObject::primitive("ignore"));
     interp.define("display-mouse-p", LispObject::primitive("ignore"));
     interp.define("pdumper-stats", LispObject::primitive("ignore"));
-    interp.define(
-        "native-comp-available-p",
-        LispObject::primitive("ignore"),
-    );
+    interp.define("native-comp-available-p", LispObject::primitive("ignore"));
     interp.define("subr-native-elisp-p", LispObject::primitive("ignore"));
     interp.define("native-compile", LispObject::primitive("ignore"));
     interp.define("module-load", LispObject::primitive("ignore"));
@@ -2322,11 +2325,7 @@ fn test_backquote_native_shapes() {
         let val = interp.eval(form).unwrap_or_else(|e| {
             panic!("eval({src}) failed: {e:?}");
         });
-        assert_eq!(
-            val.princ_to_string(),
-            *expected,
-            "backquote source {src}",
-        );
+        assert_eq!(val.princ_to_string(), *expected, "backquote source {src}",);
     }
 }
 
@@ -2402,7 +2401,10 @@ fn test_batched_defun_stubs_resolve_round3() {
         ("(user-uid)", "1000"),
         ("(user-real-uid)", "1000"),
         ("(group-gid)", "1000"),
-        ("(progn (defvar tst-top 42) (default-toplevel-value 'tst-top))", "42"),
+        (
+            "(progn (defvar tst-top 42) (default-toplevel-value 'tst-top))",
+            "42",
+        ),
         // Headless-safe nil-returning stubs.
         ("(completing-read \"Prompt: \" nil nil nil \"x\")", "nil"),
         ("(yes-or-no-p \"ok?\")", "nil"),
@@ -2434,11 +2436,7 @@ fn test_batched_defun_stubs_resolve_round3() {
         let val = interp
             .eval(form)
             .unwrap_or_else(|e| panic!("eval({src}) failed: {e:?}"));
-        assert_eq!(
-            val.princ_to_string(),
-            *expected,
-            "third-batch source {src}",
-        );
+        assert_eq!(val.princ_to_string(), *expected, "third-batch source {src}",);
     }
 }
 
@@ -2509,23 +2507,14 @@ fn test_batched_defun_stubs_resolve_round5() {
     // Prepare two files so file-newer-than-file-p / file-modes have
     // something to look at. Put them in a unique subdir so parallel
     // tests don't collide.
-    let tmp = std::env::temp_dir().join(format!(
-        "rele-elisp-batch5-{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("rele-elisp-batch5-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     let a = tmp.join("a.txt");
     let b = tmp.join("b.txt");
-    std::fs::File::create(&a)
-        .unwrap()
-        .write_all(b"A")
-        .unwrap();
+    std::fs::File::create(&a).unwrap().write_all(b"A").unwrap();
     // Ensure `b` has a strictly later mtime than `a`.
     std::thread::sleep(std::time::Duration::from_millis(20));
-    std::fs::File::create(&b)
-        .unwrap()
-        .write_all(b"B")
-        .unwrap();
+    std::fs::File::create(&b).unwrap().write_all(b"B").unwrap();
 
     let interp = make_stdlib_interp();
     let a_str = a.to_string_lossy().to_string();
@@ -2543,15 +2532,24 @@ fn test_batched_defun_stubs_resolve_round5() {
         (format!("(file-regular-p \"{a_str}\")"), "t".into()),
         (format!("(file-readable-p \"{a_str}\")"), "t".into()),
         (format!("(file-symlink-p \"{a_str}\")"), "nil".into()),
-        (format!("(file-newer-than-file-p \"{b_str}\" \"{a_str}\")"), "t".into()),
-        (format!("(file-newer-than-file-p \"{a_str}\" \"{b_str}\")"), "nil".into()),
+        (
+            format!("(file-newer-than-file-p \"{b_str}\" \"{a_str}\")"),
+            "t".into(),
+        ),
+        (
+            format!("(file-newer-than-file-p \"{a_str}\" \"{b_str}\")"),
+            "nil".into(),
+        ),
         // Syntax / sexp stubs.
         ("(skip-syntax-forward \"w\")".into(), "0".into()),
         ("(forward-sexp)".into(), "nil".into()),
         ("(scan-sexps 1 1)".into(), "nil".into()),
         // Hooks / advice.
         ("(run-hooks 'post-command-hook)".into(), "nil".into()),
-        ("(remove-hook 'post-command-hook 'ignore)".into(), "nil".into()),
+        (
+            "(remove-hook 'post-command-hook 'ignore)".into(),
+            "nil".into(),
+        ),
         ("(advice-add 'ignore :around #'ignore)".into(), "nil".into()),
         // Debug / backtrace.
         ("(backtrace-frames)".into(), "nil".into()),
@@ -2567,13 +2565,19 @@ fn test_batched_defun_stubs_resolve_round5() {
         ("(number-sequence 5 1 -1)".into(), "(5 4 3 2 1)".into()),
         // Format-prompt.
         ("(format-prompt \"Pick\" nil)".into(), "Pick: ".into()),
-        ("(format-prompt \"Pick\" \"x\")".into(), "Pick (default x): ".into()),
+        (
+            "(format-prompt \"Pick\" \"x\")".into(),
+            "Pick (default x): ".into(),
+        ),
         // Kill / overlay / gui no-ops.
         ("(kill-line)".into(), "nil".into()),
         ("(yank)".into(), "nil".into()),
         ("(x-get-selection)".into(), "nil".into()),
         // Buffer-local-value reads via obarray.
-        ("(progn (defvar tbl5 77) (buffer-local-value 'tbl5 nil))".into(), "77".into()),
+        (
+            "(progn (defvar tbl5 77) (buffer-local-value 'tbl5 nil))".into(),
+            "77".into(),
+        ),
         // Syntax / input-method stubs.
         ("(current-input-method)".into(), "nil".into()),
         ("(recursive-edit)".into(), "nil".into()),
@@ -2583,11 +2587,7 @@ fn test_batched_defun_stubs_resolve_round5() {
         let val = interp
             .eval(form)
             .unwrap_or_else(|e| panic!("eval({src}) failed: {e:?}"));
-        assert_eq!(
-            val.princ_to_string(),
-            *expected,
-            "fifth-batch source {src}",
-        );
+        assert_eq!(val.princ_to_string(), *expected, "fifth-batch source {src}",);
     }
 
     // Cleanup.
@@ -2935,13 +2935,17 @@ fn cl_block_return_from() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     // Normal return from block.
-    let r = interp.eval(read("(cl-block foo (cl-return-from foo 42) 99)").unwrap()).unwrap();
+    let r = interp
+        .eval(read("(cl-block foo (cl-return-from foo 42) 99)").unwrap())
+        .unwrap();
     assert_eq!(r, LispObject::integer(42));
     // Block that doesn't return early → last body value.
     let r = interp.eval(read("(cl-block foo 1 2 3)").unwrap()).unwrap();
     assert_eq!(r, LispObject::integer(3));
     // Unmatched throws propagate.
-    let r = interp.eval(read("(cl-block outer (cl-block inner (cl-return-from outer 7)))").unwrap()).unwrap();
+    let r = interp
+        .eval(read("(cl-block outer (cl-block inner (cl-return-from outer 7)))").unwrap())
+        .unwrap();
     assert_eq!(r, LispObject::integer(7));
 }
 
@@ -2949,13 +2953,19 @@ fn cl_block_return_from() {
 fn cl_case_matches_values_and_default() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
-    let r = interp.eval(read("(cl-case 2 (1 'a) (2 'b) (t 'z))").unwrap()).unwrap();
+    let r = interp
+        .eval(read("(cl-case 2 (1 'a) (2 'b) (t 'z))").unwrap())
+        .unwrap();
     assert_eq!(r, LispObject::symbol("b"));
     // Value-list match.
-    let r = interp.eval(read("(cl-case 3 ((1 2) 'ab) ((3 4) 'cd) (t 'z))").unwrap()).unwrap();
+    let r = interp
+        .eval(read("(cl-case 3 ((1 2) 'ab) ((3 4) 'cd) (t 'z))").unwrap())
+        .unwrap();
     assert_eq!(r, LispObject::symbol("cd"));
     // Default branch.
-    let r = interp.eval(read("(cl-case 99 (1 'a) (t 'z))").unwrap()).unwrap();
+    let r = interp
+        .eval(read("(cl-case 99 (1 'a) (t 'z))").unwrap())
+        .unwrap();
     assert_eq!(r, LispObject::symbol("z"));
 }
 
@@ -3008,7 +3018,9 @@ fn cl_letf_restores_on_exit() {
 fn cl_the_returns_form_unchanged() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
-    let r = interp.eval(read("(cl-the integer (+ 1 2))").unwrap()).unwrap();
+    let r = interp
+        .eval(read("(cl-the integer (+ 1 2))").unwrap())
+        .unwrap();
     assert_eq!(r, LispObject::integer(3));
 }
 
@@ -3019,7 +3031,10 @@ fn cl_assert_signals_on_nil() {
     let err = interp.eval(read("(cl-assert nil)").unwrap()).unwrap_err();
     match err {
         crate::error::ElispError::Signal(sig) => {
-            assert_eq!(sig.symbol.as_symbol().as_deref(), Some("cl-assertion-failed"));
+            assert_eq!(
+                sig.symbol.as_symbol().as_deref(),
+                Some("cl-assertion-failed")
+            );
         }
         _ => panic!("expected Signal, got {err:?}"),
     }
@@ -3045,7 +3060,9 @@ fn cl_check_type_signals_on_wrong_type() {
         _ => panic!("expected Signal"),
     }
     // Correct type passes.
-    let r = interp.eval(read("(cl-check-type 7 integer)").unwrap()).unwrap();
+    let r = interp
+        .eval(read("(cl-check-type 7 integer)").unwrap())
+        .unwrap();
     assert_eq!(r, LispObject::nil());
 }
 
@@ -3213,7 +3230,9 @@ fn cl_loop_repeat() {
 fn cl_find_and_if() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
-    let r = interp.eval(read("(cl-find 3 '(1 2 3 4))").unwrap()).unwrap();
+    let r = interp
+        .eval(read("(cl-find 3 '(1 2 3 4))").unwrap())
+        .unwrap();
     assert_eq!(r, LispObject::integer(3));
     let r = interp
         .eval(read("(cl-find-if (lambda (x) (> x 2)) '(1 2 3 4))").unwrap())
@@ -3282,15 +3301,21 @@ fn cl_position_member_count_remove() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     assert_eq!(
-        interp.eval(read("(cl-position 3 '(1 2 3 4))").unwrap()).unwrap(),
+        interp
+            .eval(read("(cl-position 3 '(1 2 3 4))").unwrap())
+            .unwrap(),
         LispObject::integer(2)
     );
     // cl-count goes via the non-predicate form.
     assert_eq!(
-        interp.eval(read("(cl-count 2 '(1 2 2 3 2))").unwrap()).unwrap(),
+        interp
+            .eval(read("(cl-count 2 '(1 2 2 3 2))").unwrap())
+            .unwrap(),
         LispObject::integer(3)
     );
-    let r = interp.eval(read("(cl-remove 2 '(1 2 3 2 4))").unwrap()).unwrap();
+    let r = interp
+        .eval(read("(cl-remove 2 '(1 2 3 2 4))").unwrap())
+        .unwrap();
     let items: Vec<_> = {
         let mut out = Vec::new();
         let mut c = r;
@@ -3300,7 +3325,14 @@ fn cl_position_member_count_remove() {
         }
         out
     };
-    assert_eq!(items, vec![LispObject::integer(1), LispObject::integer(3), LispObject::integer(4)]);
+    assert_eq!(
+        items,
+        vec![
+            LispObject::integer(1),
+            LispObject::integer(3),
+            LispObject::integer(4)
+        ]
+    );
 }
 
 #[test]
@@ -3329,10 +3361,22 @@ fn cl_accessors_first_through_tenth() {
 fn cl_gcd_lcm_isqrt() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
-    assert_eq!(interp.eval(read("(cl-gcd 12 18)").unwrap()).unwrap(), LispObject::integer(6));
-    assert_eq!(interp.eval(read("(cl-lcm 4 6)").unwrap()).unwrap(), LispObject::integer(12));
-    assert_eq!(interp.eval(read("(cl-isqrt 100)").unwrap()).unwrap(), LispObject::integer(10));
-    assert_eq!(interp.eval(read("(cl-isqrt 99)").unwrap()).unwrap(), LispObject::integer(9));
+    assert_eq!(
+        interp.eval(read("(cl-gcd 12 18)").unwrap()).unwrap(),
+        LispObject::integer(6)
+    );
+    assert_eq!(
+        interp.eval(read("(cl-lcm 4 6)").unwrap()).unwrap(),
+        LispObject::integer(12)
+    );
+    assert_eq!(
+        interp.eval(read("(cl-isqrt 100)").unwrap()).unwrap(),
+        LispObject::integer(10)
+    );
+    assert_eq!(
+        interp.eval(read("(cl-isqrt 99)").unwrap()).unwrap(),
+        LispObject::integer(9)
+    );
 }
 
 #[test]
@@ -3369,21 +3413,52 @@ fn cl_union_intersection_difference() {
 fn cl_caddr_and_friends() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
-    assert_eq!(interp.eval(read("(cl-caddr '(a b c d))").unwrap()).unwrap(), LispObject::symbol("c"));
-    assert_eq!(interp.eval(read("(cl-cadddr '(a b c d))").unwrap()).unwrap(), LispObject::symbol("d"));
-    assert_eq!(interp.eval(read("(cl-cdddr '(a b c d))").unwrap()).unwrap(), read("(d)").unwrap());
-    assert_eq!(interp.eval(read("(cl-caadr '((a b) (c d)))").unwrap()).unwrap(), LispObject::symbol("c"));
+    assert_eq!(
+        interp.eval(read("(cl-caddr '(a b c d))").unwrap()).unwrap(),
+        LispObject::symbol("c")
+    );
+    assert_eq!(
+        interp
+            .eval(read("(cl-cadddr '(a b c d))").unwrap())
+            .unwrap(),
+        LispObject::symbol("d")
+    );
+    assert_eq!(
+        interp.eval(read("(cl-cdddr '(a b c d))").unwrap()).unwrap(),
+        read("(d)").unwrap()
+    );
+    assert_eq!(
+        interp
+            .eval(read("(cl-caadr '((a b) (c d)))").unwrap())
+            .unwrap(),
+        LispObject::symbol("c")
+    );
 }
 
 #[test]
 fn cl_predicates_evenp_plusp() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
-    assert_eq!(interp.eval(read("(cl-evenp 4)").unwrap()).unwrap(), LispObject::t());
-    assert_eq!(interp.eval(read("(cl-oddp 4)").unwrap()).unwrap(), LispObject::nil());
-    assert_eq!(interp.eval(read("(cl-plusp 3)").unwrap()).unwrap(), LispObject::t());
-    assert_eq!(interp.eval(read("(cl-plusp -3)").unwrap()).unwrap(), LispObject::nil());
-    assert_eq!(interp.eval(read("(cl-minusp -0.5)").unwrap()).unwrap(), LispObject::t());
+    assert_eq!(
+        interp.eval(read("(cl-evenp 4)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp.eval(read("(cl-oddp 4)").unwrap()).unwrap(),
+        LispObject::nil()
+    );
+    assert_eq!(
+        interp.eval(read("(cl-plusp 3)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp.eval(read("(cl-plusp -3)").unwrap()).unwrap(),
+        LispObject::nil()
+    );
+    assert_eq!(
+        interp.eval(read("(cl-minusp -0.5)").unwrap()).unwrap(),
+        LispObject::t()
+    );
 }
 
 #[test]
@@ -3391,15 +3466,25 @@ fn cl_list_utilities() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     assert_eq!(
-        interp.eval(read("(cl-list* 1 2 3 '(4 5))").unwrap()).unwrap(),
+        interp
+            .eval(read("(cl-list* 1 2 3 '(4 5))").unwrap())
+            .unwrap(),
         read("(1 2 3 4 5)").unwrap()
     );
     assert_eq!(
-        interp.eval(read("(cl-revappend '(1 2 3) '(4 5))").unwrap()).unwrap(),
+        interp
+            .eval(read("(cl-revappend '(1 2 3) '(4 5))").unwrap())
+            .unwrap(),
         read("(3 2 1 4 5)").unwrap()
     );
-    assert_eq!(interp.eval(read("(cl-endp nil)").unwrap()).unwrap(), LispObject::t());
-    assert_eq!(interp.eval(read("(cl-endp '(1))").unwrap()).unwrap(), LispObject::nil());
+    assert_eq!(
+        interp.eval(read("(cl-endp nil)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp.eval(read("(cl-endp '(1))").unwrap()).unwrap(),
+        LispObject::nil()
+    );
 }
 
 #[test]
@@ -3408,9 +3493,15 @@ fn cl_incf_decf_mutate() {
     add_primitives(&mut interp);
     interp.eval(read("(setq x 5)").unwrap()).unwrap();
     interp.eval(read("(cl-incf x)").unwrap()).unwrap();
-    assert_eq!(interp.eval(read("x").unwrap()).unwrap(), LispObject::integer(6));
+    assert_eq!(
+        interp.eval(read("x").unwrap()).unwrap(),
+        LispObject::integer(6)
+    );
     interp.eval(read("(cl-decf x 2)").unwrap()).unwrap();
-    assert_eq!(interp.eval(read("x").unwrap()).unwrap(), LispObject::integer(4));
+    assert_eq!(
+        interp.eval(read("x").unwrap()).unwrap(),
+        LispObject::integer(4)
+    );
 }
 
 #[test]
@@ -3432,11 +3523,15 @@ fn cl_substitute_replaces() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     assert_eq!(
-        interp.eval(read("(cl-substitute 99 2 '(1 2 3 2 4))").unwrap()).unwrap(),
+        interp
+            .eval(read("(cl-substitute 99 2 '(1 2 3 2 4))").unwrap())
+            .unwrap(),
         read("(1 99 3 99 4)").unwrap()
     );
     assert_eq!(
-        interp.eval(read("(cl-subst 'x 'a '(a (a b) (c a)))").unwrap()).unwrap(),
+        interp
+            .eval(read("(cl-subst 'x 'a '(a (a b) (c a)))").unwrap())
+            .unwrap(),
         read("(x (x b) (c x))").unwrap()
     );
 }
@@ -3446,11 +3541,15 @@ fn cl_tree_equal_recursive() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     assert_eq!(
-        interp.eval(read("(cl-tree-equal '(1 (2 3) 4) '(1 (2 3) 4))").unwrap()).unwrap(),
+        interp
+            .eval(read("(cl-tree-equal '(1 (2 3) 4) '(1 (2 3) 4))").unwrap())
+            .unwrap(),
         LispObject::t()
     );
     assert_eq!(
-        interp.eval(read("(cl-tree-equal '(1 (2 3) 4) '(1 (2 9) 4))").unwrap()).unwrap(),
+        interp
+            .eval(read("(cl-tree-equal '(1 (2 3) 4) '(1 (2 9) 4))").unwrap())
+            .unwrap(),
         LispObject::nil()
     );
 }
@@ -3460,7 +3559,9 @@ fn cl_merge_sorted() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     assert_eq!(
-        interp.eval(read("(cl-merge 'list '(1 3 5) '(2 4 6) '<)").unwrap()).unwrap(),
+        interp
+            .eval(read("(cl-merge 'list '(1 3 5) '(2 4 6) '<)").unwrap())
+            .unwrap(),
         read("(1 2 3 4 5 6)").unwrap()
     );
 }
@@ -3470,11 +3571,15 @@ fn cl_search_finds_subseq() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     assert_eq!(
-        interp.eval(read("(cl-search '(2 3) '(1 2 3 4))").unwrap()).unwrap(),
+        interp
+            .eval(read("(cl-search '(2 3) '(1 2 3 4))").unwrap())
+            .unwrap(),
         LispObject::integer(1)
     );
     assert_eq!(
-        interp.eval(read("(cl-search '(9) '(1 2 3))").unwrap()).unwrap(),
+        interp
+            .eval(read("(cl-search '(9) '(1 2 3))").unwrap())
+            .unwrap(),
         LispObject::nil()
     );
 }
@@ -3514,12 +3619,34 @@ fn function_form_captures_lexical_env() {
 fn cl_typep_recognizes_common_types() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
-    assert_eq!(interp.eval(read("(cl-typep 3 'integer)").unwrap()).unwrap(), LispObject::t());
-    assert_eq!(interp.eval(read("(cl-typep 3 'string)").unwrap()).unwrap(), LispObject::nil());
-    assert_eq!(interp.eval(read("(cl-typep '(1 2) 'list)").unwrap()).unwrap(), LispObject::t());
-    assert_eq!(interp.eval(read("(cl-typep nil 'list)").unwrap()).unwrap(), LispObject::t());
-    assert_eq!(interp.eval(read("(cl-typep 1 'number)").unwrap()).unwrap(), LispObject::t());
-    assert_eq!(interp.eval(read("(cl-typep 1.5 'number)").unwrap()).unwrap(), LispObject::t());
+    assert_eq!(
+        interp.eval(read("(cl-typep 3 'integer)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp.eval(read("(cl-typep 3 'string)").unwrap()).unwrap(),
+        LispObject::nil()
+    );
+    assert_eq!(
+        interp
+            .eval(read("(cl-typep '(1 2) 'list)").unwrap())
+            .unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp.eval(read("(cl-typep nil 'list)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp.eval(read("(cl-typep 1 'number)").unwrap()).unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp
+            .eval(read("(cl-typep 1.5 'number)").unwrap())
+            .unwrap(),
+        LispObject::t()
+    );
 }
 
 /// `cl-multiple-value-bind` — wraps a single value in a list and
@@ -3551,9 +3678,7 @@ fn test_cl_defstruct_basic() {
         .unwrap();
 
     // Constructor
-    let p = interp
-        .eval(read("(make-point 1 2 3)").unwrap())
-        .unwrap();
+    let p = interp.eval(read("(make-point 1 2 3)").unwrap()).unwrap();
     assert!(matches!(p, LispObject::Vector(_)));
 
     // Predicate
@@ -3564,9 +3689,7 @@ fn test_cl_defstruct_basic() {
         LispObject::t()
     );
     assert_eq!(
-        interp
-            .eval(read("(point-p '(1 2 3))").unwrap())
-            .unwrap(),
+        interp.eval(read("(point-p '(1 2 3))").unwrap()).unwrap(),
         LispObject::nil()
     );
 
@@ -3592,9 +3715,14 @@ fn test_cl_defstruct_with_options() {
 
     // Struct with options list and docstring
     interp
-        .eval(read(r#"(cl-defstruct (my-struct (:copier nil))
+        .eval(
+            read(
+                r#"(cl-defstruct (my-struct (:copier nil))
                          "A struct with a docstring."
-                         field-a field-b)"#).unwrap())
+                         field-a field-b)"#,
+            )
+            .unwrap(),
+        )
         .unwrap();
 
     let s = interp
@@ -3608,9 +3736,7 @@ fn test_defalias_creates_function_alias() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
 
-    interp
-        .eval(read("(defun my-fn () 42)").unwrap())
-        .unwrap();
+    interp.eval(read("(defun my-fn () 42)").unwrap()).unwrap();
     interp
         .eval(read("(defalias 'my-alias-fn 'my-fn)").unwrap())
         .unwrap();
@@ -5642,10 +5768,7 @@ fn test_cl_files_load_progress() {
         .spawn(|| {
             let interp = make_stdlib_interp();
             // Pre-load cl-preloaded so cl-macs has its prerequisites.
-            let _ = probe_emacs_file(
-                &interp,
-                "/tmp/elisp-stdlib/emacs-lisp/cl-preloaded.el",
-            );
+            let _ = probe_emacs_file(&interp, "/tmp/elisp-stdlib/emacs-lisp/cl-preloaded.el");
             for f in [
                 "emacs-lisp/cl-macs",
                 "emacs-lisp/cl-extra",
@@ -5692,10 +5815,7 @@ fn test_backquote_in_macro_after_stdlib_bootstrap() {
             let result = interp.eval(read("(rele-bq-test 42)").unwrap());
             match result {
                 Ok(v) => {
-                    let expected = LispObject::cons(
-                        LispObject::integer(42),
-                        LispObject::nil(),
-                    );
+                    let expected = LispObject::cons(LispObject::integer(42), LispObject::nil());
                     assert_eq!(v, expected, "backquote expansion produced wrong value");
                 }
                 Err(e) => panic!("backquote macro invocation failed: {e}"),
@@ -5729,7 +5849,10 @@ fn test_with_temp_buffer_point_min_max() {
     add_primitives(&mut interp);
 
     let result = interp
-        .eval(read(r#"(with-temp-buffer (insert "abc") (list (point-min) (point-max) (point)))"#).unwrap())
+        .eval(
+            read(r#"(with-temp-buffer (insert "abc") (list (point-min) (point-max) (point)))"#)
+                .unwrap(),
+        )
         .unwrap();
     let expected = LispObject::cons(
         LispObject::integer(1),
@@ -5942,22 +6065,23 @@ fn test_framework_status() {
     eprintln!("── rele-elisp test framework status ──");
     match emacs_lisp_dir() {
         Some(p) => eprintln!("  emacs_lisp_dir:    {p}"),
-        None => eprintln!(
-            "  emacs_lisp_dir:    NOT FOUND (set EMACS_LISP_DIR or install Emacs)"
-        ),
+        None => eprintln!("  emacs_lisp_dir:    NOT FOUND (set EMACS_LISP_DIR or install Emacs)"),
     }
     match emacs_source_root() {
         Some(p) => eprintln!("  emacs_source_root: {p}"),
-        None => eprintln!(
-            "  emacs_source_root: NOT FOUND (set EMACS_SRC_ROOT for ERT file probing)"
-        ),
+        None => {
+            eprintln!("  emacs_source_root: NOT FOUND (set EMACS_SRC_ROOT for ERT file probing)")
+        }
     }
     let stdlib_ready = ensure_stdlib_files();
-    eprintln!("  stdlib bootstrap:  {}", if stdlib_ready {
-        "READY (/tmp/elisp-stdlib/ populated)"
-    } else {
-        "SKIPPED (no emacs_lisp_dir)"
-    });
+    eprintln!(
+        "  stdlib bootstrap:  {}",
+        if stdlib_ready {
+            "READY (/tmp/elisp-stdlib/ populated)"
+        } else {
+            "SKIPPED (no emacs_lisp_dir)"
+        }
+    );
 }
 
 #[test]
@@ -6275,9 +6399,8 @@ fn run_rele_ert_tests_detailed_inner(
         crate::primitives::set_current_ert_test(test_struct.clone());
 
         let start = std::time::Instant::now();
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            interp.eval(call.clone())
-        }));
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| interp.eval(call.clone())));
         let elapsed_ms = start.elapsed().as_millis();
 
         // Clear the current-test slot — later tests shouldn't be
@@ -6418,9 +6541,7 @@ fn test_emacs_ert_can_run_a_test() {
                 .eval(read("(ert-deftest rele-fail () (should (= 1 2)))").unwrap())
                 .unwrap();
             interp
-                .eval(
-                    read("(ert-deftest rele-error () (should-error (error \"boom\")))").unwrap(),
-                )
+                .eval(read("(ert-deftest rele-error () (should-error (error \"boom\")))").unwrap())
                 .unwrap();
             let s = run_rele_ert_tests(&interp);
             eprintln!(
@@ -6466,9 +6587,7 @@ fn test_ert_run_detail_is_populated() {
                 .eval(read("(ert-deftest rele-fail () (should (= 1 2)))").unwrap())
                 .unwrap();
             interp
-                .eval(
-                    read("(ert-deftest rele-raw-err () (signal 'my-sig '(\"boom\")))").unwrap(),
-                )
+                .eval(read("(ert-deftest rele-raw-err () (signal 'my-sig '(\"boom\")))").unwrap())
                 .unwrap();
             let (_stats, results) = run_rele_ert_tests_detailed(&interp);
             for r in &results {
@@ -6534,8 +6653,7 @@ fn test_ert_run_per_test_timeout() {
             interp
                 .eval(read("(ert-deftest rele-ok () (should (= 1 1)))").unwrap())
                 .unwrap();
-            let (_stats, results) =
-                run_rele_ert_tests_detailed_with_timeout(&interp, 100);
+            let (_stats, results) = run_rele_ert_tests_detailed_with_timeout(&interp, 100);
             // Filter to only our tests — concurrent tests in the
             // global obarray can sneak in between clear and run.
             let hang = results
@@ -6585,12 +6703,12 @@ fn test_emacs_all_files_run() {
                 .filter(|e| e.path().extension().is_some_and(|x| x == "el"))
                 // Resource directories contain test fixtures, not test
                 // files. Skip them to avoid wasted timeout budget.
-                .filter(|e| !e.path().components().any(|c| {
-                    let s = c.as_os_str().to_string_lossy();
-                    s.ends_with("-resources")
-                        || s == "manual"
-                        || s == "infra"
-                }))
+                .filter(|e| {
+                    !e.path().components().any(|c| {
+                        let s = c.as_os_str().to_string_lossy();
+                        s.ends_with("-resources") || s == "manual" || s == "infra"
+                    })
+                })
                 // Skip known problematic files. These either:
                 // - exhaust our interp's stack (cl-loop / cl-destructuring-bind)
                 // - hit the 15 s wall-clock timeout reliably, then
@@ -6612,16 +6730,18 @@ fn test_emacs_all_files_run() {
                 .map(|e| e.path().to_path_buf())
                 .collect();
             files.sort();
-            eprintln!("Discovered {} .el test files under {test_root}", files.len());
+            eprintln!(
+                "Discovered {} .el test files under {test_root}",
+                files.len()
+            );
 
             // Per-test JSONL output. One line per test result.
             let jsonl_path = std::path::PathBuf::from("target/emacs-test-results.jsonl");
             if let Some(parent) = jsonl_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let mut jsonl = std::io::BufWriter::new(
-                std::fs::File::create(&jsonl_path).expect("create jsonl"),
-            );
+            let mut jsonl =
+                std::io::BufWriter::new(std::fs::File::create(&jsonl_path).expect("create jsonl"));
             eprintln!("Writing per-test results to {}", jsonl_path.display());
 
             // Subprocess worker pool. Each worker is an isolated
@@ -6661,7 +6781,11 @@ enum FileOutcome {
     /// Worker exceeded the wall-clock budget for this file.
     Timeout { file_index: usize, rel: String },
     /// Worker crashed (stdout EOF before __DONE__ / stdin write error).
-    Crashed { file_index: usize, rel: String, reason: String },
+    Crashed {
+        file_index: usize,
+        rel: String,
+        reason: String,
+    },
 }
 
 /// Drive a pool of `emacs_test_worker` subprocesses over the file list,
@@ -6711,23 +6835,36 @@ fn run_worker_pool(
     for outcome in out_rx {
         files_done += 1;
         match outcome {
-            FileOutcome::Ok { file_index, rel, jsonl_lines, summary } => {
+            FileOutcome::Ok {
+                file_index,
+                rel,
+                jsonl_lines,
+                summary,
+            } => {
                 for line in &jsonl_lines {
                     let _ = writeln!(jsonl, "{line}");
                 }
-                let t = summary.passed + summary.failed + summary.errored
-                    + summary.skipped + summary.panicked + summary.timed_out;
+                let t = summary.passed
+                    + summary.failed
+                    + summary.errored
+                    + summary.skipped
+                    + summary.panicked
+                    + summary.timed_out;
                 if summary.loaded == 0 && summary.total_forms == 0 {
                     files_load_failed += 1;
-                    eprintln!(
-                        "[{}/{total_files}] {rel}: load failed",
-                        file_index + 1,
-                    );
+                    eprintln!("[{}/{total_files}] {rel}: load failed", file_index + 1,);
                 } else {
                     eprintln!(
                         "[{}/{total_files}] {rel}: loaded {}/{} forms, ERT {} pass / {} fail / {} error / {} skip / {} panic / {} timeout (of {t})",
-                        file_index + 1, summary.loaded, summary.total_forms,
-                        summary.passed, summary.failed, summary.errored, summary.skipped, summary.panicked, summary.timed_out,
+                        file_index + 1,
+                        summary.loaded,
+                        summary.total_forms,
+                        summary.passed,
+                        summary.failed,
+                        summary.errored,
+                        summary.skipped,
+                        summary.panicked,
+                        summary.timed_out,
                     );
                 }
                 grand.passed += summary.passed;
@@ -6749,7 +6886,11 @@ fn run_worker_pool(
                 );
                 files_timed_out += 1;
             }
-            FileOutcome::Crashed { file_index, rel, reason } => {
+            FileOutcome::Crashed {
+                file_index,
+                rel,
+                reason,
+            } => {
                 eprintln!(
                     "[{}/{total_files}] {rel}: CRASHED ({reason}) — respawned",
                     file_index + 1,
@@ -6767,9 +6908,17 @@ fn run_worker_pool(
     for h in handles {
         let _ = h.join();
     }
-    let total = grand.passed + grand.failed + grand.errored
-        + grand.skipped + grand.panicked + grand.timed_out;
-    let pct = if total > 0 { grand.passed * 100 / total } else { 0 };
+    let total = grand.passed
+        + grand.failed
+        + grand.errored
+        + grand.skipped
+        + grand.panicked
+        + grand.timed_out;
+    let pct = if total > 0 {
+        grand.passed * 100 / total
+    } else {
+        0
+    };
     eprintln!(
         "\n=== Emacs test suite summary ===\n\
          Files:  {files_done} run, {files_load_failed} load-failed, {files_timed_out} timed out, {files_crashed} crashed\n\
@@ -6812,7 +6961,10 @@ impl Worker {
             }
             let _ = tx.send(None); // EOF
         });
-        Some(Worker { child, lines_rx: rx })
+        Some(Worker {
+            child,
+            lines_rx: rx,
+        })
     }
 }
 
@@ -6830,7 +6982,9 @@ impl Drop for Worker {
 /// amortized across however many files this worker processes.
 fn worker_manager(
     wid: usize,
-    task_rx: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<(usize, std::path::PathBuf)>>>,
+    task_rx: std::sync::Arc<
+        std::sync::Mutex<std::sync::mpsc::Receiver<(usize, std::path::PathBuf)>>,
+    >,
     out_tx: std::sync::mpsc::Sender<FileOutcome>,
     root: String,
 ) {
@@ -6986,9 +7140,7 @@ fn worker_binary_path() -> std::path::PathBuf {
         }
         let candidate = exe.join("../emacs_test_worker");
         if candidate.exists() {
-            return candidate
-                .canonicalize()
-                .unwrap_or(candidate);
+            return candidate.canonicalize().unwrap_or(candidate);
         }
     }
     // Fallback: assume release build alongside this exe's parent.
@@ -7127,7 +7279,7 @@ fn test_emacs_small_test_files_load() {
 
 // P7 module stubs — test that large-module entry points are properly stubbed.
 mod module_stubs {
-    use crate::{add_primitives, primitives_modules, read, Interpreter, LispObject};
+    use crate::{Interpreter, LispObject, add_primitives, primitives_modules, read};
 
     /// Helper to create an interpreter with module stubs
     fn make_interp() -> Interpreter {
@@ -7227,7 +7379,11 @@ mod module_stubs {
         let interp = make_interp();
         let expr = read("(url-generic-parse-url)").unwrap();
         let result = interp.eval(expr).unwrap();
-        assert_eq!(result, LispObject::nil(), "url-generic-parse-url should return nil");
+        assert_eq!(
+            result,
+            LispObject::nil(),
+            "url-generic-parse-url should return nil"
+        );
     }
 
     #[test]

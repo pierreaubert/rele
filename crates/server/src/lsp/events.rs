@@ -1,8 +1,6 @@
 //! LSP event types sent from background I/O tasks to the UI thread.
 
-use lsp_types::{
-    CompletionItem, Diagnostic, HoverContents, Location, MarkedString, TextEdit, Uri,
-};
+use lsp_types::{CompletionItem, Diagnostic, HoverContents, Location, MarkedString, TextEdit, Uri};
 
 /// Convert LSP `HoverContents` (several possible shapes) to a single string
 /// suitable for display in the editor UI. Used by both GPUI and TUI clients

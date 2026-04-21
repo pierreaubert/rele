@@ -95,14 +95,13 @@ fn rx_form_to_regexp(form: &LispObject) -> String {
                 "group" | "submatch" => {
                     format!("\\({}\\)", rx_seq(&tail))
                 }
-                "regexp" | "regex" => {
-                    tail.first()
-                        .and_then(|x| match x {
-                            LispObject::String(s) => Some(s.to_string()),
-                            _ => None,
-                        })
-                        .unwrap_or_default()
-                }
+                "regexp" | "regex" => tail
+                    .first()
+                    .and_then(|x| match x {
+                        LispObject::String(s) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_default(),
                 "literal" | "eval" => String::new(),
                 _ => String::new(),
             }
@@ -149,8 +148,7 @@ fn prim_load_history_filename_element(args: &LispObject) -> ElispResult<LispObje
         None => return Ok(LispObject::nil()),
     };
     let load_history_id = crate::obarray::intern("load-history");
-    let load_history =
-        crate::obarray::get_value_cell(load_history_id).unwrap_or(LispObject::nil());
+    let load_history = crate::obarray::get_value_cell(load_history_id).unwrap_or(LispObject::nil());
     let mut current = load_history;
     while let Some((entry, rest)) = current.destructure_cons() {
         if let Some((key, _)) = entry.destructure_cons() {

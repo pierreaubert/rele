@@ -1,7 +1,7 @@
 use crate::obarray::{self, SymbolId};
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Global counter for total cons cell allocations. Monotonically increasing.
 static GLOBAL_CONS_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -37,6 +37,12 @@ pub enum LispObject {
     Vector(SharedVec),
     BytecodeFn(BytecodeFunction),
     HashTable(SharedHashTable),
+}
+
+impl From<bool> for LispObject {
+    fn from(b: bool) -> Self {
+        if b { LispObject::T } else { LispObject::Nil }
+    }
 }
 
 impl PartialEq for LispObject {
@@ -209,11 +215,7 @@ impl BytecodeFunction {
 
     pub fn max_args(&self) -> usize {
         let max = ((self.argdesc >> 8) & 0x7F) as usize;
-        if self.has_rest() {
-            usize::MAX
-        } else {
-            max
-        }
+        if self.has_rest() { usize::MAX } else { max }
     }
 
     pub fn has_rest(&self) -> bool {

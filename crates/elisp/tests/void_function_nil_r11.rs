@@ -104,8 +104,10 @@ fn mode_variable_cell_still_nil() {
 fn literal_nil_head_still_errors() {
     let r = eval_str("(nil)");
     assert!(r.is_err());
-    assert!(r.as_ref().err().unwrap().contains("void") && r.as_ref().err().unwrap().contains("nil"),
-        "{r:?}");
+    assert!(
+        r.as_ref().err().unwrap().contains("void") && r.as_ref().err().unwrap().contains("nil"),
+        "{r:?}"
+    );
 }
 
 /// End-to-end: the exact shape that autoconf-tests, checkdoc-tests,

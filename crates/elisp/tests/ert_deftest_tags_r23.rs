@@ -32,7 +32,7 @@
 //! current test object before each body so `(ert-running-test)` never
 //! returns nil while BODY is executing.
 
-use rele_elisp::{add_primitives, read, Interpreter};
+use rele_elisp::{Interpreter, add_primitives, read};
 
 fn fresh_interp() -> Interpreter {
     let mut interp = Interpreter::new();
@@ -53,7 +53,10 @@ fn r23_ert_get_test_returns_non_nil_for_registered_test() {
     let result = interp
         .eval(read("(ert-get-test 'r23-plain)").unwrap())
         .expect("ert-get-test");
-    assert!(!result.is_nil(), "ert-get-test returned nil for registered test");
+    assert!(
+        !result.is_nil(),
+        "ert-get-test returned nil for registered test"
+    );
     assert!(
         result.is_cons(),
         "expected a rele-ert-test cons, got {result:?}",
@@ -105,10 +108,7 @@ fn r23_accessors_return_nil_on_nil_input_without_signalling() {
         let result = interp
             .eval(read(expr).unwrap())
             .unwrap_or_else(|e| panic!("{expr} signalled {e:?}"));
-        assert!(
-            result.is_nil(),
-            "{expr} returned {result:?}, expected nil",
-        );
+        assert!(result.is_nil(), "{expr} returned {result:?}, expected nil",);
     }
     // `ert-test-result-duration` returns 0, not nil, to keep
     // (skip-unless (< (ert-test-result-duration r) 300)) workable.
@@ -200,12 +200,7 @@ fn r23_ert_deftest_docstring_before_body() {
 fn r23_tramp_wrapper_deftest_shape_does_not_signal() {
     let interp = fresh_interp();
     interp
-        .eval(
-            read(
-                "(ert-deftest r23-orig () (should t))",
-            )
-            .unwrap(),
-        )
+        .eval(read("(ert-deftest r23-orig () (should t))").unwrap())
         .expect("register orig");
     interp
         .eval(
@@ -288,10 +283,7 @@ fn r23_ert_running_test_nil_outside_run() {
 
     // The chain that blew up in the baseline. Must return nil, not signal.
     let memq = interp
-        .eval(
-            read("(memq :erc--graphical (ert-test-tags (ert-running-test)))")
-                .unwrap(),
-        )
+        .eval(read("(memq :erc--graphical (ert-test-tags (ert-running-test)))").unwrap())
         .expect("chained lookup must not signal");
     assert!(memq.is_nil(), "chain should be nil: got {memq:?}");
 }
@@ -354,9 +346,7 @@ fn r23_running_test_cleared_after_runner_finishes() {
 
     let interp = fresh_interp();
     interp
-        .eval(
-            read("(ert-deftest r23-clear () (should t))").unwrap(),
-        )
+        .eval(read("(ert-deftest r23-clear () (should t))").unwrap())
         .expect("register");
     let _ = run_rele_ert_tests_detailed(&interp);
 

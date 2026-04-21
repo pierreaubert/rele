@@ -80,9 +80,9 @@ impl JitState {
 
     /// Invariant: compiled code version matches definition version.
     pub fn check_safe_execution(&self) -> bool {
-        self.tier.iter().all(|(f, t)| {
-            *t != Tier::Compiled || self.cache_version[f] == self.def_version[f]
-        })
+        self.tier
+            .iter()
+            .all(|(f, t)| *t != Tier::Compiled || self.cache_version[f] == self.def_version[f])
     }
 
     /// Invariant: no compiled code → must be in Interp tier.

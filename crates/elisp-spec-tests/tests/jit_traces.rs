@@ -150,7 +150,9 @@ fn multiple_functions_independent() {
 /// Path to a committed ITF trace relative to the crate root.
 fn trace_path(name: &str) -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
-    Path::new(manifest).join("../../spec/quint/traces").join(name)
+    Path::new(manifest)
+        .join("../../spec/quint/traces")
+        .join(name)
 }
 
 /// Replay every transition in an ITF trace and assert each one corresponds

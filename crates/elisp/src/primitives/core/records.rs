@@ -17,7 +17,9 @@ pub fn prim_record(args: &LispObject) -> ElispResult<LispObject> {
         items.push(arg);
         current = rest;
     }
-    Ok(LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(items))))
+    Ok(LispObject::Vector(std::sync::Arc::new(
+        parking_lot::Mutex::new(items),
+    )))
 }
 
 pub fn prim_recordp(args: &LispObject) -> ElispResult<LispObject> {

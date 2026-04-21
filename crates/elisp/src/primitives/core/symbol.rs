@@ -54,7 +54,7 @@ fn prim_intern_soft(args: &LispObject) -> ElispResult<LispObject> {
         _ => {
             return Err(ElispError::WrongTypeArgument(
                 "string or symbol".to_string(),
-            ))
+            ));
         }
     };
     let sym_table = crate::obarray::GLOBAL_OBARRAY.read();

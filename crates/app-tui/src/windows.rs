@@ -236,9 +236,7 @@ impl Window {
     pub fn leaf_count(&self) -> usize {
         match self {
             Window::Leaf(_) => 1,
-            Window::HSplit(a, b, _) | Window::VSplit(a, b, _) => {
-                a.leaf_count() + b.leaf_count()
-            }
+            Window::HSplit(a, b, _) | Window::VSplit(a, b, _) => a.leaf_count() + b.leaf_count(),
         }
     }
 
@@ -254,10 +252,9 @@ impl Window {
                 *counter += 1;
                 if idx == focus { Some(*c) } else { None }
             }
-            Window::HSplit(a, b, _) | Window::VSplit(a, b, _) => {
-                a.content_at_inner(focus, counter)
-                    .or_else(|| b.content_at_inner(focus, counter))
-            }
+            Window::HSplit(a, b, _) | Window::VSplit(a, b, _) => a
+                .content_at_inner(focus, counter)
+                .or_else(|| b.content_at_inner(focus, counter)),
         }
     }
 
@@ -360,10 +357,8 @@ impl Window {
                 let a_res = Self::delete_inner(a, focus, counter);
                 if matches!(a_res, DeleteResult::DeleteMe) {
                     // Replace `window` with `b` — move it out.
-                    let replacement = std::mem::replace(
-                        b.as_mut(),
-                        Window::Leaf(WindowContent::Buffer),
-                    );
+                    let replacement =
+                        std::mem::replace(b.as_mut(), Window::Leaf(WindowContent::Buffer));
                     *window = replacement;
                     return DeleteResult::Collapsed;
                 }
@@ -372,10 +367,8 @@ impl Window {
                 }
                 let b_res = Self::delete_inner(b, focus, counter);
                 if matches!(b_res, DeleteResult::DeleteMe) {
-                    let replacement = std::mem::replace(
-                        a.as_mut(),
-                        Window::Leaf(WindowContent::Buffer),
-                    );
+                    let replacement =
+                        std::mem::replace(a.as_mut(), Window::Leaf(WindowContent::Buffer));
                     *window = replacement;
                     return DeleteResult::Collapsed;
                 }
@@ -410,20 +403,20 @@ impl Window {
     pub fn prune(&self, hide: &impl Fn(WindowContent) -> bool) -> Option<Window> {
         match self {
             Window::Leaf(c) => {
-                if hide(*c) { None } else { Some(Window::Leaf(*c)) }
+                if hide(*c) {
+                    None
+                } else {
+                    Some(Window::Leaf(*c))
+                }
             }
             Window::HSplit(a, b, size) => match (a.prune(hide), b.prune(hide)) {
-                (Some(l), Some(r)) => {
-                    Some(Window::HSplit(Box::new(l), Box::new(r), *size))
-                }
+                (Some(l), Some(r)) => Some(Window::HSplit(Box::new(l), Box::new(r), *size)),
                 (Some(l), None) => Some(l),
                 (None, Some(r)) => Some(r),
                 (None, None) => None,
             },
             Window::VSplit(a, b, size) => match (a.prune(hide), b.prune(hide)) {
-                (Some(l), Some(r)) => {
-                    Some(Window::VSplit(Box::new(l), Box::new(r), *size))
-                }
+                (Some(l), Some(r)) => Some(Window::VSplit(Box::new(l), Box::new(r), *size)),
                 (Some(l), None) => Some(l),
                 (None, Some(r)) => Some(r),
                 (None, None) => None,
@@ -438,11 +431,7 @@ impl Window {
     /// being pruned away), we fall back to 0 — the first visible
     /// leaf. Returns 0 for an empty pruned tree too, so callers can
     /// just clamp against the pruned `leaf_count` afterwards.
-    pub fn remap_focus(
-        &self,
-        focus: usize,
-        hide: &impl Fn(WindowContent) -> bool,
-    ) -> usize {
+    pub fn remap_focus(&self, focus: usize, hide: &impl Fn(WindowContent) -> bool) -> usize {
         // Count visible leaves encountered before `focus` in in-order.
         // If the focused leaf itself is hidden, return the count so
         // far (which is the next visible leaf's index) or 0.
@@ -465,8 +454,7 @@ impl Window {
             // `visible_counter - 1`. Clamp against the pruned
             // leaf_count in case the whole subtree before focus was
             // also pruned.
-            let pruned_count =
-                self.prune(hide).map(|w| w.leaf_count()).unwrap_or(0);
+            let pruned_count = self.prune(hide).map(|w| w.leaf_count()).unwrap_or(0);
             visible_counter
                 .saturating_sub(1)
                 .min(pruned_count.saturating_sub(1))
@@ -526,9 +514,7 @@ impl Window {
 /// `leaves` while laying out the above subtree — that's the
 /// bottom-right-most leaf by the in-order traversal, which is always
 /// the one adjacent to (and therefore owning) the separator below it.
-fn mode_line_target(
-    above_leaves: &[WindowLeafRect],
-) -> (Option<WindowContent>, bool) {
+fn mode_line_target(above_leaves: &[WindowLeafRect]) -> (Option<WindowContent>, bool) {
     match above_leaves.last() {
         Some(l) => (Some(l.content), l.focused),
         None => (None, false),
@@ -556,7 +542,12 @@ mod tests {
     }
 
     fn rect() -> Rect {
-        Rect { x: 0, y: 0, width: 80, height: 24 }
+        Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        }
     }
 
     #[test]
@@ -616,8 +607,8 @@ mod tests {
     fn separator_emitted_per_split() {
         // Tree with two splits: one H, one V. Expect 2 separators.
         let mut w = leaf(WindowContent::Buffer);
-        w.split_horizontal(0);   // 2 leaves, 1 H sep
-        w.split_vertical(1);     // 3 leaves, 1 H sep + 1 V sep
+        w.split_horizontal(0); // 2 leaves, 1 H sep
+        w.split_vertical(1); // 3 leaves, 1 H sep + 1 V sep
         let (leaves, seps) = w.layout(rect(), 0);
         assert_eq!(leaves.len(), 3);
         assert_eq!(seps.len(), 2);
@@ -708,7 +699,12 @@ mod tests {
     fn lines_split_size_clamps_when_area_too_small() {
         // 6-row area, requesting Lines(5) — should still leave ≥1 row
         // for the top child.
-        let area = Rect { x: 0, y: 0, width: 80, height: 6 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 6,
+        };
         let w = Window::HSplit(
             Box::new(leaf(WindowContent::Buffer)),
             Box::new(leaf(WindowContent::Diagnostics)),
@@ -798,9 +794,7 @@ mod tests {
             Box::new(inner),
             SplitSize::Equal,
         );
-        let pruned = w
-            .prune(&|c| c == WindowContent::Diagnostics)
-            .unwrap();
+        let pruned = w.prune(&|c| c == WindowContent::Diagnostics).unwrap();
         assert_eq!(pruned.leaf_count(), 2);
         assert_eq!(pruned.content_at(0), Some(WindowContent::Buffer));
         assert_eq!(pruned.content_at(1), Some(WindowContent::Buffer));
@@ -879,9 +873,7 @@ mod tests {
             Box::new(leaf(WindowContent::Buffer)),
             SplitSize::Lines(3),
         );
-        let pruned = w
-            .prune(&|c| c == WindowContent::Diagnostics)
-            .unwrap();
+        let pruned = w.prune(&|c| c == WindowContent::Diagnostics).unwrap();
         // Structure preserved: still an HSplit with 2 leaves.
         assert_eq!(pruned.leaf_count(), 2);
     }

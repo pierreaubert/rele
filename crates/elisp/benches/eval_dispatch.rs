@@ -9,8 +9,8 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use rele_elisp::{add_primitives, read, Interpreter};
+use criterion::{Criterion, criterion_group, criterion_main};
+use rele_elisp::{Interpreter, add_primitives, read};
 
 /// A fresh interpreter with core primitives loaded. Created once per
 /// bench group; each `iter` re-reads and re-evals the form.

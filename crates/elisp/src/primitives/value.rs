@@ -171,13 +171,21 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         "eq" => {
             let (a, b) = two_args(args)?;
-            Some(Ok(if a.raw() == b.raw() { Value::t() } else { Value::nil() }))
+            Some(Ok(if a.raw() == b.raw() {
+                Value::t()
+            } else {
+                Value::nil()
+            }))
         }
 
         // Type predicates
         "integerp" | "fixnump" => {
             let v = one_arg(args)?;
-            Some(Ok(if v.as_fixnum().is_some() { Value::t() } else { Value::nil() }))
+            Some(Ok(if v.as_fixnum().is_some() {
+                Value::t()
+            } else {
+                Value::nil()
+            }))
         }
         "zerop" => {
             let v = one_arg(args)?;
@@ -303,13 +311,16 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         "floatp" => {
             let v = one_arg(args)?;
-            Some(Ok(if v.is_float() { Value::t() } else { Value::nil() }))
+            Some(Ok(if v.is_float() {
+                Value::t()
+            } else {
+                Value::nil()
+            }))
         }
         "characterp" => {
             let v = one_arg(args)?;
             // Emacs characters are non-negative integers < 0x3fffff.
-            let is_char = v.is_char()
-                || v.as_fixnum().is_some_and(|n| (0..=0x3fffff).contains(&n));
+            let is_char = v.is_char() || v.as_fixnum().is_some_and(|n| (0..=0x3fffff).contains(&n));
             Some(Ok(if is_char { Value::t() } else { Value::nil() }))
         }
 
@@ -355,49 +366,139 @@ mod accessor_tests {
         // Cons → consp=t, listp=t, atom=nil.
         let c = cons_value(Value::fixnum(1), Value::nil());
         let args = cons_value(c, Value::nil());
-        assert!(try_call_primitive_value("consp", args).unwrap().unwrap().is_t());
-        assert!(try_call_primitive_value("listp", args).unwrap().unwrap().is_t());
-        assert!(try_call_primitive_value("atom", args).unwrap().unwrap().is_nil());
+        assert!(
+            try_call_primitive_value("consp", args)
+                .unwrap()
+                .unwrap()
+                .is_t()
+        );
+        assert!(
+            try_call_primitive_value("listp", args)
+                .unwrap()
+                .unwrap()
+                .is_t()
+        );
+        assert!(
+            try_call_primitive_value("atom", args)
+                .unwrap()
+                .unwrap()
+                .is_nil()
+        );
 
         // Nil → consp=nil, listp=t (nil is the empty list), atom=t.
         let args = cons_value(Value::nil(), Value::nil());
-        assert!(try_call_primitive_value("consp", args).unwrap().unwrap().is_nil());
-        assert!(try_call_primitive_value("listp", args).unwrap().unwrap().is_t());
-        assert!(try_call_primitive_value("atom", args).unwrap().unwrap().is_t());
+        assert!(
+            try_call_primitive_value("consp", args)
+                .unwrap()
+                .unwrap()
+                .is_nil()
+        );
+        assert!(
+            try_call_primitive_value("listp", args)
+                .unwrap()
+                .unwrap()
+                .is_t()
+        );
+        assert!(
+            try_call_primitive_value("atom", args)
+                .unwrap()
+                .unwrap()
+                .is_t()
+        );
 
         // Fixnum → consp=nil, listp=nil, atom=t.
         let args = cons_value(Value::fixnum(42), Value::nil());
-        assert!(try_call_primitive_value("consp", args).unwrap().unwrap().is_nil());
-        assert!(try_call_primitive_value("listp", args).unwrap().unwrap().is_nil());
-        assert!(try_call_primitive_value("atom", args).unwrap().unwrap().is_t());
+        assert!(
+            try_call_primitive_value("consp", args)
+                .unwrap()
+                .unwrap()
+                .is_nil()
+        );
+        assert!(
+            try_call_primitive_value("listp", args)
+                .unwrap()
+                .unwrap()
+                .is_nil()
+        );
+        assert!(
+            try_call_primitive_value("atom", args)
+                .unwrap()
+                .unwrap()
+                .is_t()
+        );
     }
 
     #[test]
     fn number_and_symbol_predicates() {
         // Fixnum passes numberp/integerp; fails symbolp/stringp/floatp.
         let args = cons_value(Value::fixnum(5), Value::nil());
-        assert!(try_call_primitive_value("numberp", args).unwrap().unwrap().is_t());
-        assert!(try_call_primitive_value("integerp", args).unwrap().unwrap().is_t());
-        assert!(try_call_primitive_value("floatp", args).unwrap().unwrap().is_nil());
-        assert!(try_call_primitive_value("symbolp", args).unwrap().unwrap().is_nil());
+        assert!(
+            try_call_primitive_value("numberp", args)
+                .unwrap()
+                .unwrap()
+                .is_t()
+        );
+        assert!(
+            try_call_primitive_value("integerp", args)
+                .unwrap()
+                .unwrap()
+                .is_t()
+        );
+        assert!(
+            try_call_primitive_value("floatp", args)
+                .unwrap()
+                .unwrap()
+                .is_nil()
+        );
+        assert!(
+            try_call_primitive_value("symbolp", args)
+                .unwrap()
+                .unwrap()
+                .is_nil()
+        );
 
         // nil is a symbol.
         let args = cons_value(Value::nil(), Value::nil());
-        assert!(try_call_primitive_value("symbolp", args).unwrap().unwrap().is_t());
+        assert!(
+            try_call_primitive_value("symbolp", args)
+                .unwrap()
+                .unwrap()
+                .is_t()
+        );
 
         // t is a symbol.
         let args = cons_value(Value::t(), Value::nil());
-        assert!(try_call_primitive_value("symbolp", args).unwrap().unwrap().is_t());
+        assert!(
+            try_call_primitive_value("symbolp", args)
+                .unwrap()
+                .unwrap()
+                .is_t()
+        );
 
         // Characters pass characterp.
         let args = cons_value(Value::character('A'), Value::nil());
-        assert!(try_call_primitive_value("characterp", args).unwrap().unwrap().is_t());
+        assert!(
+            try_call_primitive_value("characterp", args)
+                .unwrap()
+                .unwrap()
+                .is_t()
+        );
         // So do small non-negative fixnums.
         let args = cons_value(Value::fixnum(65), Value::nil());
-        assert!(try_call_primitive_value("characterp", args).unwrap().unwrap().is_t());
+        assert!(
+            try_call_primitive_value("characterp", args)
+                .unwrap()
+                .unwrap()
+                .is_t()
+        );
         // But not negative integers.
         let args = cons_value(Value::fixnum(-1), Value::nil());
-        assert!(try_call_primitive_value("characterp", args).unwrap().unwrap().is_nil());
+        assert!(
+            try_call_primitive_value("characterp", args)
+                .unwrap()
+                .unwrap()
+                .is_nil()
+        );
     }
 }
 

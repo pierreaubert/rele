@@ -1,8 +1,8 @@
+use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::obarray::{self, SymbolId};
 use crate::object::LispObject;
-use crate::value::{obj_to_value, value_to_obj, Value};
-use crate::EditorCallbacks;
+use crate::value::{Value, obj_to_value, value_to_obj};
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use std::sync::Arc;
 pub use environment::{Environment, is_callable_value};
 pub use macro_table::{Macro, MacroTable};
 pub use thread_locals::{
-    FeatureList, set_match_data, get_match_group, inc_eval_depth, dec_eval_depth,
+    FeatureList, dec_eval_depth, get_match_group, inc_eval_depth, set_match_data,
 };
 use thread_locals::{MATCH_DATA, MATCH_STRING, REGEX_CACHE};
 
@@ -571,9 +571,7 @@ fn eval_setf_one(
     };
 
     // Eval the value once. Most place expansions need it.
-    let new_val = value_to_obj(eval(
-        obj_to_value(value_form), env, editor, macros, state,
-    )?);
+    let new_val = value_to_obj(eval(obj_to_value(value_form), env, editor, macros, state)?);
 
     // Helper: build (FN ARG1 ARG2...) and eval it.
     let call = |fn_sym: &str, fn_args: LispObject| -> ElispResult<Value> {
@@ -668,22 +666,18 @@ fn eval_setf_one(
         // does `(setf (cl--find-class NAME) CLASS)`.
         "cl--find-class" | "cl-find-class" => {
             let name_form = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-            let name = value_to_obj(eval(
-                obj_to_value(name_form), env, editor, macros, state,
-            )?);
+            let name = value_to_obj(eval(obj_to_value(name_form), env, editor, macros, state)?);
             if let Some(name_str) = name.as_symbol() {
                 let id = crate::obarray::intern(&name_str);
                 let key = crate::obarray::intern("cl--class");
                 crate::obarray::put_plist(id, key, new_val.clone());
                 // Register as a class (slots left empty — we just need
                 // the name keyed so `type-of` / `cl--find-class` find it).
-                crate::primitives_eieio::register_class(
-                    crate::primitives_eieio::Class {
-                        name: name_str,
-                        parent: None,
-                        slots: Vec::new(),
-                    },
-                );
+                crate::primitives_eieio::register_class(crate::primitives_eieio::Class {
+                    name: name_str,
+                    parent: None,
+                    slots: Vec::new(),
+                });
             }
             Ok(obj_to_value(new_val))
         }
@@ -858,7 +852,9 @@ fn eval_cl_defstruct(
     let name = match &name_spec {
         LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
         LispObject::Cons(_) => {
-            let hd = name_spec.first().ok_or(ElispError::WrongNumberOfArguments)?;
+            let hd = name_spec
+                .first()
+                .ok_or(ElispError::WrongNumberOfArguments)?;
             let n = hd
                 .as_symbol()
                 .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
@@ -910,7 +906,9 @@ fn eval_cl_defstruct(
         let fname = match &field_spec {
             LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
             LispObject::Cons(_) => {
-                let fst = field_spec.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                let fst = field_spec
+                    .first()
+                    .ok_or(ElispError::WrongNumberOfArguments)?;
                 match fst.as_symbol() {
                     Some(s) => s,
                     None => {
@@ -997,10 +995,7 @@ fn eval_cl_defstruct(
     let pred_expr = crate::read(&pred_body)
         .map_err(|e| ElispError::EvalError(format!("cl-defstruct pred parse: {e}")))?;
     let pred_val = value_to_obj(eval(obj_to_value(pred_expr), env, editor, macros, state)?);
-    crate::obarray::set_function_cell(
-        crate::obarray::intern(&format!("{}-p", name)),
-        pred_val,
-    );
+    crate::obarray::set_function_cell(crate::obarray::intern(&format!("{}-p", name)), pred_val);
 
     // Accessors: <conc-name>FIELD (default `NAME-`, overridden by
     // `:conc-name` — e.g. `hierarchy--` → `hierarchy--roots`).
@@ -1210,8 +1205,7 @@ fn eval_inner(
                     // `backquote` / `\`` — unquotes only fire at depth 1,
                     // nested `\`` forms raise the depth.
                     let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let expanded =
-                        eval_backquote_form(form, 1, env, editor, macros, state)?;
+                    let expanded = eval_backquote_form(form, 1, env, editor, macros, state)?;
                     Ok(obj_to_value(expanded))
                 }
                 "if" => eval_if(obj_to_value(cdr), env, editor, macros, state),
@@ -1285,13 +1279,8 @@ fn eval_inner(
                 "save-match-data" => {
                     let saved_data = MATCH_DATA.with(|d| d.borrow().clone());
                     let saved_str = MATCH_STRING.with(|s| s.borrow().clone());
-                    let result = builtins::eval_progn_value(
-                        obj_to_value(cdr),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    );
+                    let result =
+                        builtins::eval_progn_value(obj_to_value(cdr), env, editor, macros, state);
                     MATCH_DATA.with(|d| *d.borrow_mut() = saved_data);
                     MATCH_STRING.with(|s| *s.borrow_mut() = saved_str);
                     result
@@ -1393,13 +1382,19 @@ fn eval_inner(
                 "buffer-substring" | "buffer-substring-no-properties" => {
                     let start = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
-                        env, editor, macros, state,
+                        env,
+                        editor,
+                        macros,
+                        state,
                     )?)
                     .as_integer()
                     .unwrap_or(1) as usize;
                     let end = value_to_obj(eval(
                         obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
-                        env, editor, macros, state,
+                        env,
+                        editor,
+                        macros,
+                        state,
                     )?)
                     .as_integer()
                     .unwrap_or(1) as usize;
@@ -1409,13 +1404,19 @@ fn eval_inner(
                 "delete-region" => {
                     let start = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
-                        env, editor, macros, state,
+                        env,
+                        editor,
+                        macros,
+                        state,
                     )?)
                     .as_integer()
                     .unwrap_or(1) as usize;
                     let end = value_to_obj(eval(
                         obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
-                        env, editor, macros, state,
+                        env,
+                        editor,
+                        macros,
+                        state,
                     )?)
                     .as_integer()
                     .unwrap_or(1) as usize;
@@ -1539,11 +1540,13 @@ fn eval_inner(
                 "ert-deftest" => {
                     // (ert-deftest NAME () [DOCSTRING] [:keys] BODY...)
                     let name_obj = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let name = name_obj.as_symbol().ok_or_else(||
-                        ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    let name = name_obj
+                        .as_symbol()
+                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
                     // Skip the empty `()` arg list (or arg list — we
                     // don't pass anything to test bodies anyway).
-                    let after_args = cdr.rest()
+                    let after_args = cdr
+                        .rest()
                         .and_then(|r| r.rest())
                         .unwrap_or(LispObject::nil());
                     // Skip optional docstring, but remember it so the
@@ -1571,9 +1574,7 @@ fn eval_inner(
                         match body.destructure_cons() {
                             Some((head, tail)) => {
                                 let kw_name = head.as_symbol();
-                                let is_kw = kw_name
-                                    .as_deref()
-                                    .is_some_and(|s| s.starts_with(':'));
+                                let is_kw = kw_name.as_deref().is_some_and(|s| s.starts_with(':'));
                                 if is_kw {
                                     if kw_name.as_deref() == Some(":tags") {
                                         if let Some((val_form, _)) = tail.destructure_cons() {
@@ -1613,11 +1614,7 @@ fn eval_inner(
                     // `void-variable`. Snapshotting here matches the
                     // behaviour of the `lambda` special form.
                     let captured = env.read().capture_as_alist();
-                    let closure = LispObject::closure_expr(
-                        captured,
-                        LispObject::nil(),
-                        body,
-                    );
+                    let closure = LispObject::closure_expr(captured, LispObject::nil(), body);
                     let id = crate::obarray::intern(&name);
                     let test_key = crate::obarray::intern("ert--rele-test");
                     crate::obarray::put_plist(id, test_key, closure.clone());
@@ -1631,12 +1628,8 @@ fn eval_inner(
                     // struct plus our Rust-side accessor stubs keep
                     // that chain returning nil instead of signalling.
                     let test_struct_key = crate::obarray::intern("ert--test");
-                    let test_obj = crate::primitives::make_ert_test_obj(
-                        &name,
-                        tags,
-                        docstring,
-                        closure,
-                    );
+                    let test_obj =
+                        crate::primitives::make_ert_test_obj(&name, tags, docstring, closure);
                     crate::obarray::put_plist(id, test_struct_key, test_obj);
                     Ok(obj_to_value(LispObject::Symbol(id)))
                 }
@@ -1645,36 +1638,34 @@ fn eval_inner(
                     // if it returns nil. Returns FORM's value otherwise.
                     let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let result = value_to_obj(eval(
-                        obj_to_value(form.clone()), env, editor, macros, state,
+                        obj_to_value(form.clone()),
+                        env,
+                        editor,
+                        macros,
+                        state,
                     )?);
                     if result.is_nil() {
-                        return Err(ElispError::Signal(Box::new(
-                            crate::error::SignalData {
-                                symbol: LispObject::symbol("ert-test-failed"),
-                                data: LispObject::cons(
-                                    form,
-                                    LispObject::nil(),
-                                ),
-                            },
-                        )));
+                        return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                            symbol: LispObject::symbol("ert-test-failed"),
+                            data: LispObject::cons(form, LispObject::nil()),
+                        })));
                     }
                     Ok(obj_to_value(result))
                 }
                 "should-not" => {
                     let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let result = value_to_obj(eval(
-                        obj_to_value(form.clone()), env, editor, macros, state,
+                        obj_to_value(form.clone()),
+                        env,
+                        editor,
+                        macros,
+                        state,
                     )?);
                     if !result.is_nil() {
-                        return Err(ElispError::Signal(Box::new(
-                            crate::error::SignalData {
-                                symbol: LispObject::symbol("ert-test-failed"),
-                                data: LispObject::cons(
-                                    form,
-                                    LispObject::nil(),
-                                ),
-                            },
-                        )));
+                        return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                            symbol: LispObject::symbol("ert-test-failed"),
+                            data: LispObject::cons(form, LispObject::nil()),
+                        })));
                     }
                     Ok(Value::nil())
                 }
@@ -1683,15 +1674,13 @@ fn eval_inner(
                     // error; returns the error object on success.
                     let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     match eval(obj_to_value(form), env, editor, macros, state) {
-                        Ok(_) => Err(ElispError::Signal(Box::new(
-                            crate::error::SignalData {
-                                symbol: LispObject::symbol("ert-test-failed"),
-                                data: LispObject::cons(
-                                    LispObject::string("did not signal"),
-                                    LispObject::nil(),
-                                ),
-                            },
-                        ))),
+                        Ok(_) => Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                            symbol: LispObject::symbol("ert-test-failed"),
+                            data: LispObject::cons(
+                                LispObject::string("did not signal"),
+                                LispObject::nil(),
+                            ),
+                        }))),
                         Err(_) => Ok(Value::t()),
                     }
                 }
@@ -1700,32 +1689,26 @@ fn eval_inner(
                     // signal `ert-test-skipped` so the test runner
                     // counts it as skipped, not failed.
                     let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let result = value_to_obj(eval(
-                        obj_to_value(form), env, editor, macros, state,
-                    )?);
+                    let result =
+                        value_to_obj(eval(obj_to_value(form), env, editor, macros, state)?);
                     if result.is_nil() {
-                        return Err(ElispError::Signal(Box::new(
-                            crate::error::SignalData {
-                                symbol: LispObject::symbol("ert-test-skipped"),
-                                data: LispObject::nil(),
-                            },
-                        )));
+                        return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                            symbol: LispObject::symbol("ert-test-skipped"),
+                            data: LispObject::nil(),
+                        })));
                     }
                     Ok(Value::t())
                 }
                 "skip-when" => {
                     // (skip-when COND) — opposite of skip-unless.
                     let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let result = value_to_obj(eval(
-                        obj_to_value(form), env, editor, macros, state,
-                    )?);
+                    let result =
+                        value_to_obj(eval(obj_to_value(form), env, editor, macros, state)?);
                     if !result.is_nil() {
-                        return Err(ElispError::Signal(Box::new(
-                            crate::error::SignalData {
-                                symbol: LispObject::symbol("ert-test-skipped"),
-                                data: LispObject::nil(),
-                            },
-                        )));
+                        return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                            symbol: LispObject::symbol("ert-test-skipped"),
+                            data: LispObject::nil(),
+                        })));
                     }
                     Ok(Value::nil())
                 }
@@ -1767,13 +1750,12 @@ fn eval_inner(
                 "mapc" => eval_mapc(obj_to_value(cdr), env, editor, macros, state),
                 "dolist" => eval_dolist(obj_to_value(cdr), env, editor, macros, state),
                 "declare" | "interactive" | "eval-after-load" | "make-help-screen"
-                | "declare-function" => {
-                    Ok(Value::nil())
-                }
+                | "declare-function" => Ok(Value::nil()),
                 "defvar-local" => {
                     // (defvar-local VAR VAL &optional DOCSTRING) — like defvar + make-local-variable
                     let var_name = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let sym_name = var_name.as_symbol()
+                    let sym_name = var_name
+                        .as_symbol()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
                     if let Some(val_expr) = cdr.nth(1) {
                         let val = eval(obj_to_value(val_expr), env, editor, macros, state)?;
@@ -1880,7 +1862,10 @@ fn eval_inner(
                     // key `cl--class` (set by setf in eval_setf_one).
                     let name = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
-                        env, editor, macros, state,
+                        env,
+                        editor,
+                        macros,
+                        state,
                     )?);
                     if let Some(name_str) = name.as_symbol() {
                         let id = crate::obarray::intern(&name_str);
@@ -1897,12 +1882,11 @@ fn eval_inner(
                     // with NAME and ending in `error`. Tests rely on
                     // condition-case being able to catch by parent.
                     let name_form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let name = value_to_obj(eval(
-                        obj_to_value(name_form), env, editor, macros, state,
-                    )?);
-                    let name_sym = name.as_symbol().ok_or_else(|| {
-                        ElispError::WrongTypeArgument("symbol".to_string())
-                    })?;
+                    let name =
+                        value_to_obj(eval(obj_to_value(name_form), env, editor, macros, state)?);
+                    let name_sym = name
+                        .as_symbol()
+                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
                     let message = if let Some(m) = cdr.nth(1) {
                         value_to_obj(eval(obj_to_value(m), env, editor, macros, state)?)
                     } else {
@@ -1922,7 +1906,8 @@ fn eval_inner(
                         // Single parent symbol → make it a 1-elt list.
                         LispObject::cons(parent_list, LispObject::nil())
                     };
-                    let conditions = LispObject::cons(LispObject::symbol(&name_sym), parents_as_list);
+                    let conditions =
+                        LispObject::cons(LispObject::symbol(&name_sym), parents_as_list);
                     let id = crate::obarray::intern(&name_sym);
                     let conds_id = crate::obarray::intern("error-conditions");
                     let msg_id = crate::obarray::intern("error-message");
@@ -1947,7 +1932,12 @@ fn eval_inner(
                     // default implementation. Methods (cl-defmethod) may
                     // overwrite the function cell with specialized versions.
                     eval_cl_defgeneric_or_method(
-                        obj_to_value(cdr), env, editor, macros, state, false,
+                        obj_to_value(cdr),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                        false,
                     )
                 }
                 "cl-defmethod" => {
@@ -1962,7 +1952,12 @@ fn eval_inner(
                     // instead signal `void-function :printer` when our
                     // dispatch later looked up the raw qualifier symbol.
                     eval_cl_defgeneric_or_method(
-                        obj_to_value(cdr), env, editor, macros, state, true,
+                        obj_to_value(cdr),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                        true,
                     )
                 }
                 "define-globalized-minor-mode" => {
@@ -1992,11 +1987,8 @@ fn eval_inner(
                     // in ERT test files (e.g. buffer-tests.el's 92 uses
                     // that previously surfaced as "void function: tag")
                     // without dragging in cl-macs' memory cost.
-                    let vars =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let value_form = cdr
-                        .nth(1)
-                        .ok_or(ElispError::WrongNumberOfArguments)?;
+                    let vars = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let value_form = cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
                     let body = cdr
                         .rest()
                         .and_then(|r| r.rest())
@@ -2017,8 +2009,7 @@ fn eval_inner(
                     // :text is honored (for tempfile); prefix/suffix go
                     // into the generated filename.
                     let is_dir = sym_name == "ert-with-temp-directory";
-                    let name_obj =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let name_obj = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let name_sym = name_obj
                         .as_symbol()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
@@ -2046,13 +2037,19 @@ fn eval_inner(
                         let string_val = value_to_obj(evaled).as_string().map(|s| s.to_string());
                         match kw.as_str() {
                             ":prefix" => {
-                                if let Some(s) = string_val { prefix = s; }
+                                if let Some(s) = string_val {
+                                    prefix = s;
+                                }
                             }
                             ":suffix" => {
-                                if let Some(s) = string_val { suffix = s; }
+                                if let Some(s) = string_val {
+                                    suffix = s;
+                                }
                             }
                             ":text" => {
-                                if let Some(s) = string_val { text = s; }
+                                if let Some(s) = string_val {
+                                    text = s;
+                                }
                             }
                             _ => {}
                         }
@@ -2079,7 +2076,9 @@ fn eval_inner(
                     // Bind NAME to the path in a fresh child env.
                     let parent_env = Arc::new(env.read().clone());
                     let new_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
-                    new_env.write().define(&name_sym, LispObject::string(&path_str));
+                    new_env
+                        .write()
+                        .define(&name_sym, LispObject::string(&path_str));
 
                     // Evaluate BODY in the new env. Use a local catch
                     // so we can clean up on normal AND error paths.
@@ -2098,8 +2097,7 @@ fn eval_inner(
                     // (cl-return-from NAME VAL) to escape with VAL.
                     // Implemented as catch/throw over a fresh symbol
                     // per invocation so nested blocks don't collide.
-                    let name_obj =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let name_obj = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let name = name_obj
                         .as_symbol()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
@@ -2120,8 +2118,7 @@ fn eval_inner(
                 }
                 "cl-return-from" => {
                     // (cl-return-from NAME [VAL]) — throw to matching cl-block.
-                    let name_obj =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let name_obj = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let value = match cdr.nth(1) {
                         Some(v) => value_to_obj(eval(obj_to_value(v), env, editor, macros, state)?),
                         None => LispObject::nil(),
@@ -2147,15 +2144,9 @@ fn eval_inner(
                     // VALS is either a literal or a list of literals;
                     // matched with `eql`. Body of matching clause is
                     // evaluated. `cl-ecase` errors if no branch matches.
-                    let key_form =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let key = value_to_obj(eval(
-                        obj_to_value(key_form),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?);
+                    let key_form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let key =
+                        value_to_obj(eval(obj_to_value(key_form), env, editor, macros, state)?);
                     let mut clauses = cdr.rest().unwrap_or(LispObject::nil());
                     while let Some((clause, rest)) = clauses.destructure_cons() {
                         let keyset = clause.first().unwrap_or(LispObject::nil());
@@ -2197,15 +2188,9 @@ fn eval_inner(
                 }
                 "cl-typecase" | "cl-etypecase" => {
                     // (cl-typecase KEYFORM (TYPE BODY...) ...)
-                    let key_form =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let key = value_to_obj(eval(
-                        obj_to_value(key_form),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?);
+                    let key_form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let key =
+                        value_to_obj(eval(obj_to_value(key_form), env, editor, macros, state)?);
                     let mut clauses = cdr.rest().unwrap_or(LispObject::nil());
                     while let Some((clause, rest)) = clauses.destructure_cons() {
                         let type_spec = clause.first().unwrap_or(LispObject::nil());
@@ -2239,15 +2224,16 @@ fn eval_inner(
                     // Each binding installs a local lambda in a fresh
                     // env; mutual recursion does NOT see sibling
                     // bindings (that's cl-labels).
-                    let bindings =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let bindings = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let body = cdr.rest().unwrap_or(LispObject::nil());
                     let parent = Arc::new(env.read().clone());
                     let new_env = Arc::new(RwLock::new(Environment::with_parent(parent)));
                     let mut cur = bindings;
                     while let Some((binding, rest)) = cur.destructure_cons() {
-                        let name =
-                            binding.first().and_then(|n| n.as_symbol()).unwrap_or_default();
+                        let name = binding
+                            .first()
+                            .and_then(|n| n.as_symbol())
+                            .unwrap_or_default();
                         let rest_of_binding = binding.rest().unwrap_or(LispObject::nil());
                         let params = rest_of_binding.first().unwrap_or(LispObject::nil());
                         let fbody = rest_of_binding.rest().unwrap_or(LispObject::nil());
@@ -2266,15 +2252,16 @@ fn eval_inner(
                     // sibling bindings (supports mutual recursion).
                     // Achieved by installing the lambdas into the SAME
                     // env that they capture as the enclosing scope.
-                    let bindings =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let bindings = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let body = cdr.rest().unwrap_or(LispObject::nil());
                     let parent = Arc::new(env.read().clone());
                     let new_env = Arc::new(RwLock::new(Environment::with_parent(parent)));
                     let mut cur = bindings;
                     while let Some((binding, rest)) = cur.destructure_cons() {
-                        let name =
-                            binding.first().and_then(|n| n.as_symbol()).unwrap_or_default();
+                        let name = binding
+                            .first()
+                            .and_then(|n| n.as_symbol())
+                            .unwrap_or_default();
                         let rest_of_binding = binding.rest().unwrap_or(LispObject::nil());
                         let params = rest_of_binding.first().unwrap_or(LispObject::nil());
                         let fbody = rest_of_binding.rest().unwrap_or(LispObject::nil());
@@ -2293,8 +2280,7 @@ fn eval_inner(
                     // is restored on exit even on error, via an
                     // explicit unwind block built from Rust Drop-ish
                     // semantics (save + restore the old env value).
-                    let bindings =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let bindings = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let body = cdr.rest().unwrap_or(LispObject::nil());
                     let mut saves: Vec<(String, Option<LispObject>)> = Vec::new();
                     let mut cur = bindings;
@@ -2329,9 +2315,7 @@ fn eval_inner(
                     // distinction isn't modeled; treat as plain `let`.
                     eval_let(obj_to_value(cdr), env, editor, macros, state)
                 }
-                "cl-lexical-let*" => {
-                    eval_let_star(obj_to_value(cdr), env, editor, macros, state)
-                }
+                "cl-lexical-let*" => eval_let_star(obj_to_value(cdr), env, editor, macros, state),
                 "cl-the" => {
                     // (cl-the TYPE FORM) — runtime type assertion. We
                     // don't check the type; just evaluate FORM.
@@ -2346,24 +2330,24 @@ fn eval_inner(
                     let op = if sym_name.ends_with("decf") { "-" } else { "+" };
                     let new_val = LispObject::cons(
                         LispObject::symbol(op),
-                        LispObject::cons(
-                            var.clone(),
-                            LispObject::cons(delta, LispObject::nil()),
-                        ),
+                        LispObject::cons(var.clone(), LispObject::cons(delta, LispObject::nil())),
                     );
                     let setq_form = LispObject::cons(
                         LispObject::symbol("setq"),
-                        LispObject::cons(
-                            var,
-                            LispObject::cons(new_val, LispObject::nil()),
-                        ),
+                        LispObject::cons(var, LispObject::cons(new_val, LispObject::nil())),
                     );
                     eval(obj_to_value(setq_form), env, editor, macros, state)
                 }
                 "cl-assert" => {
                     // (cl-assert FORM &optional SHOW-ARGS STRING &rest ARGS)
                     let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let val = value_to_obj(eval(obj_to_value(form.clone()), env, editor, macros, state)?);
+                    let val = value_to_obj(eval(
+                        obj_to_value(form.clone()),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
                     if matches!(val, LispObject::Nil) {
                         return Err(ElispError::Signal(Box::new(crate::error::SignalData {
                             symbol: LispObject::symbol("cl-assertion-failed"),
@@ -2380,18 +2364,15 @@ fn eval_inner(
                     // `(satisfies PRED)` must call PRED — `prim_cl_typep`
                     // can't (no eval access), so we handle it here. Otherwise
                     // defer to `prim_cl_typep` for the usual combinators.
-                    let is_type = check_type_with_eval(
-                        &val,
-                        &type_spec,
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?;
+                    let is_type =
+                        check_type_with_eval(&val, &type_spec, env, editor, macros, state)?;
                     if !is_type {
                         return Err(ElispError::Signal(Box::new(crate::error::SignalData {
                             symbol: LispObject::symbol("wrong-type-argument"),
-                            data: LispObject::cons(type_spec, LispObject::cons(val, LispObject::nil())),
+                            data: LispObject::cons(
+                                type_spec,
+                                LispObject::cons(val, LispObject::nil()),
+                            ),
                         })));
                     }
                     Ok(Value::nil())
@@ -2406,9 +2387,14 @@ fn eval_inner(
                     // dynamically to the corresponding value.
                     let syms_form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let vals_form = cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-                    let body = cdr.rest().and_then(|r| r.rest()).unwrap_or(LispObject::nil());
-                    let syms = value_to_obj(eval(obj_to_value(syms_form), env, editor, macros, state)?);
-                    let vals = value_to_obj(eval(obj_to_value(vals_form), env, editor, macros, state)?);
+                    let body = cdr
+                        .rest()
+                        .and_then(|r| r.rest())
+                        .unwrap_or(LispObject::nil());
+                    let syms =
+                        value_to_obj(eval(obj_to_value(syms_form), env, editor, macros, state)?);
+                    let vals =
+                        value_to_obj(eval(obj_to_value(vals_form), env, editor, macros, state)?);
                     let mut saves: Vec<(String, Option<LispObject>)> = Vec::new();
                     let mut s_cur = syms;
                     let mut v_cur = vals;
@@ -2436,10 +2422,12 @@ fn eval_inner(
                     // (cl-do ((VAR INIT [STEP]) ...) (END-COND RESULT...) BODY...)
                     // Simplified: init once, loop while END-COND false,
                     // step vars each iteration; return RESULT.
-                    let bindings =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let bindings = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let end_clause = cdr.nth(1).unwrap_or(LispObject::nil());
-                    let body = cdr.rest().and_then(|r| r.rest()).unwrap_or(LispObject::nil());
+                    let body = cdr
+                        .rest()
+                        .and_then(|r| r.rest())
+                        .unwrap_or(LispObject::nil());
                     let parent = Arc::new(env.read().clone());
                     let new_env = Arc::new(RwLock::new(Environment::with_parent(parent)));
                     // Collect var/init/step triples.
@@ -2447,8 +2435,7 @@ fn eval_inner(
                         Vec::new();
                     let mut bcur = bindings;
                     while let Some((b, rest)) = bcur.destructure_cons() {
-                        let name =
-                            b.first().and_then(|n| n.as_symbol()).unwrap_or_default();
+                        let name = b.first().and_then(|n| n.as_symbol()).unwrap_or_default();
                         let init = b.nth(1);
                         let step = b.nth(2);
                         triples.push((name, init, step));
@@ -2488,7 +2475,13 @@ fn eval_inner(
                                 state,
                             );
                         }
-                        let _ = eval_progn(obj_to_value(body.clone()), &new_env, editor, macros, state)?;
+                        let _ = eval_progn(
+                            obj_to_value(body.clone()),
+                            &new_env,
+                            editor,
+                            macros,
+                            state,
+                        )?;
                         // Step.
                         let mut new_vals: Vec<(String, LispObject)> = Vec::new();
                         for (name, _, step) in &triples {
@@ -2511,13 +2504,7 @@ fn eval_inner(
                 "cl-loop" => {
                     // Delegate to a dedicated evaluator. Returns a
                     // single result value.
-                    return functions::eval_cl_loop(
-                        obj_to_value(cdr),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    );
+                    return functions::eval_cl_loop(obj_to_value(cdr), env, editor, macros, state);
                 }
                 "cl-multiple-value-bind" => {
                     // (cl-multiple-value-bind (VAR1 VAR2...) FORM BODY...)
@@ -2525,11 +2512,8 @@ fn eval_inner(
                     // value returns — FORM evaluates to a single value
                     // wrapped in a singleton list. Treat this as cl-
                     // destructuring-bind over that list.
-                    let vars =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let value_form = cdr
-                        .nth(1)
-                        .ok_or(ElispError::WrongNumberOfArguments)?;
+                    let vars = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let value_form = cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
                     let body = cdr
                         .rest()
                         .and_then(|r| r.rest())
@@ -2538,7 +2522,15 @@ fn eval_inner(
                     // Wrap the single value in a list to satisfy the
                     // positional-bind semantics.
                     let value_list = LispObject::cons(value_to_obj(value), LispObject::nil());
-                    apply_lambda(&vars, &body, obj_to_value(value_list), env, editor, macros, state)
+                    apply_lambda(
+                        &vars,
+                        &body,
+                        obj_to_value(value_list),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )
                 }
                 "defclass" => {
                     // (defclass NAME (PARENT...) (SLOTS...) [OPTIONS...])
@@ -2579,13 +2571,9 @@ fn eval_inner(
                                             // real Emacs this is re-evaluated
                                             // per make-instance; freezing is
                                             // fine for common literal defaults.
-                                            if let Ok(evaled) = eval(
-                                                obj_to_value(v),
-                                                env,
-                                                editor,
-                                                macros,
-                                                state,
-                                            ) {
+                                            if let Ok(evaled) =
+                                                eval(obj_to_value(v), env, editor, macros, state)
+                                            {
                                                 initform = value_to_obj(evaled);
                                             }
                                             walk = rest2;
@@ -2595,8 +2583,9 @@ fn eval_inner(
                                     Some(":initarg") => {
                                         if let Some((v, rest2)) = vs.destructure_cons() {
                                             if let Some(k2) = v.as_symbol() {
-                                                initarg =
-                                                    Some(k2.strip_prefix(':').unwrap_or(&k2).to_string());
+                                                initarg = Some(
+                                                    k2.strip_prefix(':').unwrap_or(&k2).to_string(),
+                                                );
                                             }
                                             walk = rest2;
                                             continue;
@@ -2619,13 +2608,11 @@ fn eval_inner(
                         }
                         cur = rest;
                     }
-                    crate::primitives_eieio::register_class(
-                        crate::primitives_eieio::Class {
-                            name: name.clone(),
-                            parent: parent_name,
-                            slots,
-                        },
-                    );
+                    crate::primitives_eieio::register_class(crate::primitives_eieio::Class {
+                        name: name.clone(),
+                        parent: parent_name,
+                        slots,
+                    });
                     Ok(obj_to_value(LispObject::symbol(&name)))
                 }
                 // (setf PLACE VALUE [PLACE VALUE]...) — walk pairs and
@@ -2644,9 +2631,7 @@ fn eval_inner(
                     let mut last = Value::nil();
                     let mut cur = cdr.clone();
                     while let Some((place, rest)) = cur.destructure_cons() {
-                        let value_form = rest.first().ok_or(
-                            ElispError::WrongNumberOfArguments,
-                        )?;
+                        let value_form = rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
                         cur = rest.rest().unwrap_or(LispObject::nil());
                         last = eval_setf_one(place, value_form, env, editor, macros, state)?;
                     }
@@ -2837,21 +2822,32 @@ fn eval_inner(
                     // so vector mutation is actually performed.
                     let array = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
-                        env, editor, macros, state,
+                        env,
+                        editor,
+                        macros,
+                        state,
                     )?);
                     let idx_obj = value_to_obj(eval(
                         obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
-                        env, editor, macros, state,
+                        env,
+                        editor,
+                        macros,
+                        state,
                     )?);
                     let val = value_to_obj(eval(
                         obj_to_value(cdr.nth(2).ok_or(ElispError::WrongNumberOfArguments)?),
-                        env, editor, macros, state,
+                        env,
+                        editor,
+                        macros,
+                        state,
                     )?);
                     let args = LispObject::cons(
                         array,
                         LispObject::cons(idx_obj, LispObject::cons(val, LispObject::nil())),
                     );
-                    Ok(obj_to_value(crate::primitives::call_primitive("aset", &args)?))
+                    Ok(obj_to_value(crate::primitives::call_primitive(
+                        "aset", &args,
+                    )?))
                 }
                 "with-suppressed-warnings" | "dont-compile" => {
                     let body = cdr.rest().unwrap_or(LispObject::nil());
@@ -3060,7 +3056,7 @@ fn eval_inner(
                         None => {
                             return Ok(obj_to_value(
                                 lists.last().cloned().unwrap_or(LispObject::nil()),
-                            ))
+                            ));
                         }
                     };
                     let result = lists[result_idx].clone();
@@ -3214,47 +3210,27 @@ fn eval_inner(
                     // form silently vanished — producing the
                     // `invalid-slot-type: (auth-source-backend)`
                     // cascade. Run the bytecode through our VM instead.
-                    let code_form =
-                        cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let consts_form =
-                        cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-                    let depth_form =
-                        cdr.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
-                    let code_val = value_to_obj(eval(
-                        obj_to_value(code_form),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?);
-                    let consts_val = value_to_obj(eval(
-                        obj_to_value(consts_form),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?);
-                    let depth_val = value_to_obj(eval(
-                        obj_to_value(depth_form),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?);
+                    let code_form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let consts_form = cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+                    let depth_form = cdr.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
+                    let code_val =
+                        value_to_obj(eval(obj_to_value(code_form), env, editor, macros, state)?);
+                    let consts_val =
+                        value_to_obj(eval(obj_to_value(consts_form), env, editor, macros, state)?);
+                    let depth_val =
+                        value_to_obj(eval(obj_to_value(depth_form), env, editor, macros, state)?);
                     // `.elc` code strings are read as Latin-1 by the
                     // reader (see `eval_load`), so each char's low byte
                     // is the original bytecode byte.
                     let Some(code_str) = code_val.as_string() else {
                         return Ok(Value::nil());
                     };
-                    let bytecode: Vec<u8> =
-                        code_str.chars().map(|c| c as u32 as u8).collect();
+                    let bytecode: Vec<u8> = code_str.chars().map(|c| c as u32 as u8).collect();
                     let constants: Vec<LispObject> = match consts_val {
                         LispObject::Vector(v) => v.lock().clone(),
                         _ => Vec::new(),
                     };
-                    let maxdepth =
-                        depth_val.as_integer().unwrap_or(32) as usize;
+                    let maxdepth = depth_val.as_integer().unwrap_or(32) as usize;
                     let func = crate::object::BytecodeFunction {
                         argdesc: 0,
                         bytecode,
@@ -3263,9 +3239,7 @@ fn eval_inner(
                         docstring: None,
                         interactive: None,
                     };
-                    match crate::vm::execute_bytecode(
-                        &func, &[], env, editor, macros, state,
-                    ) {
+                    match crate::vm::execute_bytecode(&func, &[], env, editor, macros, state) {
                         Ok(result) => Ok(obj_to_value(result)),
                         Err(e) => {
                             // Tolerate per-form VM errors so the rest of
@@ -4041,9 +4015,7 @@ fn eval_inner(
                     Ok(obj_to_value(LispObject::integer(32))) // ?\s = space
                 }
                 // oclosure-define: expensive macro from oclosure.el, no-op for us
-                "oclosure-define" => {
-                    Ok(Value::nil())
-                }
+                "oclosure-define" => Ok(Value::nil()),
                 // pcase-defmacro: just register as a no-op macro for now
                 "pcase-defmacro" => {
                     if let Some(name) = cdr.first() {
@@ -4473,7 +4445,9 @@ fn eval_backquote_form(
                         continue;
                     }
                 }
-                out.push(eval_backquote_form(item, depth, env, editor, macros, state)?);
+                out.push(eval_backquote_form(
+                    item, depth, env, editor, macros, state,
+                )?);
             }
             return Ok(LispObject::Vector(Arc::new(parking_lot::Mutex::new(out))));
         }
@@ -4490,8 +4464,7 @@ fn eval_backquote_form(
                     return Ok(value_to_obj(val));
                 }
                 // Nested: reduce depth, preserve shape.
-                let expanded =
-                    eval_backquote_form(inner, depth - 1, env, editor, macros, state)?;
+                let expanded = eval_backquote_form(inner, depth - 1, env, editor, macros, state)?;
                 return Ok(LispObject::cons(
                     LispObject::symbol(","),
                     LispObject::cons(expanded, LispObject::nil()),
@@ -4505,8 +4478,7 @@ fn eval_backquote_form(
                     ));
                 }
                 let inner = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                let expanded =
-                    eval_backquote_form(inner, depth - 1, env, editor, macros, state)?;
+                let expanded = eval_backquote_form(inner, depth - 1, env, editor, macros, state)?;
                 return Ok(LispObject::cons(
                     LispObject::symbol(",@"),
                     LispObject::cons(expanded, LispObject::nil()),
@@ -4515,8 +4487,7 @@ fn eval_backquote_form(
             "`" => {
                 // Nested backquote raises depth.
                 let inner = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                let expanded =
-                    eval_backquote_form(inner, depth + 1, env, editor, macros, state)?;
+                let expanded = eval_backquote_form(inner, depth + 1, env, editor, macros, state)?;
                 return Ok(LispObject::cons(
                     LispObject::symbol("`"),
                     LispObject::cons(expanded, LispObject::nil()),
@@ -4538,8 +4509,7 @@ fn eval_backquote_form(
                 if depth == 1 {
                     if let Some((h, r)) = elem.destructure_cons() {
                         if h.as_symbol().as_deref() == Some(",@") {
-                            let inner =
-                                r.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                            let inner = r.first().ok_or(ElispError::WrongNumberOfArguments)?;
                             let spliced = value_to_obj(eval(
                                 obj_to_value(inner),
                                 env,
@@ -4576,15 +4546,8 @@ fn eval_backquote_form(
                     //   `(progn . ,(nreverse exps))
                     //    => (progn . eval-of-(nreverse exps))
                     if elem.as_symbol().as_deref() == Some(",") {
-                        let inner =
-                            rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                        let tail_val = eval(
-                            obj_to_value(inner),
-                            env,
-                            editor,
-                            macros,
-                            state,
-                        )?;
+                        let inner = rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                        let tail_val = eval(obj_to_value(inner), env, editor, macros, state)?;
                         break value_to_obj(tail_val);
                     }
                 }
@@ -4617,8 +4580,8 @@ mod environment;
 mod error_forms;
 mod functions;
 mod macro_table;
-pub mod state_cl;
 mod special_forms;
+pub mod state_cl;
 mod thread_locals;
 
 // Re-export functions used internally and externally

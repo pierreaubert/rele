@@ -61,9 +61,7 @@ fn time_to_seconds(obj: &LispObject) -> Option<f64> {
                         .as_ref()
                         .and_then(LispObject::as_integer)
                         .unwrap_or(0);
-                    Some(
-                        (high as f64) * 65536.0 + (low as f64) + (usec as f64) / 1_000_000.0,
-                    )
+                    Some((high as f64) * 65536.0 + (low as f64) + (usec as f64) / 1_000_000.0)
                 }
                 _ => None,
             }

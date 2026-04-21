@@ -38,7 +38,10 @@ pub struct LspRegistry {
 impl std::fmt::Debug for LspRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LspRegistry")
-            .field("servers", &self.clients.read().keys().cloned().collect::<Vec<_>>())
+            .field(
+                "servers",
+                &self.clients.read().keys().cloned().collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -85,10 +88,7 @@ impl LspRegistry {
     /// started, spawns a background init task; the client will appear in
     /// `client()` once init completes (signaled by `LspEvent::ServerStarted`).
     /// This function never blocks.
-    pub fn ensure_server_for_file(
-        &mut self,
-        file_path: &std::path::Path,
-    ) -> Option<String> {
+    pub fn ensure_server_for_file(&mut self, file_path: &std::path::Path) -> Option<String> {
         let ext = file_path.extension()?.to_str()?;
         let server_config = self.config.find_server_for_extension(ext)?.clone();
         let server_name = server_config.name.clone();
@@ -181,8 +181,7 @@ impl LspRegistry {
     /// returns immediately; the child processes will be killed via
     /// `kill_on_drop` if shutdown is still pending at registry drop.
     pub fn shutdown_all(&mut self) {
-        let clients: Vec<Arc<LspClient>> =
-            self.clients.write().drain().map(|(_, c)| c).collect();
+        let clients: Vec<Arc<LspClient>> = self.clients.write().drain().map(|(_, c)| c).collect();
         for client in clients {
             self.runtime.spawn(async move {
                 if let Err(e) = client.shutdown().await {

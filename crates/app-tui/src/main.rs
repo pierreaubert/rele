@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::{execute};
 use log::info;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;

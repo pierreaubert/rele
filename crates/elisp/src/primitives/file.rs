@@ -11,7 +11,8 @@ use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 
 fn str_arg(args: &LispObject, n: usize) -> Option<String> {
-    args.nth(n).and_then(|a| a.as_string().map(|s| s.to_string()))
+    args.nth(n)
+        .and_then(|a| a.as_string().map(|s| s.to_string()))
 }
 
 fn int_arg(args: &LispObject, n: usize, default: i64) -> i64 {
@@ -187,11 +188,7 @@ fn normalize_path(path: &str) -> String {
         }
     }
     let out = parts.join("/");
-    if is_abs {
-        format!("/{out}")
-    } else {
-        out
-    }
+    if is_abs { format!("/{out}") } else { out }
 }
 
 pub fn prim_file_truename(args: &LispObject) -> ElispResult<LispObject> {
@@ -232,7 +229,9 @@ pub fn prim_file_regular_p(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_file_readable_p(args: &LispObject) -> ElispResult<LispObject> {
     let s = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
     Ok(LispObject::from(
-        std::fs::metadata(&s).map(|m| !m.permissions().readonly()).unwrap_or(false)
+        std::fs::metadata(&s)
+            .map(|m| !m.permissions().readonly())
+            .unwrap_or(false)
             || std::path::Path::new(&s).exists(),
     ))
 }
@@ -264,12 +263,10 @@ pub fn prim_file_executable_p(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_file_symlink_p(args: &LispObject) -> ElispResult<LispObject> {
     let s = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
     match std::fs::symlink_metadata(&s) {
-        Ok(m) if m.file_type().is_symlink() => {
-            match std::fs::read_link(&s) {
-                Ok(t) => Ok(LispObject::string(&t.to_string_lossy())),
-                Err(_) => Ok(LispObject::t()),
-            }
-        }
+        Ok(m) if m.file_type().is_symlink() => match std::fs::read_link(&s) {
+            Ok(t) => Ok(LispObject::string(&t.to_string_lossy())),
+            Err(_) => Ok(LispObject::t()),
+        },
         _ => Ok(LispObject::nil()),
     }
 }
@@ -280,7 +277,9 @@ pub fn prim_file_modes(args: &LispObject) -> ElispResult<LispObject> {
     {
         use std::os::unix::fs::PermissionsExt;
         if let Ok(m) = std::fs::metadata(&s) {
-            return Ok(LispObject::integer((m.permissions().mode() & 0o7777) as i64));
+            return Ok(LispObject::integer(
+                (m.permissions().mode() & 0o7777) as i64,
+            ));
         }
     }
     Ok(LispObject::nil())
@@ -332,7 +331,10 @@ pub fn prim_file_attributes(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_directory_files(args: &LispObject) -> ElispResult<LispObject> {
     let dir = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
-    let full = args.nth(1).map(|a| !matches!(a, LispObject::Nil)).unwrap_or(false);
+    let full = args
+        .nth(1)
+        .map(|a| !matches!(a, LispObject::Nil))
+        .unwrap_or(false);
     let entries = match std::fs::read_dir(&dir) {
         Ok(r) => r,
         Err(_) => return Ok(LispObject::nil()),
@@ -359,7 +361,10 @@ pub fn prim_make_directory(args: &LispObject) -> ElispResult<LispObject> {
         Some(s) => s,
         None => return Ok(LispObject::nil()),
     };
-    let parents = args.nth(1).map(|a| !matches!(a, LispObject::Nil)).unwrap_or(false);
+    let parents = args
+        .nth(1)
+        .map(|a| !matches!(a, LispObject::Nil))
+        .unwrap_or(false);
     let r = if parents {
         std::fs::create_dir_all(&s)
     } else {
@@ -376,7 +381,10 @@ pub fn prim_make_directory(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_delete_directory(args: &LispObject) -> ElispResult<LispObject> {
     let s = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
-    let recursive = args.nth(1).map(|a| !matches!(a, LispObject::Nil)).unwrap_or(false);
+    let recursive = args
+        .nth(1)
+        .map(|a| !matches!(a, LispObject::Nil))
+        .unwrap_or(false);
     let r = if recursive {
         std::fs::remove_dir_all(&s)
     } else {
@@ -448,9 +456,7 @@ pub fn prim_make_temp_name(args: &LispObject) -> ElispResult<LispObject> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    Ok(LispObject::string(&format!(
-        "{prefix}{pid}-{nonce}"
-    )))
+    Ok(LispObject::string(&format!("{prefix}{pid}-{nonce}")))
 }
 
 // ---- File contents / buffer I/O ------------------------------------
@@ -472,7 +478,7 @@ pub fn prim_insert_file_contents(args: &LispObject) -> ElispResult<LispObject> {
             return Ok(LispObject::cons(
                 LispObject::string(&s),
                 LispObject::cons(LispObject::integer(0), LispObject::nil()),
-            ))
+            ));
         }
     };
     let len = text.chars().count();
@@ -490,7 +496,10 @@ pub fn prim_write_region(args: &LispObject) -> ElispResult<LispObject> {
     let start = int_arg(args, 0, 1) as usize;
     let end = int_arg(args, 1, 1) as usize;
     let file = str_arg(args, 2).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
-    let append = args.nth(3).map(|a| !matches!(a, LispObject::Nil)).unwrap_or(false);
+    let append = args
+        .nth(3)
+        .map(|a| !matches!(a, LispObject::Nil))
+        .unwrap_or(false);
     let text = buffer::with_current(|b| b.substring(start, end));
     use std::io::Write;
     let r = if append {
@@ -563,11 +572,15 @@ pub fn prim_setenv(args: &LispObject) -> ElispResult<LispObject> {
             // single-threaded worker subprocesses; elisp calls are
             // serialized by the Mutex around the interpreter heap.
             #[allow(unsafe_code)]
-            unsafe { std::env::set_var(&name, v) };
+            unsafe {
+                std::env::set_var(&name, v)
+            };
         }
         None => {
             #[allow(unsafe_code)]
-            unsafe { std::env::remove_var(&name) };
+            unsafe {
+                std::env::remove_var(&name)
+            };
         }
     }
     update_process_environment(&name, value.as_deref());
@@ -707,8 +720,9 @@ pub fn prim_make_directory_internal(args: &LispObject) -> ElispResult<LispObject
                 symbol: LispObject::symbol("file-error"),
                 data: LispObject::cons(
                     LispObject::string("cannot create"),
-                    LispObject::cons(LispObject::string(&path),
-                        LispObject::cons(LispObject::string(&msg), LispObject::nil())
+                    LispObject::cons(
+                        LispObject::string(&path),
+                        LispObject::cons(LispObject::string(&msg), LispObject::nil()),
                     ),
                 ),
             })))
@@ -756,11 +770,18 @@ pub fn prim_url_expand_file_name(args: &LispObject) -> ElispResult<LispObject> {
     let url = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
     if url.starts_with("file://") {
         let path = &url[7..];
-        prim_expand_file_name(&LispObject::cons(LispObject::string(path), LispObject::nil()))
-    } else if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("ftp://") {
+        prim_expand_file_name(&LispObject::cons(
+            LispObject::string(path),
+            LispObject::nil(),
+        ))
+    } else if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("ftp://")
+    {
         Ok(LispObject::string(&url))
     } else {
-        prim_expand_file_name(&LispObject::cons(LispObject::string(&url), LispObject::nil()))
+        prim_expand_file_name(&LispObject::cons(
+            LispObject::string(&url),
+            LispObject::nil(),
+        ))
     }
 }
 
@@ -906,7 +927,9 @@ mod tests {
 
         // Walk process-environment; expect the new entry at the head.
         let list = crate::obarray::get_value_cell(sym).unwrap();
-        let head = list.first().and_then(|v| v.as_string().map(|s| s.to_string()));
+        let head = list
+            .first()
+            .and_then(|v| v.as_string().map(|s| s.to_string()));
         assert_eq!(head.as_deref(), Some("R2_TEST_KEY=r2-test-value"));
 
         // Unrelated entry still present after the new head.
@@ -923,7 +946,9 @@ mod tests {
         );
         prim_setenv(&remove_args).expect("setenv remove ok");
         let list = crate::obarray::get_value_cell(sym).unwrap();
-        let head = list.first().and_then(|v| v.as_string().map(|s| s.to_string()));
+        let head = list
+            .first()
+            .and_then(|v| v.as_string().map(|s| s.to_string()));
         assert_eq!(head.as_deref(), Some("UNRELATED=1"));
     }
 
@@ -950,13 +975,19 @@ mod tests {
         let mut count = 0;
         let mut cur = list.clone();
         while let Some((car, cdr)) = cur.destructure_cons() {
-            if car.as_string().map(|s| s.starts_with("R2_DUP=")).unwrap_or(false) {
+            if car
+                .as_string()
+                .map(|s| s.starts_with("R2_DUP="))
+                .unwrap_or(false)
+            {
                 count += 1;
             }
             cur = cdr;
         }
         assert_eq!(count, 1, "setenv must replace, not duplicate");
-        let head = list.first().and_then(|v| v.as_string().map(|s| s.to_string()));
+        let head = list
+            .first()
+            .and_then(|v| v.as_string().map(|s| s.to_string()));
         assert_eq!(head.as_deref(), Some("R2_DUP=new"));
     }
 
@@ -1096,7 +1127,10 @@ mod tests {
 
     #[test]
     fn url_expand_file_name_local_file() {
-        let args = LispObject::cons(LispObject::string("file:///tmp/test.txt"), LispObject::nil());
+        let args = LispObject::cons(
+            LispObject::string("file:///tmp/test.txt"),
+            LispObject::nil(),
+        );
         let result = prim_url_expand_file_name(&args).unwrap();
         let path = result.as_string().map(|s| s.to_string());
         assert!(path.is_some());

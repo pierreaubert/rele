@@ -9,7 +9,7 @@
 //! covered here. (b) (macro/let-bound locals) and (c) (reader/gensym) cases
 //! are documented in the PR body and deferred to a follow-up stream.
 
-use rele_elisp::{add_primitives, primitives_modules, read, Interpreter, LispObject};
+use rele_elisp::{Interpreter, LispObject, add_primitives, primitives_modules, read};
 
 /// Builds an interpreter pre-seeded with the R15 fixtures that the real
 /// `rele_elisp::eval::tests::make_stdlib_interp` configures. Kept in sync

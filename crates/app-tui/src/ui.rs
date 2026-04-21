@@ -105,9 +105,7 @@ pub fn draw(frame: &mut Frame, state: &mut TuiAppState) {
     // How tall the bottom "message / minibuffer" area should be.
     // 1 line normally; up to ~6 lines when the minibuffer is open with
     // candidates (one prompt line + up to N candidate lines).
-    let minibuffer_height = if state.minibuffer.active
-        && !state.minibuffer.candidates.is_empty()
-    {
+    let minibuffer_height = if state.minibuffer.active && !state.minibuffer.candidates.is_empty() {
         let candidates = state.minibuffer.filtered.len().min(5);
         (candidates + 1) as u16
     } else {
@@ -117,9 +115,9 @@ pub fn draw(frame: &mut Frame, state: &mut TuiAppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),                       // window tree
-            Constraint::Length(1),                    // status bar
-            Constraint::Length(minibuffer_height),    // message / minibuffer
+            Constraint::Min(1),                    // window tree
+            Constraint::Length(1),                 // status bar
+            Constraint::Length(minibuffer_height), // message / minibuffer
         ])
         .split(area);
 
@@ -261,7 +259,7 @@ fn draw_diagnostics_panel(frame: &mut Frame, state: &TuiAppState, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" {total} total ", ),
+            format!(" {total} total ",),
             Style::default().fg(Color::DarkGray),
         ),
     ]);
@@ -293,8 +291,7 @@ fn draw_diagnostics_panel(frame: &mut Frame, state: &TuiAppState, area: Rect) {
         let (marker, sev_color) = severity_marker(Some(sev));
         let line = d.range.start.line;
         let col = d.range.start.character;
-        let on_cursor = d.range.start.line <= cursor_line
-            && d.range.end.line >= cursor_line;
+        let on_cursor = d.range.start.line <= cursor_line && d.range.end.line >= cursor_line;
         let row_style = if on_cursor {
             Style::default()
                 .bg(Color::DarkGray)
@@ -308,10 +305,7 @@ fn draw_diagnostics_panel(frame: &mut Frame, state: &TuiAppState, area: Rect) {
         let msg_first = d.message.lines().next().unwrap_or("");
         let msg_truncated: String = msg_first.chars().take(message_width).collect();
         lines.push(Line::from(vec![
-            Span::styled(
-                format!(" {marker} "),
-                row_style.fg(sev_color),
-            ),
+            Span::styled(format!(" {marker} "), row_style.fg(sev_color)),
             Span::styled(
                 format!("{:>3}:{:<3} ", line + 1, col + 1),
                 row_style.fg(Color::DarkGray),
@@ -324,7 +318,9 @@ fn draw_diagnostics_panel(frame: &mut Frame, state: &TuiAppState, area: Rect) {
         let extra = total - visible;
         lines.push(Line::from(Span::styled(
             format!(" … (+{extra} more — M-g n / M-g p to navigate)"),
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
         )));
     }
 
@@ -388,9 +384,10 @@ fn draw_editor(frame: &mut Frame, state: &mut TuiAppState, area: Rect) {
         if line_idx >= total_lines {
             // Tilde for lines past end of buffer (like vim ~)
             let gutter = format!("{:>width$} ", "~", width = gutter_width);
-            lines.push(Line::from(vec![
-                Span::styled(gutter, Style::default().fg(Color::DarkGray)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                gutter,
+                Style::default().fg(Color::DarkGray),
+            )]));
             continue;
         }
 
@@ -427,10 +424,7 @@ fn draw_editor(frame: &mut Frame, state: &mut TuiAppState, area: Rect) {
             .map(|v| v.as_slice())
             .unwrap_or(&empty_ranges);
 
-        let mut spans = vec![Span::styled(
-            gutter,
-            Style::default().fg(gutter_color),
-        )];
+        let mut spans = vec![Span::styled(gutter, Style::default().fg(gutter_color))];
 
         // Compute the character columns covered by diagnostics on this
         // line. For a single-line diagnostic we honour its start/end
@@ -498,13 +492,7 @@ fn draw_editor(frame: &mut Frame, state: &mut TuiAppState, area: Rect) {
             // Non-cursor line: syntax-highlight + diagnostic overlay,
             // truncated to text_width.
             let truncated: Vec<char> = display_text.chars().take(text_width).collect();
-            push_highlighted_spans(
-                &mut spans,
-                &truncated,
-                line_ranges,
-                &diag_overlay,
-                None,
-            );
+            push_highlighted_spans(&mut spans, &truncated, line_ranges, &diag_overlay, None);
         }
         lines.push(Line::from(spans));
     }
@@ -565,7 +553,10 @@ fn push_highlighted_spans(
         // start of next diagnostic, cursor col, or EOL. The segment
         // within these boundaries has uniform styling.
         let mut next_boundary = total;
-        if let Some(r) = ranges.iter().find(|r| r.start_col <= col && col < r.end_col) {
+        if let Some(r) = ranges
+            .iter()
+            .find(|r| r.start_col <= col && col < r.end_col)
+        {
             next_boundary = next_boundary.min(r.end_col);
         }
         if let Some(r) = range_iter.peek() {
@@ -667,7 +658,11 @@ fn render_mode_line(
 ) {
     let (left, right) = match content {
         WindowContent::Buffer => {
-            let dirty = if state.document.is_dirty() { "**" } else { "--" };
+            let dirty = if state.document.is_dirty() {
+                "**"
+            } else {
+                "--"
+            };
             let line = state.cursor_line() + 1;
             let col = state.cursor_col();
             let total = state.document.len_lines();
@@ -706,8 +701,7 @@ fn render_mode_line(
                 String::new()
             };
             let left = format!(" {dirty} {}", state.current_buffer_name);
-            let right =
-                format!("L{line}:C{col}  ({total}L)  ({lang}){diag_text}{lsp_info} ");
+            let right = format!("L{line}:C{col}  ({total}L)  ({lang}){diag_text}{lsp_info} ");
             (left, right)
         }
         WindowContent::Diagnostics => {
@@ -764,18 +758,15 @@ fn draw_message_line(frame: &mut Frame, state: &TuiAppState, area: Rect) {
     if let Some(diag) = state.diagnostic_at_cursor() {
         // Colour by the severity of the worst diagnostic on the line.
         // `severity_marker` already does that lookup.
-        let sev = state
-            .lsp_buffer_state
-            .as_ref()
-            .and_then(|lsp| {
-                let cur = state.cursor_line() as u32;
-                let here: Vec<&Diagnostic> = lsp
-                    .diagnostics
-                    .iter()
-                    .filter(|d| d.range.start.line <= cur && d.range.end.line >= cur)
-                    .collect();
-                worst_severity(&here)
-            });
+        let sev = state.lsp_buffer_state.as_ref().and_then(|lsp| {
+            let cur = state.cursor_line() as u32;
+            let here: Vec<&Diagnostic> = lsp
+                .diagnostics
+                .iter()
+                .filter(|d| d.range.start.line <= cur && d.range.end.line >= cur)
+                .collect();
+            worst_severity(&here)
+        });
         let (_, color) = severity_marker(sev);
         let line = Line::from(Span::styled(
             diag,
@@ -809,7 +800,9 @@ fn draw_minibuffer(frame: &mut Frame, state: &TuiAppState, area: Rect) {
     let prompt_line = Line::from(vec![
         Span::styled(
             prompt_label,
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(before),
         Span::styled(
@@ -826,7 +819,10 @@ fn draw_minibuffer(frame: &mut Frame, state: &TuiAppState, area: Rect) {
         let max_shown = candidate_rows.min(5).min(mb.filtered.len());
         // Keep the selected candidate visible by windowing around it.
         let total = mb.filtered.len();
-        let window_start = mb.selected.saturating_sub(max_shown / 2).min(total.saturating_sub(max_shown));
+        let window_start = mb
+            .selected
+            .saturating_sub(max_shown / 2)
+            .min(total.saturating_sub(max_shown));
         for row in 0..max_shown {
             let fi = window_start + row;
             let Some(&candidate_idx) = mb.filtered.get(fi) else {
@@ -875,12 +871,17 @@ mod tests {
     #[test]
     fn severity_rank_orders_most_severe_first() {
         // Lower rank = higher priority. Errors should rank lowest.
-        assert!(severity_rank(DiagnosticSeverity::ERROR)
-            < severity_rank(DiagnosticSeverity::WARNING));
-        assert!(severity_rank(DiagnosticSeverity::WARNING)
-            < severity_rank(DiagnosticSeverity::INFORMATION));
-        assert!(severity_rank(DiagnosticSeverity::INFORMATION)
-            < severity_rank(DiagnosticSeverity::HINT));
+        assert!(
+            severity_rank(DiagnosticSeverity::ERROR) < severity_rank(DiagnosticSeverity::WARNING)
+        );
+        assert!(
+            severity_rank(DiagnosticSeverity::WARNING)
+                < severity_rank(DiagnosticSeverity::INFORMATION)
+        );
+        assert!(
+            severity_rank(DiagnosticSeverity::INFORMATION)
+                < severity_rank(DiagnosticSeverity::HINT)
+        );
     }
 
     #[test]
@@ -888,8 +889,14 @@ mod tests {
         fn d(sev: DiagnosticSeverity) -> Diagnostic {
             Diagnostic {
                 range: lsp_types::Range {
-                    start: lsp_types::Position { line: 0, character: 0 },
-                    end: lsp_types::Position { line: 0, character: 1 },
+                    start: lsp_types::Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: lsp_types::Position {
+                        line: 0,
+                        character: 1,
+                    },
                 },
                 severity: Some(sev),
                 code: None,

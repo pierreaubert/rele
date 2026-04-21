@@ -29,7 +29,9 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 pub fn prim_elt(args: &LispObject) -> ElispResult<LispObject> {
     let seq = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let idx = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-    let idx = idx.as_integer().ok_or(ElispError::WrongTypeArgument("integer".to_string()))?;
+    let idx = idx
+        .as_integer()
+        .ok_or(ElispError::WrongTypeArgument("integer".to_string()))?;
 
     match seq {
         LispObject::Nil => Err(ElispError::WrongTypeArgument("sequence".to_string())),
@@ -70,10 +72,7 @@ pub fn prim_copy_alist(args: &LispObject) -> ElispResult<LispObject> {
 
     while let Some((entry, cdr)) = current.destructure_cons() {
         if let Some((key, val)) = entry.destructure_cons() {
-            result = LispObject::cons(
-                LispObject::cons(key.clone(), val.clone()),
-                result,
-            );
+            result = LispObject::cons(LispObject::cons(key.clone(), val.clone()), result);
         }
         current = cdr;
     }
@@ -202,12 +201,14 @@ pub fn prim_number_sequence(args: &LispObject) -> ElispResult<LispObject> {
             return Ok(LispObject::cons(
                 LispObject::integer(from),
                 LispObject::nil(),
-            ))
+            ));
         }
     };
     let step = step.unwrap_or(if from <= to { 1 } else { -1 });
     if step == 0 {
-        return Err(ElispError::EvalError("number-sequence: step must be non-zero".to_string()));
+        return Err(ElispError::EvalError(
+            "number-sequence: step must be non-zero".to_string(),
+        ));
     }
     let mut items = Vec::new();
     let mut i = from;
@@ -245,7 +246,10 @@ pub fn prim_proper_list_p(args: &LispObject) -> ElispResult<LispObject> {
             return Ok(LispObject::from(cdr_fast.is_nil()));
         };
         fast = cdr_fast2;
-        slow = slow.destructure_cons().map(|(_, c)| c).unwrap_or_else(LispObject::nil);
+        slow = slow
+            .destructure_cons()
+            .map(|(_, c)| c)
+            .unwrap_or_else(LispObject::nil);
         count += 1;
         if count > (1 << 24) {
             return Ok(LispObject::nil());
@@ -352,19 +356,28 @@ fn seq_length(obj: &LispObject) -> ElispResult<i64> {
 
 pub fn prim_length_lt(args: &LispObject) -> ElispResult<LispObject> {
     let seq = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let n = args.nth(1).and_then(|a| a.as_integer()).ok_or(ElispError::WrongNumberOfArguments)?;
+    let n = args
+        .nth(1)
+        .and_then(|a| a.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::from(seq_length(&seq)? < n))
 }
 
 pub fn prim_length_gt(args: &LispObject) -> ElispResult<LispObject> {
     let seq = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let n = args.nth(1).and_then(|a| a.as_integer()).ok_or(ElispError::WrongNumberOfArguments)?;
+    let n = args
+        .nth(1)
+        .and_then(|a| a.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::from(seq_length(&seq)? > n))
 }
 
 pub fn prim_length_eq(args: &LispObject) -> ElispResult<LispObject> {
     let seq = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let n = args.nth(1).and_then(|a| a.as_integer()).ok_or(ElispError::WrongNumberOfArguments)?;
+    let n = args
+        .nth(1)
+        .and_then(|a| a.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::from(seq_length(&seq)? == n))
 }
 
@@ -376,6 +389,7 @@ pub fn prim_fillarray(args: &LispObject) -> ElispResult<LispObject> {
         for el in guard.iter_mut() {
             *el = item.clone();
         }
+        drop(guard);
         Ok(array)
     } else {
         Err(ElispError::WrongTypeArgument("array".to_string()))

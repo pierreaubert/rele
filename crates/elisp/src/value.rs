@@ -305,11 +305,7 @@ impl Value {
     /// Construct nil or t from a boolean.
     #[inline]
     pub fn from_bool(b: bool) -> Self {
-        if b {
-            Self::t()
-        } else {
-            Self::nil()
-        }
+        if b { Self::t() } else { Self::nil() }
     }
 
     // ---- cons cell access ----

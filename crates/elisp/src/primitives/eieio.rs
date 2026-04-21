@@ -237,8 +237,8 @@ pub fn prim_slot_value(args: &LispObject) -> ElispResult<LispObject> {
     let slot_name = slot
         .as_symbol()
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
-    let items = as_items(&instance)
-        .ok_or_else(|| ElispError::WrongTypeArgument("vector".into()))?;
+    let items =
+        as_items(&instance).ok_or_else(|| ElispError::WrongTypeArgument("vector".into()))?;
     let class_name = instance_class(&items).ok_or_else(|| {
         ElispError::Signal(Box::new(crate::error::SignalData {
             symbol: LispObject::symbol("wrong-type-argument"),
@@ -248,9 +248,8 @@ pub fn prim_slot_value(args: &LispObject) -> ElispResult<LispObject> {
             ),
         }))
     })?;
-    let class = get_class(&class_name).ok_or_else(|| {
-        ElispError::EvalError(format!("unknown class: {class_name}"))
-    })?;
+    let class = get_class(&class_name)
+        .ok_or_else(|| ElispError::EvalError(format!("unknown class: {class_name}")))?;
     let idx = class
         .slots
         .iter()
@@ -281,8 +280,8 @@ pub fn prim_set_slot_value(args: &LispObject) -> ElispResult<LispObject> {
     let slot_name = slot
         .as_symbol()
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
-    let mut items = as_items(&instance)
-        .ok_or_else(|| ElispError::WrongTypeArgument("vector".into()))?;
+    let mut items =
+        as_items(&instance).ok_or_else(|| ElispError::WrongTypeArgument("vector".into()))?;
     let class_name = instance_class(&items).ok_or_else(|| {
         ElispError::Signal(Box::new(crate::error::SignalData {
             symbol: LispObject::symbol("wrong-type-argument"),
@@ -292,9 +291,8 @@ pub fn prim_set_slot_value(args: &LispObject) -> ElispResult<LispObject> {
             ),
         }))
     })?;
-    let class = get_class(&class_name).ok_or_else(|| {
-        ElispError::EvalError(format!("unknown class: {class_name}"))
-    })?;
+    let class = get_class(&class_name)
+        .ok_or_else(|| ElispError::EvalError(format!("unknown class: {class_name}")))?;
     let idx = class
         .slots
         .iter()
@@ -337,10 +335,7 @@ pub fn prim_slot_boundp(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_object_of_class_p(args: &LispObject) -> ElispResult<LispObject> {
     let obj = args.first().unwrap_or(LispObject::nil());
-    let target = args
-        .nth(1)
-        .and_then(|a| a.as_symbol())
-        .unwrap_or_default();
+    let target = args.nth(1).and_then(|a| a.as_symbol()).unwrap_or_default();
     if target.is_empty() {
         return Ok(LispObject::nil());
     }
@@ -366,7 +361,8 @@ pub fn prim_eieio_object_p(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_eieio_object_class(args: &LispObject) -> ElispResult<LispObject> {
     let obj = args.first().unwrap_or(LispObject::nil());
     let n = as_items(&obj).and_then(|items| instance_class(&items));
-    Ok(n.map(|s| LispObject::symbol(&s)).unwrap_or(LispObject::nil()))
+    Ok(n.map(|s| LispObject::symbol(&s))
+        .unwrap_or(LispObject::nil()))
 }
 
 pub fn prim_eieio_object_name(_args: &LispObject) -> ElispResult<LispObject> {
@@ -420,8 +416,7 @@ pub fn prim_eieio_defclass_internal(args: &LispObject) -> ElispResult<LispObject
                 match key.as_deref() {
                     Some(":initarg") => {
                         if let Some(k2) = v.as_symbol() {
-                            initarg =
-                                Some(k2.strip_prefix(':').unwrap_or(&k2).to_string());
+                            initarg = Some(k2.strip_prefix(':').unwrap_or(&k2).to_string());
                         }
                     }
                     Some(":initform") => {
@@ -475,9 +470,8 @@ fn dequote_initform(form: &LispObject) -> LispObject {
 pub fn prim_eieio_make_class_predicate(args: &LispObject) -> ElispResult<LispObject> {
     let cname = args.first().unwrap_or(LispObject::nil());
     let sym = cname.as_symbol().unwrap_or_default();
-    let lambda_src = format!(
-        "(lambda (obj) (and (eieio-object-p obj) (object-of-class-p obj '{sym})))"
-    );
+    let lambda_src =
+        format!("(lambda (obj) (and (eieio-object-p obj) (object-of-class-p obj '{sym})))");
     match crate::read_all(&lambda_src) {
         Ok(mut forms) if !forms.is_empty() => Ok(forms.remove(0)),
         _ => Ok(LispObject::nil()),
@@ -553,7 +547,10 @@ pub fn prim_widgetp(_args: &LispObject) -> ElispResult<LispObject> {
 ///
 /// Returns `Some(result)` if the keyword matched a known slot; `None` if the
 /// keyword name doesn't start with `:` or isn't found in the class.
-pub fn try_keyword_slot_call(kw_symbol: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
+pub fn try_keyword_slot_call(
+    kw_symbol: &str,
+    args: &LispObject,
+) -> Option<ElispResult<LispObject>> {
     // Only handle symbols starting with `:` (keywords)
     if !kw_symbol.starts_with(':') {
         return None;
@@ -583,7 +580,10 @@ pub fn try_keyword_slot_call(kw_symbol: &str, args: &LispObject) -> Option<Elisp
 
     // Retrieve the value: instance layout is [TAG, CLASS, slot0, slot1, ...]
     // so slot N is at index N + 2.
-    let value = items.get(slot_index + 2).cloned().unwrap_or(LispObject::nil());
+    let value = items
+        .get(slot_index + 2)
+        .cloned()
+        .unwrap_or(LispObject::nil());
     Some(Ok(value))
 }
 
@@ -759,10 +759,7 @@ mod tests {
         });
         let args = list(&[symbol("r9-defaults")]); // no initargs
         let instance = prim_make_instance(&args).unwrap();
-        let get = LispObject::cons(
-            instance,
-            LispObject::cons(symbol("x"), LispObject::nil()),
-        );
+        let get = LispObject::cons(instance, LispObject::cons(symbol("x"), LispObject::nil()));
         assert_eq!(prim_slot_value(&get).unwrap().as_integer(), Some(77));
     }
 
@@ -792,8 +789,8 @@ mod tests {
             fake.clone(),
             LispObject::cons(symbol("x"), LispObject::nil()),
         );
-        let err = prim_slot_value(&get)
-            .expect_err("forged vector must not masquerade as an instance");
+        let err =
+            prim_slot_value(&get).expect_err("forged vector must not masquerade as an instance");
         match err {
             ElispError::Signal(sig) => {
                 let sym = sig.symbol.as_symbol();
@@ -826,9 +823,9 @@ mod tests {
             parent: None,
             slots: vec![],
         });
-        let fake = LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(vec![
-            symbol("r10-plainreject"),
-        ])));
+        let fake = LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(vec![symbol(
+            "r10-plainreject",
+        )])));
         let r = prim_eieio_object_p(&LispObject::cons(fake, LispObject::nil())).unwrap();
         assert!(matches!(r, LispObject::Nil));
     }
@@ -857,10 +854,7 @@ mod tests {
             LispObject::integer(99),
         ]);
         let instance = prim_make_instance(&args).unwrap();
-        let get = LispObject::cons(
-            instance,
-            LispObject::cons(symbol("col"), LispObject::nil()),
-        );
+        let get = LispObject::cons(instance, LispObject::cons(symbol("col"), LispObject::nil()));
         assert_eq!(
             prim_slot_value(&get).unwrap().as_integer(),
             Some(5),

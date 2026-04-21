@@ -79,7 +79,7 @@ mod tests {
         assert!(!p.record_call(0));
         assert!(!p.record_call(0));
         assert!(p.record_call(0)); // 3rd call
-                                   // subsequent calls do not re-trigger
+        // subsequent calls do not re-trigger
         assert!(!p.record_call(0));
     }
 

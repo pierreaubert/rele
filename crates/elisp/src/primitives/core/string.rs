@@ -47,13 +47,19 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 }
 
 pub fn prim_princ(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     print!("{}", arg.princ_to_string());
     Ok(arg)
 }
 
 pub fn prim_prin1(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     print!("{}", arg.prin1_to_string());
     Ok(arg)
 }
@@ -152,9 +158,7 @@ pub fn prim_substring(args: &LispObject) -> ElispResult<LispObject> {
 
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len() as i64;
-    let normalize = |i: i64| -> i64 {
-        if i < 0 { (len + i).max(0) } else { i.min(len) }
-    };
+    let normalize = |i: i64| -> i64 { if i < 0 { (len + i).max(0) } else { i.min(len) } };
     let start = normalize(start_signed) as usize;
     let end_idx = match end_signed {
         Some(e) => normalize(e) as usize,
@@ -217,7 +221,9 @@ pub fn prim_upcase(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::String(s) => Ok(LispObject::string(&s.to_uppercase())),
         LispObject::Integer(c) => {
             let ch = char::from_u32(*c as u32).unwrap_or('?');
-            Ok(LispObject::integer(ch.to_uppercase().next().unwrap_or(ch) as i64))
+            Ok(LispObject::integer(
+                ch.to_uppercase().next().unwrap_or(ch) as i64
+            ))
         }
         _ => Err(ElispError::WrongTypeArgument("string".to_string())),
     }
@@ -229,7 +235,9 @@ pub fn prim_downcase(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::String(s) => Ok(LispObject::string(&s.to_lowercase())),
         LispObject::Integer(c) => {
             let ch = char::from_u32(*c as u32).unwrap_or('?');
-            Ok(LispObject::integer(ch.to_lowercase().next().unwrap_or(ch) as i64))
+            Ok(LispObject::integer(
+                ch.to_lowercase().next().unwrap_or(ch) as i64
+            ))
         }
         _ => Err(ElispError::WrongTypeArgument("string".to_string())),
     }
@@ -238,9 +246,9 @@ pub fn prim_downcase(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_capitalize(args: &LispObject) -> ElispResult<LispObject> {
     let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     match &arg {
-        LispObject::String(s) => {
-            Ok(LispObject::string(&crate::emacs::casefiddle::capitalize_string(s)))
-        }
+        LispObject::String(s) => Ok(LispObject::string(
+            &crate::emacs::casefiddle::capitalize_string(s),
+        )),
         _ => Err(ElispError::WrongTypeArgument("string".to_string())),
     }
 }
@@ -273,9 +281,8 @@ pub fn prim_string(args: &LispObject) -> ElispResult<LispObject> {
     while let Some((arg, rest)) = current.destructure_cons() {
         match arg {
             LispObject::Integer(c) => {
-                let ch = char::from_u32(c as u32).ok_or_else(|| {
-                    ElispError::WrongTypeArgument("character".to_string())
-                })?;
+                let ch = char::from_u32(c as u32)
+                    .ok_or_else(|| ElispError::WrongTypeArgument("character".to_string()))?;
                 result.push(ch);
             }
             _ => {
@@ -376,10 +383,13 @@ pub fn prim_string_suffix_p(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_string_join(args: &LispObject) -> ElispResult<LispObject> {
     let strings = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let sep = args.nth(1).and_then(|s| match s {
-        LispObject::String(s) => Some(s.clone()),
-        _ => None,
-    }).unwrap_or_default();
+    let sep = args
+        .nth(1)
+        .and_then(|s| match s {
+            LispObject::String(s) => Some(s.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
 
     let mut result = String::new();
     let mut current = strings;
@@ -523,12 +533,7 @@ pub fn prim_key_description(args: &LispObject) -> ElispResult<LispObject> {
     };
     let out = match &keys {
         LispObject::String(s) => s.clone(),
-        LispObject::Vector(v) => v
-            .lock()
-            .iter()
-            .map(render)
-            .collect::<Vec<_>>()
-            .join(" "),
+        LispObject::Vector(v) => v.lock().iter().map(render).collect::<Vec<_>>().join(" "),
         _ => String::new(),
     };
     Ok(LispObject::string(&out))
@@ -548,9 +553,7 @@ pub fn prim_upcase_initials(args: &LispObject) -> ElispResult<LispObject> {
                 Ok(LispObject::integer(i))
             }
         }
-        _ => Err(ElispError::WrongTypeArgument(
-            "string or char".to_string(),
-        )),
+        _ => Err(ElispError::WrongTypeArgument("string or char".to_string())),
     }
 }
 
@@ -566,7 +569,9 @@ pub fn prim_unibyte_string(args: &LispObject) -> ElispResult<LispObject> {
     }
     match String::from_utf8(bytes) {
         Ok(s) => Ok(LispObject::string(&s)),
-        Err(e) => Ok(LispObject::string(&String::from_utf8_lossy(&e.into_bytes()))),
+        Err(e) => Ok(LispObject::string(&String::from_utf8_lossy(
+            &e.into_bytes(),
+        ))),
     }
 }
 
@@ -643,19 +648,20 @@ pub fn prim_encode_char(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_split_string(args: &LispObject) -> ElispResult<LispObject> {
     let s = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let sep = args.nth(1).and_then(|a| match a {
-        LispObject::String(s) => Some(s.clone()),
-        _ => None,
-    }).unwrap_or_default();
+    let sep = args
+        .nth(1)
+        .and_then(|a| match a {
+            LispObject::String(s) => Some(s.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
 
     let s = match &s {
         LispObject::String(s) => s.clone(),
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
 
-    let parts: Vec<LispObject> = s.split(&sep)
-        .map(|p| LispObject::string(p))
-        .collect();
+    let parts: Vec<LispObject> = s.split(&sep).map(|p| LispObject::string(p)).collect();
 
     let mut result = LispObject::nil();
     for part in parts.into_iter().rev() {

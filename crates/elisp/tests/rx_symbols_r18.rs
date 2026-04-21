@@ -19,7 +19,7 @@
 //! translate, so a future refactor of `rx_symbol_to_regexp` can't silently
 //! break the R18 fix.
 
-use rele_elisp::{add_primitives, read, Interpreter, LispObject};
+use rele_elisp::{Interpreter, LispObject, add_primitives, read};
 
 /// Build a fresh interpreter with `rx` registered as in
 /// `make_stdlib_interp`. Mirrors the production call so the tests exercise
@@ -28,9 +28,7 @@ fn make_rx_interp() -> Interpreter {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     interp
-        .eval(
-            read("(defmacro rx (&rest forms) (rele--rx-translate forms))").unwrap(),
-        )
+        .eval(read("(defmacro rx (&rest forms) (rele--rx-translate forms))").unwrap())
         .expect("defmacro rx should succeed");
     interp
 }
@@ -144,7 +142,10 @@ fn rx_word_and_symbol_boundaries() {
 #[test]
 fn rx_or_joins_with_emacs_alternation() {
     let interp = make_rx_interp();
-    assert_eq!(rx(&interp, "(rx (or digit alpha))"), "[[:digit:]]\\|[[:alpha:]]");
+    assert_eq!(
+        rx(&interp, "(rx (or digit alpha))"),
+        "[[:digit:]]\\|[[:alpha:]]"
+    );
 }
 
 #[test]

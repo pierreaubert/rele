@@ -13,7 +13,13 @@ fn unicode_name_to_char(name: &str) -> Option<char> {
     // "latin-small-letter-a" work.
     let key: String = name
         .chars()
-        .map(|c| if c == '-' { ' ' } else { c.to_ascii_uppercase() })
+        .map(|c| {
+            if c == '-' {
+                ' '
+            } else {
+                c.to_ascii_uppercase()
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -324,7 +330,7 @@ impl Reader {
             None => {
                 return Err(ElispError::ReaderError(
                     "unexpected end of input".to_string(),
-                ))
+                ));
             }
         };
 
@@ -549,7 +555,9 @@ impl Reader {
                     self.advance();
                     let inner = self.read_list_to_vec()?;
                     // Distinguish hash-table from struct records
-                    let tag = inner.first().and_then(|o| o.as_symbol().map(|s| s.to_string()));
+                    let tag = inner
+                        .first()
+                        .and_then(|o| o.as_symbol().map(|s| s.to_string()));
                     if tag.as_deref() == Some("hash-table") {
                         let mut list = LispObject::nil();
                         for e in inner.into_iter().rev() {
@@ -662,9 +670,7 @@ impl Reader {
                 // so just return a regular interned symbol with the same name.
                 self.advance(); // consume ':'
                 let first = self.advance().ok_or_else(|| {
-                    ElispError::ReaderError(
-                        "unexpected end of input in #: symbol".to_string(),
-                    )
+                    ElispError::ReaderError("unexpected end of input in #: symbol".to_string())
                 })?;
                 self.read_symbol(first)
             }
@@ -1139,7 +1145,11 @@ impl Reader {
                     }
                     let sign_is_negative = s.trim_start().starts_with('-');
                     return Ok(LispObject::float(if rest_is_inf {
-                        if sign_is_negative { f64::NEG_INFINITY } else { f64::INFINITY }
+                        if sign_is_negative {
+                            f64::NEG_INFINITY
+                        } else {
+                            f64::INFINITY
+                        }
                     } else {
                         f64::NAN
                     }));

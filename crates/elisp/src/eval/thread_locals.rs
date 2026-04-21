@@ -1,8 +1,8 @@
 use crate::error::ElispError;
+use parking_lot::RwLock;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 pub type FeatureList = Arc<RwLock<Vec<String>>>;
 

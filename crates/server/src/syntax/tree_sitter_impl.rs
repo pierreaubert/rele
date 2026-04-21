@@ -177,7 +177,9 @@ impl TreeSitterHighlighter {
             let within_chunk = byte_offset - chunk_start;
             chunk.as_bytes()[within_chunk..].as_ref()
         };
-        let new_tree = self.parser.parse_with_options(&mut cb, self.tree.as_ref(), None);
+        let new_tree = self
+            .parser
+            .parse_with_options(&mut cb, self.tree.as_ref(), None);
         if new_tree.is_some() {
             self.tree = new_tree;
         }
@@ -193,19 +195,11 @@ impl TreeSitterHighlighter {
         let old_end_byte = change.old_end_byte;
         let new_end_byte = start_byte + change.new_text.len();
 
-        let start_position = Point::new(
-            change.start_line as usize,
-            change.start_byte_col as usize,
-        );
-        let old_end_position = Point::new(
-            change.end_line as usize,
-            change.old_end_byte_col as usize,
-        );
-        let new_end_position = new_end_point(
-            start_position,
-            change.start_byte_col,
-            &change.new_text,
-        );
+        let start_position = Point::new(change.start_line as usize, change.start_byte_col as usize);
+        let old_end_position =
+            Point::new(change.end_line as usize, change.old_end_byte_col as usize);
+        let new_end_position =
+            new_end_point(start_position, change.start_byte_col, &change.new_text);
 
         InputEdit {
             start_byte,
@@ -461,8 +455,10 @@ mod tests {
         let line0 = out.iter().find(|(l, _)| *l == 0).expect("line 0 captures");
         // Markdown query emits @text.title (our Heading) + punctuation marks.
         assert!(
-            line0.1.iter().any(|r| r.kind == Highlight::Heading
-                || r.kind == Highlight::ListMarker),
+            line0
+                .1
+                .iter()
+                .any(|r| r.kind == Highlight::Heading || r.kind == Highlight::ListMarker),
             "expected heading/marker captures, got {:?}",
             line0.1
         );
@@ -529,8 +525,10 @@ mod tests {
         let line0 = out.iter().find(|(l, _)| *l == 0).expect("line 0 captures");
         // Expect a Type or Keyword for `const`.
         assert!(
-            line0.1.iter().any(|r| r.kind == Highlight::Keyword
-                || r.kind == Highlight::Type),
+            line0
+                .1
+                .iter()
+                .any(|r| r.kind == Highlight::Keyword || r.kind == Highlight::Type),
             "after full reparse we should see fresh highlights, got {:?}",
             line0.1
         );

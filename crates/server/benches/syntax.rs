@@ -102,8 +102,7 @@ fn bench_incremental_parse_rust(c: &mut Criterion) {
                     }
                     let mut doc = DocumentBuffer::from_text(&source);
                     let _ = doc.drain_changes();
-                    let mut h =
-                        TreeSitterHighlighter::new(TsLanguage::Rust).unwrap();
+                    let mut h = TreeSitterHighlighter::new(TsLanguage::Rust).unwrap();
                     h.on_edit(doc.rope(), &[], true);
                     (doc, h)
                 },
@@ -122,20 +121,19 @@ fn bench_incremental_parse_rust(c: &mut Criterion) {
 }
 
 fn bench_incremental_parse_markdown(c: &mut Criterion) {
-    let mut group =
-        c.benchmark_group("tree_sitter_incremental_markdown_insert_char");
+    let mut group = c.benchmark_group("tree_sitter_incremental_markdown_insert_char");
     for &n in &[100usize, 1_000] {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
             b.iter_batched(
                 || {
                     let mut source = String::new();
                     for i in 0..n {
-                        source.push_str(&format!("# Heading {i}\n\nA paragraph with *italic*.\n\n"));
+                        source
+                            .push_str(&format!("# Heading {i}\n\nA paragraph with *italic*.\n\n"));
                     }
                     let mut doc = DocumentBuffer::from_text(&source);
                     let _ = doc.drain_changes();
-                    let mut h =
-                        TreeSitterHighlighter::new(TsLanguage::Markdown).unwrap();
+                    let mut h = TreeSitterHighlighter::new(TsLanguage::Markdown).unwrap();
                     h.on_edit(doc.rope(), &[], true);
                     (doc, h)
                 },

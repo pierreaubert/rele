@@ -25,7 +25,7 @@
 //! The fix implements recursive destructuring of sub-lambda-lists in
 //! `expand_macro` (crates/elisp/src/eval/special_forms.rs).
 
-use rele_elisp::{add_primitives, primitives_modules, Interpreter, LispObject};
+use rele_elisp::{Interpreter, LispObject, add_primitives, primitives_modules};
 
 fn make_interp() -> Interpreter {
     let mut interp = Interpreter::new();

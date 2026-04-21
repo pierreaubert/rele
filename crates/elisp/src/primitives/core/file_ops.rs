@@ -106,16 +106,14 @@ fn prim_file_name_as_directory(args: &LispObject) -> ElispResult<LispObject> {
 fn prim_rename_file(args: &LispObject) -> ElispResult<LispObject> {
     let from = str_arg(args, 0)?;
     let to = str_arg(args, 1)?;
-    std::fs::rename(&from, &to)
-        .map_err(|e| ElispError::EvalError(format!("rename-file: {e}")))?;
+    std::fs::rename(&from, &to).map_err(|e| ElispError::EvalError(format!("rename-file: {e}")))?;
     Ok(LispObject::nil())
 }
 
 fn prim_copy_file(args: &LispObject) -> ElispResult<LispObject> {
     let from = str_arg(args, 0)?;
     let to = str_arg(args, 1)?;
-    std::fs::copy(&from, &to)
-        .map_err(|e| ElispError::EvalError(format!("copy-file: {e}")))?;
+    std::fs::copy(&from, &to).map_err(|e| ElispError::EvalError(format!("copy-file: {e}")))?;
     Ok(LispObject::nil())
 }
 

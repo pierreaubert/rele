@@ -1,18 +1,15 @@
 use std::path::PathBuf;
 
 use rele_elisp::{EditorCallbacks, Interpreter, add_primitives};
+use rele_server::CancellationFlag;
+use rele_server::document::buffer_list::name_from_path;
+use rele_server::lsp::{LspBufferState, LspConfig, LspEvent, LspRegistry, position::uri_from_path};
+use rele_server::minibuffer::{MiniBufferPrompt, MiniBufferResult, MiniBufferState};
+use rele_server::syntax::{Highlighter, TreeSitterHighlighter, language_for_extension};
 use rele_server::{
     BufferId, BufferKind, CommandArgs, DocumentBuffer, EditHistory, EditorCursor, KillRing,
     MacroState, StoredBuffer,
 };
-use rele_server::document::buffer_list::name_from_path;
-use rele_server::CancellationFlag;
-use rele_server::lsp::{
-    LspBufferState, LspConfig, LspEvent, LspRegistry,
-    position::uri_from_path,
-};
-use rele_server::minibuffer::{MiniBufferPrompt, MiniBufferResult, MiniBufferState};
-use rele_server::syntax::{Highlighter, TreeSitterHighlighter, language_for_extension};
 use tokio::sync::mpsc;
 
 use crate::commands::{CommandRegistry, register_builtin_commands};
@@ -369,7 +366,10 @@ impl TuiAppState {
         if self.current_buffer_name == name {
             return Some(self.current_buffer_id);
         }
-        self.stored_buffers.iter().find(|b| b.name == name).map(|b| b.id)
+        self.stored_buffers
+            .iter()
+            .find(|b| b.name == name)
+            .map(|b| b.id)
     }
 
     /// Swap the active buffer with the stored buffer at `stored_idx`.
@@ -383,10 +383,7 @@ impl TuiAppState {
             history: std::mem::replace(&mut self.history, incoming.history),
             cursor: std::mem::replace(&mut self.cursor, incoming.cursor),
             kind: std::mem::replace(&mut self.current_buffer_kind, incoming.kind),
-            read_only: std::mem::replace(
-                &mut self.current_buffer_read_only,
-                incoming.read_only,
-            ),
+            read_only: std::mem::replace(&mut self.current_buffer_read_only, incoming.read_only),
             scroll_line: std::mem::replace(&mut self.scroll_line, incoming.scroll_line),
             last_edit_was_char_insert: std::mem::replace(
                 &mut self.last_edit_was_char_insert,
@@ -396,10 +393,7 @@ impl TuiAppState {
                 &mut self.last_move_was_vertical,
                 incoming.last_move_was_vertical,
             ),
-            lsp_state: std::mem::replace(
-                &mut self.lsp_buffer_state,
-                incoming.lsp_state,
-            ),
+            lsp_state: std::mem::replace(&mut self.lsp_buffer_state, incoming.lsp_state),
         };
         self.current_buffer_id = incoming.id;
         self.stored_buffers.push(outgoing);
@@ -455,19 +449,13 @@ impl TuiAppState {
             history: std::mem::take(&mut self.history),
             cursor: std::mem::replace(&mut self.cursor, EditorCursor::new()),
             kind: std::mem::replace(&mut self.current_buffer_kind, BufferKind::File),
-            read_only: std::mem::replace(
-                &mut self.current_buffer_read_only,
-                false,
-            ),
+            read_only: std::mem::replace(&mut self.current_buffer_read_only, false),
             scroll_line: std::mem::replace(&mut self.scroll_line, 0),
             last_edit_was_char_insert: std::mem::replace(
                 &mut self.last_edit_was_char_insert,
                 false,
             ),
-            last_move_was_vertical: std::mem::replace(
-                &mut self.last_move_was_vertical,
-                false,
-            ),
+            last_move_was_vertical: std::mem::replace(&mut self.last_move_was_vertical, false),
             lsp_state: self.lsp_buffer_state.take(),
         };
         self.stored_buffers.push(outgoing);
@@ -625,10 +613,8 @@ impl TuiAppState {
         };
         // (line, UTF-16 character col) → rope char offset.
         let pos = lsp_types::Position { line, character };
-        let offset = rele_server::lsp::position::position_to_char_offset(
-            self.document.rope(),
-            &pos,
-        );
+        let offset =
+            rele_server::lsp::position::position_to_char_offset(self.document.rope(), &pos);
         self.cursor.position = offset.min(self.document.len_chars());
         self.cursor.clear_selection();
         true
@@ -720,11 +706,7 @@ impl TuiAppState {
         self.dispatch_minibuffer(action, MiniBufferResult::Submitted(value));
     }
 
-    fn dispatch_minibuffer(
-        &mut self,
-        action: PendingMiniBufferAction,
-        result: MiniBufferResult,
-    ) {
+    fn dispatch_minibuffer(&mut self, action: PendingMiniBufferAction, result: MiniBufferResult) {
         let MiniBufferResult::Submitted(text) = result else {
             return;
         };
@@ -987,9 +969,7 @@ impl TuiAppState {
             self.kill_ring.push(killed);
         } else {
             // Kill to end of line (not including newline)
-            let end = if line_end > 0
-                && self.document.line(line).to_string().ends_with('\n')
-            {
+            let end = if line_end > 0 && self.document.line(line).to_string().ends_with('\n') {
                 line_end - 1
             } else {
                 line_end
@@ -1046,9 +1026,7 @@ impl TuiAppState {
     pub fn move_left(&mut self, extend: bool) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
-        if !extend
-            && let Some((start, _)) = self.cursor.selection()
-        {
+        if !extend && let Some((start, _)) = self.cursor.selection() {
             self.cursor.position = start;
             self.cursor.clear_selection();
             self.update_preferred_column();
@@ -1063,9 +1041,7 @@ impl TuiAppState {
     pub fn move_right(&mut self, extend: bool) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
-        if !extend
-            && let Some((_, end)) = self.cursor.selection()
-        {
+        if !extend && let Some((_, end)) = self.cursor.selection() {
             self.cursor.position = end;
             self.cursor.clear_selection();
             self.update_preferred_column();
@@ -1449,8 +1425,7 @@ impl TuiAppState {
                 self.lsp_completion_visible = !self.lsp_completion_items.is_empty();
             }
             LspEvent::HoverResponse { contents, .. } => {
-                self.lsp_hover_text =
-                    contents.map(rele_server::lsp::hover_contents_to_string);
+                self.lsp_hover_text = contents.map(rele_server::lsp::hover_contents_to_string);
                 if let Some(ref text) = self.lsp_hover_text {
                     self.message = Some(text.lines().next().unwrap_or("").to_string());
                 }
@@ -1534,8 +1509,7 @@ impl TuiAppState {
                 if locations.is_empty() {
                     self.message = Some("References: no results".to_string());
                 } else {
-                    self.message =
-                        Some(format!("References: {} results", locations.len()));
+                    self.message = Some(format!("References: {} results", locations.len()));
                 }
             }
         }
@@ -1742,11 +1716,11 @@ mod tests {
 
         // Trigger a parse + query.
         s.ensure_highlight_fresh();
-        let ranges = s
-            .buffer_highlighter
-            .as_ref()
-            .unwrap()
-            .highlight_range(s.document.rope(), 0, 1);
+        let ranges =
+            s.buffer_highlighter
+                .as_ref()
+                .unwrap()
+                .highlight_range(s.document.rope(), 0, 1);
         // Line 0 should have at least one highlight (the `fn` keyword).
         assert!(
             ranges.iter().any(|(line, r)| *line == 0 && !r.is_empty()),
@@ -1908,13 +1882,18 @@ mod tests {
 
         // Simulate rust-analyzer returning a single location in the
         // other file.
-        let def_uri: lsp_types::Uri =
-            rele_server::lsp::position::uri_from_path(&def_path).unwrap();
+        let def_uri: lsp_types::Uri = rele_server::lsp::position::uri_from_path(&def_path).unwrap();
         let location = lsp_types::Location {
             uri: def_uri,
             range: lsp_types::Range {
-                start: lsp_types::Position { line: 0, character: 0 },
-                end: lsp_types::Position { line: 0, character: 0 },
+                start: lsp_types::Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: lsp_types::Position {
+                    line: 0,
+                    character: 0,
+                },
             },
         };
         s.handle_lsp_event(rele_server::lsp::LspEvent::DefinitionResponse {
@@ -1968,8 +1947,14 @@ mod tests {
         // edit: replace the "( )" with "()" — remove the space at col 5.
         let edit = TextEdit {
             range: Range {
-                start: Position { line: 0, character: 4 },
-                end: Position { line: 0, character: 5 },
+                start: Position {
+                    line: 0,
+                    character: 4,
+                },
+                end: Position {
+                    line: 0,
+                    character: 5,
+                },
             },
             new_text: String::new(),
         };
@@ -2046,11 +2031,23 @@ mod tests {
         state.lsp_buffer_state = Some(lsp);
     }
 
-    fn diag(line: u32, start: u32, end: u32, sev: lsp_types::DiagnosticSeverity, msg: &str) -> lsp_types::Diagnostic {
+    fn diag(
+        line: u32,
+        start: u32,
+        end: u32,
+        sev: lsp_types::DiagnosticSeverity,
+        msg: &str,
+    ) -> lsp_types::Diagnostic {
         lsp_types::Diagnostic {
             range: lsp_types::Range {
-                start: lsp_types::Position { line, character: start },
-                end: lsp_types::Position { line, character: end },
+                start: lsp_types::Position {
+                    line,
+                    character: start,
+                },
+                end: lsp_types::Position {
+                    line,
+                    character: end,
+                },
             },
             severity: Some(sev),
             code: None,
@@ -2086,9 +2083,15 @@ mod tests {
         use ratatui::layout::Rect;
         let s = TuiAppState::new();
         // Simulate a 30-row editor area.
-        let (leaves, _seps) = s
-            .windows
-            .layout(Rect { x: 0, y: 0, width: 80, height: 30 }, 0);
+        let (leaves, _seps) = s.windows.layout(
+            Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 30,
+            },
+            0,
+        );
         // Leaf 1 is the *Diagnostics* window; should be exactly 5 rows.
         assert_eq!(leaves[1].rect.height, 5);
     }
@@ -2099,9 +2102,8 @@ mod tests {
         // hide Diagnostics via `prune`, we get a single-leaf tree
         // pointing at Buffer.
         let s = TuiAppState::new();
-        let hide = |c: crate::windows::WindowContent| {
-            c == crate::windows::WindowContent::Diagnostics
-        };
+        let hide =
+            |c: crate::windows::WindowContent| c == crate::windows::WindowContent::Diagnostics;
         let pruned = s.windows.prune(&hide).unwrap();
         assert_eq!(pruned.leaf_count(), 1);
         assert_eq!(
@@ -2184,7 +2186,13 @@ mod tests {
         s.move_down(false);
         attach_lsp(
             &mut s,
-            vec![diag(1, 7, 10, lsp_types::DiagnosticSeverity::ERROR, "undefined: bad")],
+            vec![diag(
+                1,
+                7,
+                10,
+                lsp_types::DiagnosticSeverity::ERROR,
+                "undefined: bad",
+            )],
         );
         let msg = s.diagnostic_at_cursor();
         assert_eq!(msg.as_deref(), Some("undefined: bad"));
@@ -2197,7 +2205,13 @@ mod tests {
         s.cursor.position = 0;
         attach_lsp(
             &mut s,
-            vec![diag(1, 0, 4, lsp_types::DiagnosticSeverity::WARNING, "later")],
+            vec![diag(
+                1,
+                0,
+                4,
+                lsp_types::DiagnosticSeverity::WARNING,
+                "later",
+            )],
         );
         // Cursor on line 0, diagnostic is on line 1.
         assert!(s.diagnostic_at_cursor().is_none());

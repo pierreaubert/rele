@@ -59,7 +59,11 @@ pub struct Overlay {
 
 impl Overlay {
     fn new(id: OverlayId, buffer: BufferId, start: usize, end: usize, fa: bool, ra: bool) -> Self {
-        let (a, b) = if start <= end { (start, end) } else { (end, start) };
+        let (a, b) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
         Self {
             id,
             buffer,
@@ -193,7 +197,11 @@ impl StubBuffer {
     }
 
     pub fn delete_region(&mut self, start: usize, end: usize) {
-        let (a, b) = if start <= end { (start, end) } else { (end, start) };
+        let (a, b) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
         let pmin = self.point_min();
         let pmax = self.point_max();
         let a = a.clamp(pmin, pmax);
@@ -234,7 +242,11 @@ impl StubBuffer {
     }
 
     pub fn substring(&self, start: usize, end: usize) -> String {
-        let (a, b) = if start <= end { (start, end) } else { (end, start) };
+        let (a, b) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
         let pmin = self.point_min();
         let pmax = self.point_max();
         let a = a.clamp(pmin, pmax);
@@ -440,7 +452,14 @@ impl Registry {
 
     pub fn make_marker(&mut self, buffer: BufferId) -> usize {
         let id = NEXT_MARKER_ID.fetch_add(1, Ordering::Relaxed);
-        self.markers.insert(id, Marker { id, buffer, position: None });
+        self.markers.insert(
+            id,
+            Marker {
+                id,
+                buffer,
+                position: None,
+            },
+        );
         id
     }
 
@@ -451,7 +470,11 @@ impl Registry {
                 m.buffer = buffer;
                 m.position = pos;
             })
-            .or_insert(Marker { id, buffer, position: pos });
+            .or_insert(Marker {
+                id,
+                buffer,
+                position: pos,
+            });
     }
 
     /// Create a fresh overlay in `buffer` spanning `[start, end)`.
@@ -495,7 +518,11 @@ impl Registry {
             }
             let Some(s) = ov.start else { continue };
             let Some(e) = ov.end else { continue };
-            let covers = if s == e { pos == s } else { pos >= s && pos < e };
+            let covers = if s == e {
+                pos == s
+            } else {
+                pos >= s && pos < e
+            };
             if covers {
                 out.push(ov.id);
             }
@@ -610,7 +637,10 @@ pub fn reset() {
 pub fn set_current_by_name(name: &str) -> String {
     with_registry_mut(|r| {
         let id = r.create(name);
-        let old = r.get(r.current_id()).map(|b| b.name.clone()).unwrap_or_default();
+        let old = r
+            .get(r.current_id())
+            .map(|b| b.name.clone())
+            .unwrap_or_default();
         r.set_current(id);
         old
     })
@@ -698,10 +728,7 @@ mod tests {
         assert_eq!(with_registry(|r| r.lookup_by_name("a")), Some(id_a));
         assert!(with_registry_mut(|r| r.rename(id_a, "renamed")));
         assert_eq!(with_registry(|r| r.lookup_by_name("a")), None);
-        assert_eq!(
-            with_registry(|r| r.lookup_by_name("renamed")),
-            Some(id_a)
-        );
+        assert_eq!(with_registry(|r| r.lookup_by_name("renamed")), Some(id_a));
     }
 
     /// Regression: R1. `set-buffer` (and `switch-to-buffer` /

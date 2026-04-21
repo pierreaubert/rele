@@ -1,14 +1,14 @@
 // Special form evaluation functions: if, setq, defun, let, progn, cond, etc.
 
+use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
-use crate::value::{obj_to_value, value_to_obj, Value};
-use crate::EditorCallbacks;
+use crate::value::{Value, obj_to_value, value_to_obj};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
 use super::dynamic::unwind_specpdl;
-use super::{eval, Environment, InterpreterState, Macro, MacroTable};
+use super::{Environment, InterpreterState, Macro, MacroTable, eval};
 
 pub(super) fn eval_if(
     args: Value,

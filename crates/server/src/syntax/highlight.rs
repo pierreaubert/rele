@@ -103,9 +103,5 @@ pub trait LineHighlighter {
     /// Classify one line given the state entering that line.
     /// Returns the ranges found and the state leaving the line (which
     /// becomes the entering state of the next line).
-    fn highlight_line(
-        &self,
-        line: &str,
-        state: Self::State,
-    ) -> (Vec<HighlightRange>, Self::State);
+    fn highlight_line(&self, line: &str, state: Self::State) -> (Vec<HighlightRange>, Self::State);
 }

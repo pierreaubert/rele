@@ -13,7 +13,7 @@
 //!
 //! Source for the prioritisation: `/tmp/emacs-results-round2-baseline.jsonl`.
 
-use rele_elisp::{add_primitives, primitives_modules, read, ElispError, Interpreter, LispObject};
+use rele_elisp::{ElispError, Interpreter, LispObject, add_primitives, primitives_modules, read};
 
 fn make_interp() -> Interpreter {
     let mut interp = Interpreter::new();
@@ -63,8 +63,7 @@ fn assert_fboundp(interp: &Interpreter, name: &str) {
 /// Assert that calling SYMBOL with no args returns successfully (any value).
 fn assert_callable_zero_args(interp: &Interpreter, name: &str) {
     let expr = format!("({name})");
-    eval_str(interp, &expr)
-        .unwrap_or_else(|e| panic!("calling ({name}) errored: {e:?}"));
+    eval_str(interp, &expr).unwrap_or_else(|e| panic!("calling ({name}) errored: {e:?}"));
 }
 
 #[test]
@@ -176,7 +175,11 @@ fn test_r7_dumb_server_var_boundp() {
         "dumb-server-var should be boundp after primitives_modules::register"
     );
     let v = eval_str(&interp, "(symbol-value 'dumb-server-var)").unwrap();
-    assert_eq!(v, LispObject::nil(), "dumb-server-var default should be nil");
+    assert_eq!(
+        v,
+        LispObject::nil(),
+        "dumb-server-var default should be nil"
+    );
 }
 
 // ---- existing R3 stubs we rely on (sanity: don't regress) -------------------

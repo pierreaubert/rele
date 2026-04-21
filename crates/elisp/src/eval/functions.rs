@@ -1,14 +1,14 @@
 // Function calling and application: funcall, apply, lambda application.
 
+use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
-use crate::value::{obj_to_value, value_to_obj, Value};
-use crate::EditorCallbacks;
+use crate::value::{Value, obj_to_value, value_to_obj};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
 use super::dynamic::{bind_param_dynamic, unwind_specpdl};
-use super::{eval, eval_progn, Environment, InterpreterState, Macro, MacroTable};
+use super::{Environment, InterpreterState, Macro, MacroTable, eval, eval_progn};
 
 /// Phase 7a: **stateful primitives** — functions that are traditionally
 /// implemented as special forms in the source-level dispatch (because
@@ -84,7 +84,9 @@ pub(crate) fn call_stateful_primitive(
             // interpreter env/state to funcall their predicate argument.
             // Returns an ElispResult<Value> so it's already in the right
             // shape for Ok(value_to_obj(...)) downstream.
-            if let Some(r) = super::state_cl::call_stateful_cl(name, args, env, editor, macros, state) {
+            if let Some(r) =
+                super::state_cl::call_stateful_cl(name, args, env, editor, macros, state)
+            {
                 // Route through the same Value→Obj bridge as other
                 // stateful handlers so the caller sees a LispObject.
                 return Some(r.map(|v| value_to_obj(v)));
@@ -163,10 +165,8 @@ fn stateful_format(
         if wrapped.is_empty() {
             wrapped.push(car);
         } else {
-            let quoted = LispObject::cons(
-                quote_sym.clone(),
-                LispObject::cons(car, LispObject::nil()),
-            );
+            let quoted =
+                LispObject::cons(quote_sym.clone(), LispObject::cons(car, LispObject::nil()));
             wrapped.push(quoted);
         }
         cur = cdr;
@@ -179,10 +179,7 @@ fn stateful_format(
     Ok(value_to_obj(result))
 }
 
-fn stateful_boundp(
-    args: &LispObject,
-    env: &Arc<RwLock<Environment>>,
-) -> ElispResult<LispObject> {
+fn stateful_boundp(args: &LispObject, env: &Arc<RwLock<Environment>>) -> ElispResult<LispObject> {
     let sym = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let name = sym
         .as_symbol()
@@ -377,7 +374,9 @@ struct FallbackFrame {
 impl FallbackFrame {
     fn new(name: &str) -> Self {
         FALLBACK_STACK.with(|st| st.borrow_mut().push(name.to_string()));
-        Self { name: name.to_string() }
+        Self {
+            name: name.to_string(),
+        }
     }
 }
 
@@ -414,10 +413,7 @@ fn source_level_fallback(
     let mut quoted_args: Vec<LispObject> = Vec::new();
     let mut cur = args.clone();
     while let Some((arg, rest)) = cur.destructure_cons() {
-        let q = LispObject::cons(
-            quote_sym.clone(),
-            LispObject::cons(arg, LispObject::nil()),
-        );
+        let q = LispObject::cons(quote_sym.clone(), LispObject::cons(arg, LispObject::nil()));
         quoted_args.push(q);
         cur = rest;
     }
@@ -900,7 +896,11 @@ pub fn call_function(
                                 LispObject::cons(LispObject::t(), LispObject::nil()),
                             );
                             let _ = super::builtins::eval_load(
-                                obj_to_value(load_args), env, editor, macros, state,
+                                obj_to_value(load_args),
+                                env,
+                                editor,
+                                macros,
+                                state,
                             );
                         }
                     }
@@ -949,9 +949,7 @@ pub fn call_function(
             // vs 725 ns/call with the fast path disabled. Prerequisite:
             // `eval_list` builds raw ConsCells (not ConsArcCells) so the
             // fast path's pointer-tag-based walk can actually walk them.
-            if let Some(result) =
-                crate::primitives_value::try_call_primitive_value(name, args)
-            {
+            if let Some(result) = crate::primitives_value::try_call_primitive_value(name, args) {
                 crate::primitives_value::inc_fast_hits();
                 return result;
             }
@@ -1062,9 +1060,7 @@ pub fn call_function(
             // its value. Returns `Some(result)` on a match; `None` means
             // the keyword doesn't map to any slot — fall through to the
             // normal error path.
-            if let Some(result) =
-                crate::primitives_eieio::try_keyword_slot_call(&name, &args_obj)
-            {
+            if let Some(result) = crate::primitives_eieio::try_keyword_slot_call(&name, &args_obj) {
                 return result.map(obj_to_value);
             }
             source_level_fallback(&name, &args_obj, env, editor, macros, state)
@@ -1183,13 +1179,38 @@ mod tests {
 enum Iter {
     InList(LispObject),
     OnList(LispObject),
-    FromTo { cur: i64, end: i64, step: i64, inclusive: bool, descending: bool },
-    Assignment { init: LispObject, then: Option<LispObject>, first: bool, value: LispObject },
-    Across { items: Vec<LispObject>, idx: usize },
-    Elements { items: Vec<LispObject>, idx: usize },
-    HashKeys { items: Vec<LispObject>, idx: usize },
-    HashValues { items: Vec<LispObject>, idx: usize },
-    Repeat { remaining: i64 },
+    FromTo {
+        cur: i64,
+        end: i64,
+        step: i64,
+        inclusive: bool,
+        descending: bool,
+    },
+    Assignment {
+        init: LispObject,
+        then: Option<LispObject>,
+        first: bool,
+        value: LispObject,
+    },
+    Across {
+        items: Vec<LispObject>,
+        idx: usize,
+    },
+    Elements {
+        items: Vec<LispObject>,
+        idx: usize,
+    },
+    HashKeys {
+        items: Vec<LispObject>,
+        idx: usize,
+    },
+    HashValues {
+        items: Vec<LispObject>,
+        idx: usize,
+    },
+    Repeat {
+        remaining: i64,
+    },
 }
 
 impl Iter {
@@ -1220,9 +1241,19 @@ impl Iter {
                     Ok(None)
                 }
             }
-            Iter::FromTo { cur, end, step, inclusive, descending } => {
+            Iter::FromTo {
+                cur,
+                end,
+                step,
+                inclusive,
+                descending,
+            } => {
                 let within = if *descending {
-                    if *inclusive { *cur >= *end } else { *cur > *end }
+                    if *inclusive {
+                        *cur >= *end
+                    } else {
+                        *cur > *end
+                    }
                 } else if *inclusive {
                     *cur <= *end
                 } else {
@@ -1232,10 +1263,19 @@ impl Iter {
                     return Ok(None);
                 }
                 let v = *cur;
-                *cur = if *descending { *cur - *step } else { *cur + *step };
+                *cur = if *descending {
+                    *cur - *step
+                } else {
+                    *cur + *step
+                };
                 Ok(Some(LispObject::integer(v)))
             }
-            Iter::Assignment { init, then, first, value } => {
+            Iter::Assignment {
+                init,
+                then,
+                first,
+                value,
+            } => {
                 let out = if *first {
                     *first = false;
                     let v = value_to_obj(eval(
@@ -1249,13 +1289,7 @@ impl Iter {
                     v
                 } else {
                     let form = then.clone().unwrap_or_else(|| init.clone());
-                    let v = value_to_obj(eval(
-                        obj_to_value(form),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?);
+                    let v = value_to_obj(eval(obj_to_value(form), env, editor, macros, state)?);
                     *value = v.clone();
                     v
                 };
@@ -1293,9 +1327,9 @@ impl Iter {
 
 #[derive(Clone)]
 enum Action {
-    Do(LispObject),                        // body forms (progn)
-    While(LispObject, bool),               // (cond, is_until)
-    Collect(String, LispObject),           // accumulator name, expr
+    Do(LispObject),              // body forms (progn)
+    While(LispObject, bool),     // (cond, is_until)
+    Collect(String, LispObject), // accumulator name, expr
     Append(String, LispObject),
     Nconc(String, LispObject),
     Sum(String, LispObject),
@@ -1310,9 +1344,9 @@ enum Action {
 
 #[derive(Clone)]
 enum Accumulator {
-    List(Vec<LispObject>),     // collect/append/nconc (all list-typed)
-    Num(f64),                  // sum/count
-    MaxMin(Option<f64>),       // max/min (starts None)
+    List(Vec<LispObject>), // collect/append/nconc (all list-typed)
+    Num(f64),              // sum/count
+    MaxMin(Option<f64>),   // max/min (starts None)
 }
 
 impl Accumulator {
@@ -1605,19 +1639,13 @@ pub(super) fn eval_cl_loop(
                             .destructure_cons()
                             .ok_or(ElispError::WrongNumberOfArguments)?;
                         cur = r3;
-                        let seq = value_to_obj(eval(
-                            obj_to_value(seq_form),
-                            env,
-                            editor,
-                            macros,
-                            state,
-                        )?);
+                        let seq =
+                            value_to_obj(eval(obj_to_value(seq_form), env, editor, macros, state)?);
                         let items = match seq {
                             LispObject::Vector(v) => v.lock().clone(),
-                            LispObject::String(s) => s
-                                .chars()
-                                .map(|c| LispObject::integer(c as i64))
-                                .collect(),
+                            LispObject::String(s) => {
+                                s.chars().map(|c| LispObject::integer(c as i64)).collect()
+                            }
                             _ => {
                                 let mut out = Vec::new();
                                 let mut c = seq;
@@ -1661,13 +1689,8 @@ pub(super) fn eval_cl_loop(
                             .destructure_cons()
                             .ok_or(ElispError::WrongNumberOfArguments)?;
                         cur = r5;
-                        let seq = value_to_obj(eval(
-                            obj_to_value(seq_form),
-                            env,
-                            editor,
-                            macros,
-                            state,
-                        )?);
+                        let seq =
+                            value_to_obj(eval(obj_to_value(seq_form), env, editor, macros, state)?);
                         let items: Vec<LispObject> = match (kind_tok.as_str(), &seq) {
                             // Our HashTable doesn't expose original-key
                             // iteration (keys are hashed into our
@@ -1683,10 +1706,9 @@ pub(super) fn eval_cl_loop(
                             }
                             _ => match seq {
                                 LispObject::Vector(v) => v.lock().clone(),
-                                LispObject::String(s) => s
-                                    .chars()
-                                    .map(|c| LispObject::integer(c as i64))
-                                    .collect(),
+                                LispObject::String(s) => {
+                                    s.chars().map(|c| LispObject::integer(c as i64)).collect()
+                                }
                                 _ => {
                                     let mut out = Vec::new();
                                     let mut c = seq;
@@ -1740,15 +1762,9 @@ pub(super) fn eval_cl_loop(
                     .destructure_cons()
                     .ok_or(ElispError::WrongNumberOfArguments)?;
                 cur = r;
-                let n = value_to_obj(eval(
-                    obj_to_value(n_form),
-                    env,
-                    editor,
-                    macros,
-                    state,
-                )?)
-                .as_integer()
-                .unwrap_or(0);
+                let n = value_to_obj(eval(obj_to_value(n_form), env, editor, macros, state)?)
+                    .as_integer()
+                    .unwrap_or(0);
                 // Synthesize a binding that produces nil n times.
                 bindings.push(("_repeat_".to_string(), Iter::Repeat { remaining: n }));
             }
@@ -1762,17 +1778,26 @@ pub(super) fn eval_cl_loop(
                 actions.push(Action::While(cond, is_until));
             }
             "always" => {
-                let (form, r) = cur.clone().destructure_cons().ok_or(ElispError::WrongNumberOfArguments)?;
+                let (form, r) = cur
+                    .clone()
+                    .destructure_cons()
+                    .ok_or(ElispError::WrongNumberOfArguments)?;
                 cur = r;
                 actions.push(Action::Always(form));
             }
             "never" => {
-                let (form, r) = cur.clone().destructure_cons().ok_or(ElispError::WrongNumberOfArguments)?;
+                let (form, r) = cur
+                    .clone()
+                    .destructure_cons()
+                    .ok_or(ElispError::WrongNumberOfArguments)?;
                 cur = r;
                 actions.push(Action::Never(form));
             }
             "thereis" => {
-                let (form, r) = cur.clone().destructure_cons().ok_or(ElispError::WrongNumberOfArguments)?;
+                let (form, r) = cur
+                    .clone()
+                    .destructure_cons()
+                    .ok_or(ElispError::WrongNumberOfArguments)?;
                 cur = r;
                 actions.push(Action::Thereis(form));
             }
@@ -1795,10 +1820,13 @@ pub(super) fn eval_cl_loop(
                 form = LispObject::cons(form, chain);
                 actions.push(Action::Do(form));
             }
-            "collect" | "collecting" | "append" | "appending" | "nconc" | "nconcing"
-            | "sum" | "summing" | "count" | "counting" | "maximize" | "maximizing"
-            | "minimize" | "minimizing" => {
-                let (form, r) = cur.clone().destructure_cons().ok_or(ElispError::WrongNumberOfArguments)?;
+            "collect" | "collecting" | "append" | "appending" | "nconc" | "nconcing" | "sum"
+            | "summing" | "count" | "counting" | "maximize" | "maximizing" | "minimize"
+            | "minimizing" => {
+                let (form, r) = cur
+                    .clone()
+                    .destructure_cons()
+                    .ok_or(ElispError::WrongNumberOfArguments)?;
                 cur = r;
                 // Optional `into VAR`.
                 let mut acc_name = String::new();
@@ -1838,7 +1866,10 @@ pub(super) fn eval_cl_loop(
                 });
             }
             "return" => {
-                let (form, r) = cur.clone().destructure_cons().ok_or(ElispError::WrongNumberOfArguments)?;
+                let (form, r) = cur
+                    .clone()
+                    .destructure_cons()
+                    .ok_or(ElispError::WrongNumberOfArguments)?;
                 cur = r;
                 actions.push(Action::Return(form));
             }
@@ -1981,7 +2012,9 @@ pub(super) fn eval_cl_loop(
                         macros,
                         state,
                     )?);
-                    let entry = accs.entry(name.clone()).or_insert((Accumulator::num(), true));
+                    let entry = accs
+                        .entry(name.clone())
+                        .or_insert((Accumulator::num(), true));
                     let n = as_f64(&v);
                     if let Accumulator::Num(acc) = &mut entry.0 {
                         *acc += n;
@@ -1999,7 +2032,9 @@ pub(super) fn eval_cl_loop(
                         state,
                     )?);
                     if !matches!(v, LispObject::Nil) {
-                        let entry = accs.entry(name.clone()).or_insert((Accumulator::num(), true));
+                        let entry = accs
+                            .entry(name.clone())
+                            .or_insert((Accumulator::num(), true));
                         if let Accumulator::Num(acc) = &mut entry.0 {
                             *acc += 1.0;
                         }
@@ -2014,7 +2049,9 @@ pub(super) fn eval_cl_loop(
                         state,
                     )?);
                     let n = as_f64(&v);
-                    let entry = accs.entry(name.clone()).or_insert((Accumulator::max_min(), true));
+                    let entry = accs
+                        .entry(name.clone())
+                        .or_insert((Accumulator::max_min(), true));
                     if let Accumulator::MaxMin(slot) = &mut entry.0 {
                         *slot = Some(match *slot {
                             Some(cur) => cur.max(n),
@@ -2034,7 +2071,9 @@ pub(super) fn eval_cl_loop(
                         state,
                     )?);
                     let n = as_f64(&v);
-                    let entry = accs.entry(name.clone()).or_insert((Accumulator::max_min(), true));
+                    let entry = accs
+                        .entry(name.clone())
+                        .or_insert((Accumulator::max_min(), true));
                     if let Accumulator::MaxMin(slot) = &mut entry.0 {
                         *slot = Some(match *slot {
                             Some(cur) => cur.min(n),

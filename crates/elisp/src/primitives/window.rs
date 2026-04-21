@@ -113,7 +113,9 @@ pub fn prim_window_list(_args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_window_buffer(_args: &LispObject) -> ElispResult<LispObject> {
     let name = buffer::with_registry(|r| r.get(r.current_id()).map(|b| b.name.clone()));
-    Ok(name.map(|n| LispObject::string(&n)).unwrap_or(LispObject::nil()))
+    Ok(name
+        .map(|n| LispObject::string(&n))
+        .unwrap_or(LispObject::nil()))
 }
 
 pub fn prim_window_point(_args: &LispObject) -> ElispResult<LispObject> {
@@ -257,7 +259,9 @@ pub fn prim_switch_to_buffer(args: &LispObject) -> ElispResult<LispObject> {
         buffer::with_registry_mut(|r| r.set_current(id));
     }
     let name = buffer::with_registry(|r| r.get(r.current_id()).map(|b| b.name.clone()));
-    Ok(name.map(|n| LispObject::string(&n)).unwrap_or(LispObject::nil()))
+    Ok(name
+        .map(|n| LispObject::string(&n))
+        .unwrap_or(LispObject::nil()))
 }
 
 pub fn prim_set_buffer(args: &LispObject) -> ElispResult<LispObject> {
@@ -283,11 +287,8 @@ pub fn prim_set_buffer(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_current_window_configuration(_args: &LispObject) -> ElispResult<LispObject> {
     let (cur, points) = buffer::with_registry(|r| {
         let cur = r.current_id();
-        let pts: HashMap<BufferId, usize> = r
-            .buffers
-            .iter()
-            .map(|(&id, b)| (id, b.point))
-            .collect();
+        let pts: HashMap<BufferId, usize> =
+            r.buffers.iter().map(|(&id, b)| (id, b.point)).collect();
         (cur, pts)
     });
     let id = NEXT_WC_ID.with(|c| {
@@ -310,7 +311,8 @@ pub fn prim_current_window_configuration(_args: &LispObject) -> ElispResult<Lisp
 
 pub fn prim_set_window_configuration(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().unwrap_or(LispObject::nil());
-    let id = wc_id(&a).ok_or_else(|| ElispError::WrongTypeArgument("window-configuration".into()))?;
+    let id =
+        wc_id(&a).ok_or_else(|| ElispError::WrongTypeArgument("window-configuration".into()))?;
     let cfg = WINDOW_CONFIGS.with(|cfgs| cfgs.borrow().get(&id).cloned());
     if let Some(cfg) = cfg {
         buffer::with_registry_mut(|r| {
@@ -589,19 +591,29 @@ pub fn prim_color_values_from_color_spec(args: &LispObject) -> ElispResult<LispO
 }
 
 pub fn prim_color_blend(args: &LispObject) -> ElispResult<LispObject> {
-    let c1 = args.nth(0).and_then(|a| a.as_string().cloned()).unwrap_or_default();
-    let c2 = args.nth(1).and_then(|a| a.as_string().cloned()).unwrap_or_default();
+    let c1 = args
+        .nth(0)
+        .and_then(|a| a.as_string().cloned())
+        .unwrap_or_default();
+    let c2 = args
+        .nth(1)
+        .and_then(|a| a.as_string().cloned())
+        .unwrap_or_default();
     let alpha = match args.nth(2).and_then(|a| a.as_float()) {
         Some(f) => f.max(0.0).min(1.0),
         None => 0.5,
     };
     let parse = |s: &str| -> Option<(u8, u8, u8)> {
-        if !s.starts_with('#') || s.len() != 7 { return None; }
-        u32::from_str_radix(&s[1..], 16).ok().map(|rgb| (
-            ((rgb >> 16) & 0xFF) as u8,
-            ((rgb >> 8) & 0xFF) as u8,
-            (rgb & 0xFF) as u8,
-        ))
+        if !s.starts_with('#') || s.len() != 7 {
+            return None;
+        }
+        u32::from_str_radix(&s[1..], 16).ok().map(|rgb| {
+            (
+                ((rgb >> 16) & 0xFF) as u8,
+                ((rgb >> 8) & 0xFF) as u8,
+                (rgb & 0xFF) as u8,
+            )
+        })
     };
     match (parse(&c1), parse(&c2)) {
         (Some((r1, g1, b1)), Some((r2, g2, b2))) => {
@@ -609,7 +621,10 @@ pub fn prim_color_blend(args: &LispObject) -> ElispResult<LispObject> {
             let r = ((r1 as f64 * ia + r2 as f64 * alpha) as u32) & 0xFF;
             let g = ((g1 as f64 * ia + g2 as f64 * alpha) as u32) & 0xFF;
             let b = ((b1 as f64 * ia + b2 as f64 * alpha) as u32) & 0xFF;
-            Ok(LispObject::string(&format!("#{:06x}", (r << 16) | (g << 8) | b)))
+            Ok(LispObject::string(&format!(
+                "#{:06x}",
+                (r << 16) | (g << 8) | b
+            )))
         }
         _ => Ok(LispObject::nil()),
     }
@@ -617,7 +632,11 @@ pub fn prim_color_blend(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_color_name_to_rgb(args: &LispObject) -> ElispResult<LispObject> {
     match args.first().and_then(|a| a.as_string().cloned()) {
-        Some(name) if name.starts_with('#') && name.len() == 7 && u32::from_str_radix(&name[1..], 16).is_ok() => {
+        Some(name)
+            if name.starts_with('#')
+                && name.len() == 7
+                && u32::from_str_radix(&name[1..], 16).is_ok() =>
+        {
             Ok(LispObject::string(&name))
         }
         _ => Ok(LispObject::nil()),
@@ -625,15 +644,25 @@ pub fn prim_color_name_to_rgb(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_color_distance(args: &LispObject) -> ElispResult<LispObject> {
-    let c1 = args.nth(0).and_then(|a| a.as_string().cloned()).unwrap_or_default();
-    let c2 = args.nth(1).and_then(|a| a.as_string().cloned()).unwrap_or_default();
+    let c1 = args
+        .nth(0)
+        .and_then(|a| a.as_string().cloned())
+        .unwrap_or_default();
+    let c2 = args
+        .nth(1)
+        .and_then(|a| a.as_string().cloned())
+        .unwrap_or_default();
     let parse = |s: &str| -> Option<(f64, f64, f64)> {
-        if !s.starts_with('#') || s.len() != 7 { return None; }
-        u32::from_str_radix(&s[1..], 16).ok().map(|rgb| (
-            ((rgb >> 16) & 0xFF) as f64,
-            ((rgb >> 8) & 0xFF) as f64,
-            (rgb & 0xFF) as f64,
-        ))
+        if !s.starts_with('#') || s.len() != 7 {
+            return None;
+        }
+        u32::from_str_radix(&s[1..], 16).ok().map(|rgb| {
+            (
+                ((rgb >> 16) & 0xFF) as f64,
+                ((rgb >> 8) & 0xFF) as f64,
+                (rgb & 0xFF) as f64,
+            )
+        })
     };
     match (parse(&c1), parse(&c2)) {
         (Some((r1, g1, b1)), Some((r2, g2, b2))) => {
@@ -667,8 +696,11 @@ pub fn call_window_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "window-parent" => prim_window_parent(args),
         "window-child" => prim_window_child(args),
         "walk-windows" => prim_walk_windows(args),
-        "split-window" | "split-window-below" | "split-window-right"
-        | "split-window-horizontally" | "split-window-vertically" => prim_split_window(args),
+        "split-window"
+        | "split-window-below"
+        | "split-window-right"
+        | "split-window-horizontally"
+        | "split-window-vertically" => prim_split_window(args),
         "delete-window" => prim_delete_window(args),
         "delete-other-windows" => prim_delete_other_windows(args),
         "other-window" => prim_other_window(args),
@@ -699,7 +731,11 @@ pub fn call_window_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "make-sparse-keymap" => prim_make_sparse_keymap(args),
         "copy-keymap" => prim_copy_keymap(args),
         "define-key" | "keymap-set" => {
-            if name == "keymap-set" { prim_keymap_set(args) } else { prim_define_key(args) }
+            if name == "keymap-set" {
+                prim_keymap_set(args)
+            } else {
+                prim_define_key(args)
+            }
         }
         "global-set-key" => prim_global_set_key(args),
         "local-set-key" => prim_local_set_key(args),

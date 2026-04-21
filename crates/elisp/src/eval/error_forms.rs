@@ -1,14 +1,14 @@
 // Error and exception handling forms: catch, throw, condition-case, signal, unwind-protect.
 
+use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult, SignalData, ThrowData};
 use crate::object::LispObject;
-use crate::value::{obj_to_value, value_to_obj, Value};
-use crate::EditorCallbacks;
+use crate::value::{Value, obj_to_value, value_to_obj};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
 use super::builtins::eval_format;
-use super::{eval, eval_progn, Environment, InterpreterState, MacroTable};
+use super::{Environment, InterpreterState, MacroTable, eval, eval_progn};
 
 pub(super) fn eval_catch(
     args: Value,

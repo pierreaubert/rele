@@ -23,7 +23,7 @@
 //! special form produces at evaluation time. The runner quotes this
 //! form so `funcall` receives the closure object directly.
 
-use rele_elisp::{add_primitives, read, Interpreter, LispObject};
+use rele_elisp::{Interpreter, LispObject, add_primitives, read};
 
 fn fresh_interp() -> Interpreter {
     let mut interp = Interpreter::new();
@@ -39,9 +39,7 @@ fn run_ert_body(interp: &Interpreter, test_name: &str) -> LispObject {
     // R19 fix stores the thunk as a `closure` form, which is not a
     // self-evaluating cons — evaluating it naked would try to dispatch
     // on `closure` as a function head.
-    let src = format!(
-        "(funcall (get (intern \"{test_name}\") 'ert--rele-test))",
-    );
+    let src = format!("(funcall (get (intern \"{test_name}\") 'ert--rele-test))",);
     // `get` needs the thunk treated as a value, so use a small elisp
     // shim that funcalls it correctly.
     //
@@ -50,15 +48,11 @@ fn run_ert_body(interp: &Interpreter, test_name: &str) -> LispObject {
     // the plist value — and wrap it in quote. Build via `read` so we
     // exercise the same shape real tests do.
     let _ = src; // shim retained for clarity, actual call below
-    let expr = read(
-        &format!(
-            "(funcall (get '{test_name} 'ert--rele-test))",
-        ),
-    )
-    .unwrap_or_else(|e| panic!("read: {e:?}"));
-    interp.eval(expr).unwrap_or_else(|e| {
-        panic!("eval ({test_name} body): {e:?}")
-    })
+    let expr = read(&format!("(funcall (get '{test_name} 'ert--rele-test))",))
+        .unwrap_or_else(|e| panic!("read: {e:?}"));
+    interp
+        .eval(expr)
+        .unwrap_or_else(|e| panic!("eval ({test_name} body): {e:?}"))
 }
 
 /// bindat-tests.el reduction: a single `let`-bound symbol the body
@@ -76,7 +70,10 @@ fn r19_let_captured_into_ert_body_bindat_shape() {
     // Running the body must NOT raise void-variable on `spec`.
     let result = run_ert_body(&interp, "r19-spec-visible");
     // `should` returns the value it checked if non-nil.
-    assert!(!result.is_nil(), "body should return non-nil, got {result:?}");
+    assert!(
+        !result.is_nil(),
+        "body should return non-nil, got {result:?}"
+    );
 }
 
 /// ibuffer-tests.el reduction: `let*`-bound lambda funcall'd from the
@@ -92,7 +89,10 @@ fn r19_let_star_captured_lambda_ibuffer_shape() {
     .unwrap();
     interp.eval(expr).expect("registration");
     let result = run_ert_body(&interp, "r19-create-file-buffer-visible");
-    assert!(!result.is_nil(), "body should return non-nil, got {result:?}");
+    assert!(
+        !result.is_nil(),
+        "body should return non-nil, got {result:?}"
+    );
 }
 
 /// Two distinct let-bound values at two distinct test registrations —
@@ -146,7 +146,10 @@ fn r19_closure_captures_snapshot_not_reference() {
     // captured binding because `spec` was lexically bound inside a let
     // that has already unwound. The body should still see 42.
     let result = run_ert_body(&interp, "r19-snapshot");
-    assert!(!result.is_nil(), "captured value should still be 42: {result:?}");
+    assert!(
+        !result.is_nil(),
+        "captured value should still be 42: {result:?}"
+    );
 }
 
 /// Baseline: a test with no enclosing `let` still works (empty
@@ -155,9 +158,7 @@ fn r19_closure_captures_snapshot_not_reference() {
 fn r19_no_let_still_works() {
     let interp = fresh_interp();
     interp
-        .eval(
-            read("(ert-deftest r19-plain () (should (= 1 1)))").unwrap(),
-        )
+        .eval(read("(ert-deftest r19-plain () (should (= 1 1)))").unwrap())
         .expect("registration");
     let result = run_ert_body(&interp, "r19-plain");
     assert!(!result.is_nil(), "plain test: {result:?}");

@@ -20,7 +20,7 @@
 //! `S <= P < E`. So `POINT` = 10, 15, 19 all match; `POINT` = 20 does
 //! not. These correspond to the -B / -C / -D variants (and -E).
 
-use rele_elisp::{add_primitives, primitives_modules, read, Interpreter, LispObject};
+use rele_elisp::{Interpreter, LispObject, add_primitives, primitives_modules, read};
 
 fn make_interp() -> Interpreter {
     let mut interp = Interpreter::new();

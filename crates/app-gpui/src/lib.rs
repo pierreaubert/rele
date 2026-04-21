@@ -11,12 +11,10 @@
 
 // Re-export shared editor core from server
 pub use rele_server::{
-    document, export, import, macros,
-};
-pub use rele_server::{
     CommandArgs, CommandCategory, DocumentBuffer, EditHistory, EditorCursor, InteractiveSpec,
     KeyboardMacro, KillRing, MacroState, RecordedAction, StoredBuffer,
 };
+pub use rele_server::{document, export, import, macros};
 
 pub mod actions;
 pub mod commands;

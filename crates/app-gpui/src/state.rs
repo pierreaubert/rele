@@ -1,5 +1,5 @@
-use rele_elisp::{EditorCallbacks, Interpreter, add_primitives};
 use gpui_keybinding::KeymapPreset;
+use rele_elisp::{EditorCallbacks, Interpreter, add_primitives};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -15,13 +15,8 @@ use crate::markdown::SourceMap;
 use crate::minibuffer::{MiniBufferPrompt, MiniBufferResult, MiniBufferState};
 
 use rele_server::CancellationFlag;
-use rele_server::lsp::{
-    LspBufferState, LspConfig, LspEvent, LspRegistry,
-    position::uri_from_path,
-};
-use rele_server::syntax::{
-    Highlighter, TreeSitterHighlighter, language_for_extension,
-};
+use rele_server::lsp::{LspBufferState, LspConfig, LspEvent, LspRegistry, position::uri_from_path};
+use rele_server::syntax::{Highlighter, TreeSitterHighlighter, language_for_extension};
 
 /// Bridges the elisp interpreter to live editor state.
 ///
@@ -785,10 +780,7 @@ impl MdAppState {
                 &mut self.last_move_was_vertical,
                 incoming.last_move_was_vertical,
             ),
-            lsp_state: std::mem::replace(
-                &mut self.lsp_buffer_state,
-                incoming.lsp_state,
-            ),
+            lsp_state: std::mem::replace(&mut self.lsp_buffer_state, incoming.lsp_state),
         };
 
         // Active buffer id becomes the incoming buffer's id.
@@ -3126,7 +3118,8 @@ impl MdAppState {
         };
         let language_id = config.language_id.clone();
 
-        let mut buf_state = LspBufferState::new(uri.clone(), language_id.clone(), server_name.clone());
+        let mut buf_state =
+            LspBufferState::new(uri.clone(), language_id.clone(), server_name.clone());
         let version = buf_state.next_version();
 
         // Send didOpen if the server is ready; otherwise leave did_open_sent
@@ -3454,8 +3447,7 @@ impl MdAppState {
                 self.lsp_completion_visible = !self.lsp_completion_items.is_empty();
             }
             LspEvent::HoverResponse { contents, .. } => {
-                self.lsp_hover_text =
-                    contents.map(rele_server::lsp::hover_contents_to_string);
+                self.lsp_hover_text = contents.map(rele_server::lsp::hover_contents_to_string);
             }
             LspEvent::DefinitionResponse { locations, .. } => {
                 self.handle_lsp_locations("Definition", locations);
@@ -3479,8 +3471,7 @@ impl MdAppState {
                 server_name,
                 status,
             } => {
-                self.lsp_status =
-                    Some(format!("LSP: {server_name} exited (code: {status:?})"));
+                self.lsp_status = Some(format!("LSP: {server_name} exited (code: {status:?})"));
                 log::warn!("LSP server exited: {server_name} (code: {status:?})");
             }
             LspEvent::Error { message } => {

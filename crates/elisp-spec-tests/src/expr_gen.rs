@@ -72,9 +72,7 @@ fn json_value_to_json_val(v: &serde_json::Value) -> Result<JsonVal, String> {
             let i = n.as_i64().ok_or("number not i64")?;
             Ok(JsonVal::Int { int: i })
         }
-        serde_json::Value::String(s) => Ok(JsonVal::Str {
-            str: s.clone(),
-        }),
+        serde_json::Value::String(s) => Ok(JsonVal::Str { str: s.clone() }),
         serde_json::Value::Object(m) => {
             if let Some(v) = m.get("int") {
                 let i = v.as_i64().ok_or("int field not i64")?;
@@ -118,9 +116,7 @@ impl JsonVal {
         Self::Int { int: n }
     }
     pub fn string(s: impl Into<String>) -> Self {
-        Self::Str {
-            str: s.into(),
-        }
+        Self::Str { str: s.into() }
     }
     pub fn sym(s: impl Into<String>) -> Self {
         Self::Sym { sym: s.into() }

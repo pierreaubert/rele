@@ -233,19 +233,20 @@ impl Render for EditorPane {
         // `ensure_highlight_fresh` below.
         let _ = state;
         if has_ts_highlighter {
-            self.state
-                .update(cx, |s, _cx| s.ensure_highlight_fresh());
+            self.state.update(cx, |s, _cx| s.ensure_highlight_fresh());
         }
         let state = self.state.read(cx);
         let doc = &state.document; // rebind after state.update
-        let ts_ranges_by_line: std::collections::HashMap<usize, Vec<rele_server::syntax::HighlightRange>> =
-            if let Some(h) = state.buffer_highlighter.as_ref() {
-                h.highlight_range(doc.rope(), render_start, render_end)
-                    .into_iter()
-                    .collect()
-            } else {
-                std::collections::HashMap::new()
-            };
+        let ts_ranges_by_line: std::collections::HashMap<
+            usize,
+            Vec<rele_server::syntax::HighlightRange>,
+        > = if let Some(h) = state.buffer_highlighter.as_ref() {
+            h.highlight_range(doc.rope(), render_start, render_end)
+                .into_iter()
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
 
         // Track code block state by scanning from line 0 to render_start.
         // Skipped entirely when tree-sitter is driving — the whole-file
@@ -271,8 +272,7 @@ impl Render for EditorPane {
             let line_slice_len = line_slice.len_chars();
             let (line_text_owned, was_truncated): (String, bool) =
                 if line_slice_len > MAX_LINE_DISPLAY_CHARS {
-                    let mut s =
-                        String::with_capacity(MAX_LINE_DISPLAY_CHARS * 4);
+                    let mut s = String::with_capacity(MAX_LINE_DISPLAY_CHARS * 4);
                     for ch in line_slice.chars().take(MAX_LINE_DISPLAY_CHARS) {
                         s.push(ch);
                     }
@@ -480,9 +480,7 @@ impl Render for EditorPane {
                 .iter()
                 .enumerate()
                 .take(10)
-                .map(|(idx, item)| {
-                    (item.label.clone(), idx == state.lsp_completion_selected)
-                })
+                .map(|(idx, item)| (item.label.clone(), idx == state.lsp_completion_selected))
                 .collect()
         } else {
             Vec::new()
@@ -1120,11 +1118,7 @@ impl Render for EditorPane {
                 let items: Vec<AnyElement> = completion_items
                     .iter()
                     .map(|(label, selected)| {
-                        let bg = if *selected {
-                            surface_color
-                        } else {
-                            bg_color
-                        };
+                        let bg = if *selected { surface_color } else { bg_color };
                         div()
                             .px_2()
                             .py(px(1.0))
@@ -1141,10 +1135,8 @@ impl Render for EditorPane {
                 // content right. Y is relative to the scrolled document, so
                 // we subtract the current scroll offset.
                 let char_width = editor_font_size * 0.6;
-                let popup_y =
-                    ((cursor_line + 1) as f32 * LINE_HEIGHT_PX) - scroll_top + 8.0;
-                let popup_x =
-                    8.0 + gutter_width + (cursor_col as f32 * char_width);
+                let popup_y = ((cursor_line + 1) as f32 * LINE_HEIGHT_PX) - scroll_top + 8.0;
+                let popup_x = 8.0 + gutter_width + (cursor_col as f32 * char_width);
                 el.child(
                     div()
                         .absolute()
@@ -1164,11 +1156,8 @@ impl Render for EditorPane {
             .when_some(hover_text, |el, text| {
                 let first_line = text.lines().next().unwrap_or("").to_string();
                 let char_width = editor_font_size * 0.6;
-                let hover_y = (cursor_line as f32 * LINE_HEIGHT_PX) - scroll_top
-                    - 24.0
-                    + 8.0;
-                let hover_x =
-                    8.0 + gutter_width + (cursor_col as f32 * char_width);
+                let hover_y = (cursor_line as f32 * LINE_HEIGHT_PX) - scroll_top - 24.0 + 8.0;
+                let hover_x = 8.0 + gutter_width + (cursor_col as f32 * char_width);
                 el.child(
                     div()
                         .absolute()

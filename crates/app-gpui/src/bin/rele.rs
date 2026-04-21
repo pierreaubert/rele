@@ -85,7 +85,9 @@ fn main() {
             let lsp_state = state.clone();
             let lsp_rx = state.update(cx, |s, _cx| {
                 s.ensure_lsp_registry();
-                s.lsp_registry.as_mut().and_then(|r| r.take_event_receiver())
+                s.lsp_registry
+                    .as_mut()
+                    .and_then(|r| r.take_event_receiver())
             });
             if let Some(mut rx) = lsp_rx {
                 cx.spawn(async move |cx| {
@@ -192,18 +194,16 @@ fn register_actions(cx: &mut App) {
 
         if let Some(path) = path {
             let saved_path = path.clone();
-            cx.spawn(async move |cx| {
-                match tokio::fs::write(&path, &text).await {
-                    Ok(()) => {
-                        cx.update(|cx| {
-                            state.update(cx, |s, _cx| {
-                                s.document.mark_clean();
-                                s.lsp_did_save();
-                            });
+            cx.spawn(async move |cx| match tokio::fs::write(&path, &text).await {
+                Ok(()) => {
+                    cx.update(|cx| {
+                        state.update(cx, |s, _cx| {
+                            s.document.mark_clean();
+                            s.lsp_did_save();
                         });
-                    }
-                    Err(e) => error!("Failed to save file {}: {}", saved_path.display(), e),
+                    });
                 }
+                Err(e) => error!("Failed to save file {}: {}", saved_path.display(), e),
             })
             .detach();
         } else {

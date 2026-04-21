@@ -13,7 +13,7 @@
 //! See also: `tests/void_vars_r5.rs` and `tests/autoload_r2.rs` for the
 //! integration-test conventions in this crate.
 
-use rele_elisp::{add_primitives, primitives_modules, read, Interpreter, LispObject};
+use rele_elisp::{Interpreter, LispObject, add_primitives, primitives_modules, read};
 
 /// Build an interpreter that mirrors the inside-crate `make_stdlib_interp`
 /// helper closely enough for calling module stubs: primitives registered,

@@ -3,11 +3,11 @@
 //! A stack-based VM that executes compiled Emacs Lisp bytecode functions.
 //! Opcodes match the Emacs 30.x bytecode instruction set.
 
+use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::eval::InterpreterState;
 use crate::object::{BytecodeFunction, LispObject};
-use crate::value::{obj_to_value, value_to_obj, Value};
-use crate::EditorCallbacks;
+use crate::value::{Value, obj_to_value, value_to_obj};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;

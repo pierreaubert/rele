@@ -1,13 +1,13 @@
 // Editor callbacks: buffer-string, insert, point, goto-char, find-file, etc.
 
+use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
-use crate::value::{obj_to_value, value_to_obj, Value};
-use crate::EditorCallbacks;
+use crate::value::{Value, obj_to_value, value_to_obj};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-use super::{eval, eval_progn, Environment, InterpreterState, MacroTable};
+use super::{Environment, InterpreterState, MacroTable, eval, eval_progn};
 
 pub(super) fn eval_buffer_string(
     editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
@@ -47,9 +47,9 @@ pub(super) fn eval_insert(
         let v = value_to_obj(eval(obj_to_value(arg), env, editor, macros, state)?);
         let s = match &v {
             LispObject::String(s) => s.clone(),
-            LispObject::Integer(i) => {
-                char::from_u32(*i as u32).map(|c| c.to_string()).unwrap_or_default()
-            }
+            LispObject::Integer(i) => char::from_u32(*i as u32)
+                .map(|c| c.to_string())
+                .unwrap_or_default(),
             LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
             _ => format!("{:?}", v),
         };

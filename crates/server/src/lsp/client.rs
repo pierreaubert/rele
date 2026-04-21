@@ -50,12 +50,14 @@ impl LspClient {
             .kill_on_drop(true)
             .spawn()?;
 
-        let stdin = child.stdin.take().ok_or_else(|| {
-            std::io::Error::other("failed to capture stdin")
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            std::io::Error::other("failed to capture stdout")
-        })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| std::io::Error::other("failed to capture stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| std::io::Error::other("failed to capture stdout"))?;
 
         let transport = Arc::new(LspTransport::new(stdin));
         let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
@@ -200,7 +202,10 @@ impl LspClient {
             partial_result_params: Default::default(),
             context: None,
         };
-        let id = self.transport.send_request("textDocument/completion", params).await?;
+        let id = self
+            .transport
+            .send_request("textDocument/completion", params)
+            .await?;
 
         // Spawn a task to wait for the response and convert it to an LspEvent.
         self.spawn_response_handler(id, move |result, event_tx| {
@@ -228,7 +233,10 @@ impl LspClient {
             },
             work_done_progress_params: Default::default(),
         };
-        let id = self.transport.send_request("textDocument/hover", params).await?;
+        let id = self
+            .transport
+            .send_request("textDocument/hover", params)
+            .await?;
 
         self.spawn_response_handler(id, move |result, event_tx| {
             let contents = serde_json::from_value::<lsp_types::Hover>(result)

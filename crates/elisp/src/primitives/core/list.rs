@@ -35,9 +35,32 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 }
 
 pub const LIST_PRIMITIVE_NAMES: &[&str] = &[
-    "cons", "car", "cdr", "list", "length", "append", "reverse", "member", "assoc",
-    "nth", "nthcdr", "setcar", "setcdr", "nconc", "nreverse", "delq", "memq", "assq",
-    "last", "copy-sequence", "cadr", "cddr", "caar", "cdar", "car-safe", "cdr-safe",
+    "cons",
+    "car",
+    "cdr",
+    "list",
+    "length",
+    "append",
+    "reverse",
+    "member",
+    "assoc",
+    "nth",
+    "nthcdr",
+    "setcar",
+    "setcdr",
+    "nconc",
+    "nreverse",
+    "delq",
+    "memq",
+    "assq",
+    "last",
+    "copy-sequence",
+    "cadr",
+    "cddr",
+    "caar",
+    "cdar",
+    "car-safe",
+    "cdr-safe",
     "make-list",
 ];
 
@@ -50,7 +73,10 @@ pub fn prim_cons(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_car(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     match &arg {
         LispObject::Nil => Ok(LispObject::nil()),
         LispObject::Cons(cell) => Ok(cell.lock().0.clone()),
@@ -59,7 +85,10 @@ pub fn prim_car(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_cdr(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     match &arg {
         LispObject::Nil => Ok(LispObject::nil()),
         LispObject::Cons(cell) => Ok(cell.lock().1.clone()),
@@ -72,7 +101,10 @@ pub fn prim_list(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_length(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     match arg {
         LispObject::Nil => Ok(LispObject::integer(0)),
         LispObject::Cons(_) => {
@@ -132,7 +164,10 @@ pub fn prim_append(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_reverse(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     let mut result = LispObject::nil();
     let mut current = arg.clone();
     let mut steps: u64 = 0;

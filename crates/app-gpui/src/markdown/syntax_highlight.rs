@@ -99,28 +99,138 @@ mod ts_spans_tests {
     fn colors() -> MdThemeColors {
         // Use a dummy; fields aren't compared, only used to produce Rgba.
         MdThemeColors {
-            text: Rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
-            text_muted: Rgba { r: 0.5, g: 0.5, b: 0.5, a: 1.0 },
-            code_block_bg: Rgba { r: 0.9, g: 0.9, b: 0.9, a: 1.0 },
-            table_bg: Rgba { r: 0.9, g: 0.9, b: 0.9, a: 1.0 },
-            table_header_bg: Rgba { r: 0.85, g: 0.85, b: 0.85, a: 1.0 },
-            border: Rgba { r: 0.8, g: 0.8, b: 0.8, a: 1.0 },
-            hr: Rgba { r: 0.8, g: 0.8, b: 0.8, a: 1.0 },
-            syn_heading: Rgba { r: 0.0, g: 0.3, b: 0.6, a: 1.0 },
-            syn_bold: Rgba { r: 0.6, g: 0.2, b: 0.0, a: 1.0 },
-            syn_italic: Rgba { r: 0.4, g: 0.2, b: 0.7, a: 1.0 },
-            syn_strikethrough: Rgba { r: 0.5, g: 0.5, b: 0.5, a: 1.0 },
-            syn_code: Rgba { r: 0.6, g: 0.3, b: 0.1, a: 1.0 },
-            syn_link: Rgba { r: 0.0, g: 0.4, b: 0.2, a: 1.0 },
-            syn_list_marker: Rgba { r: 0.4, g: 0.4, b: 0.4, a: 1.0 },
-            syn_blockquote: Rgba { r: 0.4, g: 0.4, b: 0.4, a: 1.0 },
-            syn_fence: Rgba { r: 0.6, g: 0.3, b: 0.1, a: 1.0 },
-            syn_checkbox: Rgba { r: 0.0, g: 0.4, b: 0.2, a: 1.0 },
-            cursor_bg: Rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
-            cursor_text: Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
-            selection_bg: Rgba { r: 0.7, g: 0.8, b: 1.0, a: 1.0 },
-            find_match_bg: Rgba { r: 1.0, g: 0.9, b: 0.3, a: 1.0 },
-            find_match_text: Rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+            text: Rgba {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+            text_muted: Rgba {
+                r: 0.5,
+                g: 0.5,
+                b: 0.5,
+                a: 1.0,
+            },
+            code_block_bg: Rgba {
+                r: 0.9,
+                g: 0.9,
+                b: 0.9,
+                a: 1.0,
+            },
+            table_bg: Rgba {
+                r: 0.9,
+                g: 0.9,
+                b: 0.9,
+                a: 1.0,
+            },
+            table_header_bg: Rgba {
+                r: 0.85,
+                g: 0.85,
+                b: 0.85,
+                a: 1.0,
+            },
+            border: Rgba {
+                r: 0.8,
+                g: 0.8,
+                b: 0.8,
+                a: 1.0,
+            },
+            hr: Rgba {
+                r: 0.8,
+                g: 0.8,
+                b: 0.8,
+                a: 1.0,
+            },
+            syn_heading: Rgba {
+                r: 0.0,
+                g: 0.3,
+                b: 0.6,
+                a: 1.0,
+            },
+            syn_bold: Rgba {
+                r: 0.6,
+                g: 0.2,
+                b: 0.0,
+                a: 1.0,
+            },
+            syn_italic: Rgba {
+                r: 0.4,
+                g: 0.2,
+                b: 0.7,
+                a: 1.0,
+            },
+            syn_strikethrough: Rgba {
+                r: 0.5,
+                g: 0.5,
+                b: 0.5,
+                a: 1.0,
+            },
+            syn_code: Rgba {
+                r: 0.6,
+                g: 0.3,
+                b: 0.1,
+                a: 1.0,
+            },
+            syn_link: Rgba {
+                r: 0.0,
+                g: 0.4,
+                b: 0.2,
+                a: 1.0,
+            },
+            syn_list_marker: Rgba {
+                r: 0.4,
+                g: 0.4,
+                b: 0.4,
+                a: 1.0,
+            },
+            syn_blockquote: Rgba {
+                r: 0.4,
+                g: 0.4,
+                b: 0.4,
+                a: 1.0,
+            },
+            syn_fence: Rgba {
+                r: 0.6,
+                g: 0.3,
+                b: 0.1,
+                a: 1.0,
+            },
+            syn_checkbox: Rgba {
+                r: 0.0,
+                g: 0.4,
+                b: 0.2,
+                a: 1.0,
+            },
+            cursor_bg: Rgba {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+            cursor_text: Rgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            },
+            selection_bg: Rgba {
+                r: 0.7,
+                g: 0.8,
+                b: 1.0,
+                a: 1.0,
+            },
+            find_match_bg: Rgba {
+                r: 1.0,
+                g: 0.9,
+                b: 0.3,
+                a: 1.0,
+            },
+            find_match_text: Rgba {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
         }
     }
 
@@ -155,8 +265,16 @@ mod ts_spans_tests {
     #[test]
     fn spans_cover_line_contiguously() {
         let ranges = [
-            HighlightRange { start_col: 0, end_col: 2, kind: Highlight::Keyword },
-            HighlightRange { start_col: 4, end_col: 7, kind: Highlight::Type },
+            HighlightRange {
+                start_col: 0,
+                end_col: 2,
+                kind: Highlight::Keyword,
+            },
+            HighlightRange {
+                start_col: 4,
+                end_col: 7,
+                kind: Highlight::Type,
+            },
         ];
         let text = "fn  Foo(x)";
         let spans = ts_ranges_to_spans(text, &ranges, &colors());

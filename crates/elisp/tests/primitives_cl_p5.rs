@@ -10,7 +10,10 @@ use rele_elisp::primitives_cl;
 fn test_cl_nth_value_zero() {
     // (cl-nth-value 0 FORM) should return FORM
     let form = LispObject::integer(42);
-    let args = LispObject::cons(LispObject::integer(0), LispObject::cons(form.clone(), LispObject::nil()));
+    let args = LispObject::cons(
+        LispObject::integer(0),
+        LispObject::cons(form.clone(), LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_nth_value(&args).unwrap();
     assert_eq!(result, form);
 }
@@ -19,7 +22,10 @@ fn test_cl_nth_value_zero() {
 fn test_cl_nth_value_nonzero() {
     // (cl-nth-value N FORM) where N > 0 should return nil
     let form = LispObject::integer(42);
-    let args = LispObject::cons(LispObject::integer(1), LispObject::cons(form, LispObject::nil()));
+    let args = LispObject::cons(
+        LispObject::integer(1),
+        LispObject::cons(form, LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_nth_value(&args).unwrap();
     assert_eq!(result, LispObject::nil());
 }
@@ -28,7 +34,10 @@ fn test_cl_nth_value_nonzero() {
 fn test_cl_nth_value_large_n() {
     // (cl-nth-value 100 FORM) should return nil
     let form = LispObject::string("test");
-    let args = LispObject::cons(LispObject::integer(100), LispObject::cons(form, LispObject::nil()));
+    let args = LispObject::cons(
+        LispObject::integer(100),
+        LispObject::cons(form, LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_nth_value(&args).unwrap();
     assert_eq!(result, LispObject::nil());
 }
@@ -37,7 +46,10 @@ fn test_cl_nth_value_large_n() {
 fn test_cl_nth_value_with_symbol() {
     // (cl-nth-value 0 'symbol) should return symbol
     let sym = LispObject::symbol("mysym");
-    let args = LispObject::cons(LispObject::integer(0), LispObject::cons(sym.clone(), LispObject::nil()));
+    let args = LispObject::cons(
+        LispObject::integer(0),
+        LispObject::cons(sym.clone(), LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_nth_value(&args).unwrap();
     assert_eq!(result, sym);
 }
@@ -89,10 +101,7 @@ fn test_cl_mapcan_multiple_lists_same_length() {
     };
     let args = LispObject::cons(
         pred,
-        LispObject::cons(
-            list1,
-            LispObject::cons(list2, LispObject::nil()),
-        ),
+        LispObject::cons(list1, LispObject::cons(list2, LispObject::nil())),
     );
     let result = primitives_cl::prim_cl_mapcan(&args).unwrap();
     // Result should contain elements from both lists
@@ -144,7 +153,10 @@ fn test_cl_typep_basic_list() {
         l = LispObject::cons(LispObject::integer(1), l);
         l
     };
-    let args = LispObject::cons(list, LispObject::cons(LispObject::symbol("list"), LispObject::nil()));
+    let args = LispObject::cons(
+        list,
+        LispObject::cons(LispObject::symbol("list"), LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_typep(&args).unwrap();
     assert_eq!(result, LispObject::t());
 }
@@ -203,7 +215,10 @@ fn test_cl_typep_or_combinator() {
         t = LispObject::cons(LispObject::symbol("or"), t);
         t
     };
-    let args = LispObject::cons(LispObject::integer(42), LispObject::cons(or_type, LispObject::nil()));
+    let args = LispObject::cons(
+        LispObject::integer(42),
+        LispObject::cons(or_type, LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_typep(&args).unwrap();
     assert_eq!(result, LispObject::t());
 }
@@ -257,7 +272,10 @@ fn test_cl_typep_and_combinator() {
         t = LispObject::cons(LispObject::symbol("and"), t);
         t
     };
-    let args = LispObject::cons(LispObject::integer(42), LispObject::cons(and_type, LispObject::nil()));
+    let args = LispObject::cons(
+        LispObject::integer(42),
+        LispObject::cons(and_type, LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_typep(&args).unwrap();
     assert_eq!(result, LispObject::t());
 }
@@ -307,7 +325,10 @@ fn test_cl_typep_not_combinator() {
         t = LispObject::cons(LispObject::symbol("not"), t);
         t
     };
-    let args = LispObject::cons(LispObject::integer(42), LispObject::cons(not_type, LispObject::nil()));
+    let args = LispObject::cons(
+        LispObject::integer(42),
+        LispObject::cons(not_type, LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_typep(&args).unwrap();
     assert_eq!(result, LispObject::t());
 }
@@ -340,7 +361,10 @@ fn test_cl_typep_member_combinator() {
         t = LispObject::cons(LispObject::symbol("member"), t);
         t
     };
-    let args = LispObject::cons(LispObject::integer(42), LispObject::cons(member_type, LispObject::nil()));
+    let args = LispObject::cons(
+        LispObject::integer(42),
+        LispObject::cons(member_type, LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_typep(&args).unwrap();
     assert_eq!(result, LispObject::t());
 }
@@ -356,7 +380,10 @@ fn test_cl_typep_member_combinator_no_match() {
         t = LispObject::cons(LispObject::symbol("member"), t);
         t
     };
-    let args = LispObject::cons(LispObject::integer(50), LispObject::cons(member_type, LispObject::nil()));
+    let args = LispObject::cons(
+        LispObject::integer(50),
+        LispObject::cons(member_type, LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_typep(&args).unwrap();
     assert_eq!(result, LispObject::nil());
 }
@@ -378,7 +405,10 @@ fn test_cl_typep_nested_combinators() {
         t = LispObject::cons(LispObject::symbol("or"), t);
         t
     };
-    let args = LispObject::cons(LispObject::integer(42), LispObject::cons(or_type, LispObject::nil()));
+    let args = LispObject::cons(
+        LispObject::integer(42),
+        LispObject::cons(or_type, LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_typep(&args).unwrap();
     assert_eq!(result, LispObject::t());
 }
@@ -399,9 +429,15 @@ fn test_cl_typep_function_type() {
     // (cl-typep (lambda () 1) 'function) should be true
     let lambda = LispObject::cons(
         LispObject::symbol("lambda"),
-        LispObject::cons(LispObject::nil(), LispObject::cons(LispObject::integer(1), LispObject::nil())),
+        LispObject::cons(
+            LispObject::nil(),
+            LispObject::cons(LispObject::integer(1), LispObject::nil()),
+        ),
     );
-    let args = LispObject::cons(lambda, LispObject::cons(LispObject::symbol("function"), LispObject::nil()));
+    let args = LispObject::cons(
+        lambda,
+        LispObject::cons(LispObject::symbol("function"), LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_typep(&args).unwrap();
     assert_eq!(result, LispObject::t());
 }
@@ -426,7 +462,10 @@ fn test_cl_typep_atom_type_cons_fail() {
         l = LispObject::cons(LispObject::symbol("a"), l);
         l
     };
-    let args = LispObject::cons(list, LispObject::cons(LispObject::symbol("atom"), LispObject::nil()));
+    let args = LispObject::cons(
+        list,
+        LispObject::cons(LispObject::symbol("atom"), LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_typep(&args).unwrap();
     assert_eq!(result, LispObject::nil());
 }
@@ -450,7 +489,10 @@ fn test_cl_typep_vector_type() {
         LispObject::symbol("b"),
         LispObject::symbol("c"),
     ])));
-    let args = LispObject::cons(vec, LispObject::cons(LispObject::symbol("vector"), LispObject::nil()));
+    let args = LispObject::cons(
+        vec,
+        LispObject::cons(LispObject::symbol("vector"), LispObject::nil()),
+    );
     let result = primitives_cl::prim_cl_typep(&args).unwrap();
     assert_eq!(result, LispObject::t());
 }

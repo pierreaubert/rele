@@ -18,21 +18,31 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 pub fn prim_aref(args: &LispObject) -> ElispResult<LispObject> {
     let vec = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let idx = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-    let idx = idx.as_integer().ok_or(ElispError::WrongTypeArgument("integer".to_string()))?;
+    let idx = idx
+        .as_integer()
+        .ok_or(ElispError::WrongTypeArgument("integer".to_string()))?;
 
     match vec {
         LispObject::Vector(v) => {
             let guard = v.lock();
-            let idx = if idx < 0 { (guard.len() as i64 + idx) } else { idx };
+            let idx = if idx < 0 {
+                (guard.len() as i64 + idx)
+            } else {
+                idx
+            };
             if idx < 0 || (idx as usize) >= guard.len() {
-                return Err(ElispError::EvalError("aref: index out of range".to_string()));
+                return Err(ElispError::EvalError(
+                    "aref: index out of range".to_string(),
+                ));
             }
             Ok(guard[idx as usize].clone())
         }
         LispObject::String(s) => {
             let idx = if idx < 0 { (s.len() as i64 + idx) } else { idx };
             if idx < 0 || (idx as usize) >= s.len() {
-                return Err(ElispError::EvalError("aref: index out of range".to_string()));
+                return Err(ElispError::EvalError(
+                    "aref: index out of range".to_string(),
+                ));
             }
             let ch = s.chars().nth(idx as usize).unwrap_or('?');
             Ok(LispObject::integer(ch as i64))
@@ -45,14 +55,22 @@ pub fn prim_aset(args: &LispObject) -> ElispResult<LispObject> {
     let vec = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let idx = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     let val = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
-    let idx = idx.as_integer().ok_or(ElispError::WrongTypeArgument("integer".to_string()))?;
+    let idx = idx
+        .as_integer()
+        .ok_or(ElispError::WrongTypeArgument("integer".to_string()))?;
 
     match vec {
         LispObject::Vector(v) => {
             let mut guard = v.lock();
-            let idx = if idx < 0 { (guard.len() as i64 + idx) } else { idx };
+            let idx = if idx < 0 {
+                (guard.len() as i64 + idx)
+            } else {
+                idx
+            };
             if idx < 0 || (idx as usize) >= guard.len() {
-                return Err(ElispError::EvalError("aset: index out of range".to_string()));
+                return Err(ElispError::EvalError(
+                    "aset: index out of range".to_string(),
+                ));
             }
             guard[idx as usize] = val.clone();
             Ok(val)
@@ -64,7 +82,9 @@ pub fn prim_aset(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_make_vector(args: &LispObject) -> ElispResult<LispObject> {
     let length = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let init = args.nth(1).unwrap_or(LispObject::nil());
-    let length = length.as_integer().ok_or(ElispError::WrongTypeArgument("integer".to_string()))?;
+    let length = length
+        .as_integer()
+        .ok_or(ElispError::WrongTypeArgument("integer".to_string()))?;
 
     if length < 0 {
         return Err(ElispError::WrongTypeArgument("integer".to_string()));
@@ -97,7 +117,9 @@ pub fn prim_vconcat(args: &LispObject) -> ElispResult<LispObject> {
         current = rest;
     }
 
-    Ok(LispObject::Vector(Arc::new(parking_lot::Mutex::new(result))))
+    Ok(LispObject::Vector(Arc::new(parking_lot::Mutex::new(
+        result,
+    ))))
 }
 
 pub fn prim_vectorp(args: &LispObject) -> ElispResult<LispObject> {

@@ -453,7 +453,10 @@ pub fn re_search_re(
 
     match direction {
         SearchDirection::Forward => {
-            let end_char = bound.unwrap_or(doc.len_chars() + 1).saturating_sub(1).min(doc.len_chars());
+            let end_char = bound
+                .unwrap_or(doc.len_chars() + 1)
+                .saturating_sub(1)
+                .min(doc.len_chars());
             // Allocate only pos..end_char
             let slice_text = doc.rope().slice(pos..end_char).to_string();
             let caps = re.captures(&slice_text)?;
@@ -690,7 +693,14 @@ mod tests {
         let (doc, mut cursor) = make_doc("hello");
         let mut md = MatchData::default();
         assert_eq!(
-            search_literal("", &doc, &mut cursor, SearchDirection::Forward, None, &mut md),
+            search_literal(
+                "",
+                &doc,
+                &mut cursor,
+                SearchDirection::Forward,
+                None,
+                &mut md
+            ),
             None
         );
     }

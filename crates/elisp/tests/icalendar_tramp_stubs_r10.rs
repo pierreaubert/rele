@@ -9,7 +9,7 @@
 //! Only items with >=5 hits in the target namespaces are covered.
 
 use rele_elisp::eval::tests::make_stdlib_interp;
-use rele_elisp::{read, LispObject};
+use rele_elisp::{LispObject, read};
 
 /// Helper that reads + evaluates the given source using a stdlib
 /// interpreter and asserts it does not error.

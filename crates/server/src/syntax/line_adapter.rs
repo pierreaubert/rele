@@ -42,12 +42,7 @@ impl<L: LineHighlighter> std::fmt::Debug for LineHighlighterAdapter<L> {
 }
 
 impl<L: LineHighlighter> Highlighter for LineHighlighterAdapter<L> {
-    fn on_edit(
-        &mut self,
-        rope: &ropey::Rope,
-        _changes: &[TextChange],
-        _full_sync: bool,
-    ) {
+    fn on_edit(&mut self, rope: &ropey::Rope, _changes: &[TextChange], _full_sync: bool) {
         // Simple correct path: rescan the whole buffer. Changes are
         // ignored because LineHighlighter is line-local with tiny state;
         // re-running it is cheap and avoids having to recompute where
@@ -104,11 +99,7 @@ mod tests {
     }
     impl LineHighlighter for Toy {
         type State = ToyState;
-        fn highlight_line(
-            &self,
-            line: &str,
-            state: ToyState,
-        ) -> (Vec<HighlightRange>, ToyState) {
+        fn highlight_line(&self, line: &str, state: ToyState) -> (Vec<HighlightRange>, ToyState) {
             if line.starts_with("```") {
                 return (
                     vec![HighlightRange {
@@ -153,16 +144,19 @@ mod tests {
         adapter.on_edit(&rope, &[], true);
         let out = adapter.highlight_range(&rope, 0, 6);
         // Line 0: heading marker
-        assert!(out.iter().any(
-            |(l, r)| *l == 0 && r.iter().any(|h| h.kind == Highlight::Heading)
-        ));
+        assert!(
+            out.iter()
+                .any(|(l, r)| *l == 0 && r.iter().any(|h| h.kind == Highlight::Heading))
+        );
         // Line 2 and 3 are inside the fence -> Code
-        assert!(out.iter().any(
-            |(l, r)| *l == 2 && r.iter().any(|h| h.kind == Highlight::Code)
-        ));
-        assert!(out.iter().any(
-            |(l, r)| *l == 3 && r.iter().any(|h| h.kind == Highlight::Code)
-        ));
+        assert!(
+            out.iter()
+                .any(|(l, r)| *l == 2 && r.iter().any(|h| h.kind == Highlight::Code))
+        );
+        assert!(
+            out.iter()
+                .any(|(l, r)| *l == 3 && r.iter().any(|h| h.kind == Highlight::Code))
+        );
         // Line 5 (plain) has no ranges -> not present in output
         assert!(!out.iter().any(|(l, _)| *l == 5));
     }

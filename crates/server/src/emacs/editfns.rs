@@ -338,14 +338,8 @@ mod tests {
     #[test]
     fn test_buffer_substring() {
         let (doc, _) = make_doc("hello world");
-        assert_eq!(
-            buffer_substring(&doc, 1, 6),
-            Some("hello".to_string())
-        );
-        assert_eq!(
-            buffer_substring(&doc, 7, 12),
-            Some("world".to_string())
-        );
+        assert_eq!(buffer_substring(&doc, 1, 6), Some("hello".to_string()));
+        assert_eq!(buffer_substring(&doc, 7, 12), Some("world".to_string()));
         assert_eq!(buffer_substring(&doc, 5, 3), None); // start > end
     }
 

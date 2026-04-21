@@ -18,7 +18,8 @@ use crate::object::LispObject;
 // ---- Argument helpers ------------------------------------------------
 
 fn string_arg(args: &LispObject, n: usize) -> Option<String> {
-    args.nth(n).and_then(|v| v.as_string().map(|s| s.to_string()))
+    args.nth(n)
+        .and_then(|v| v.as_string().map(|s| s.to_string()))
 }
 
 fn int_arg(args: &LispObject, n: usize) -> Option<i64> {
@@ -51,11 +52,17 @@ fn from_slice(items: &[LispObject]) -> LispObject {
 // ---- Accessor aliases: cl-first ... cl-tenth, cl-rest ---------------
 
 pub fn prim_cl_first(args: &LispObject) -> ElispResult<LispObject> {
-    Ok(args.first().and_then(|a| a.first()).unwrap_or(LispObject::nil()))
+    Ok(args
+        .first()
+        .and_then(|a| a.first())
+        .unwrap_or(LispObject::nil()))
 }
 
 pub fn prim_cl_rest(args: &LispObject) -> ElispResult<LispObject> {
-    Ok(args.first().and_then(|a| a.rest()).unwrap_or(LispObject::nil()))
+    Ok(args
+        .first()
+        .and_then(|a| a.rest())
+        .unwrap_or(LispObject::nil()))
 }
 
 fn nth_of(list: &LispObject, n: usize) -> LispObject {
@@ -69,7 +76,7 @@ fn nth_of(list: &LispObject, n: usize) -> LispObject {
     cur.first().unwrap_or(LispObject::nil())
 }
 
-macro_rules! cl_nth_fn	 {
+macro_rules! cl_nth_fn {
     ($name:ident, $n:expr) => {
         pub fn $name(args: &LispObject) -> ElispResult<LispObject> {
             let list = args.first().unwrap_or(LispObject::nil());
@@ -101,9 +108,7 @@ pub fn prim_cl_equalp(args: &LispObject) -> ElispResult<LispObject> {
     let b = args.nth(1).unwrap_or(LispObject::nil());
     // equalp is equal with case-insensitive strings. Approximate.
     let eq = match (&a, &b) {
-        (LispObject::String(s1), LispObject::String(s2)) => {
-            s1.to_lowercase() == s2.to_lowercase()
-        }
+        (LispObject::String(s1), LispObject::String(s2)) => s1.to_lowercase() == s2.to_lowercase(),
         _ => lisp_equal(&a, &b),
     };
     Ok(LispObject::from(eq))
@@ -201,7 +206,9 @@ pub fn prim_cl_subseq(args: &LispObject) -> ElispResult<LispObject> {
         let chars: Vec<char> = s.chars().collect();
         let end = end_opt.unwrap_or(chars.len()).min(chars.len());
         let start = start.min(end);
-        return Ok(LispObject::string(&chars[start..end].iter().collect::<String>()));
+        return Ok(LispObject::string(
+            &chars[start..end].iter().collect::<String>(),
+        ));
     }
     let items = to_vec(&list, 1 << 24);
     let end = end_opt.unwrap_or(items.len()).min(items.len());
@@ -714,8 +721,10 @@ pub fn prim_cl_type_of(args: &LispObject) -> ElispResult<LispObject> {
 /// Helper to check a single type against a value.
 fn check_single_type(v: &LispObject, type_name: &str) -> bool {
     match type_name {
-        "null" | "boolean" => matches!(v, LispObject::Nil)
-            || matches!(v, LispObject::Symbol(_) if v.as_symbol().as_deref() == Some("t")),
+        "null" | "boolean" => {
+            matches!(v, LispObject::Nil)
+                || matches!(v, LispObject::Symbol(_) if v.as_symbol().as_deref() == Some("t"))
+        }
         "t" => true, // t is always a type that matches everything
         "atom" => !matches!(v, LispObject::Cons(_)),
         "symbol" => matches!(v, LispObject::Symbol(_)),
@@ -846,7 +855,8 @@ pub fn prim_cl_coerce(args: &LispObject) -> ElispResult<LispObject> {
                 )))
             }
             LispObject::String(s) => {
-                let items: Vec<LispObject> = s.chars().map(|c| LispObject::integer(c as i64)).collect();
+                let items: Vec<LispObject> =
+                    s.chars().map(|c| LispObject::integer(c as i64)).collect();
                 Ok(LispObject::Vector(std::sync::Arc::new(
                     parking_lot::Mutex::new(items),
                 )))
@@ -880,7 +890,10 @@ pub fn prim_cl_values(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_cl_values_list(args: &LispObject) -> ElispResult<LispObject> {
-    Ok(args.first().and_then(|a| a.first()).unwrap_or(LispObject::nil()))
+    Ok(args
+        .first()
+        .and_then(|a| a.first())
+        .unwrap_or(LispObject::nil()))
 }
 
 // ---- Sort ------------------------------------------------------------
@@ -893,11 +906,9 @@ pub fn prim_cl_sort(args: &LispObject) -> ElispResult<LispObject> {
     let list = args.first().unwrap_or(LispObject::nil());
     let items = to_vec(&list, 1 << 20);
     let mut out = items;
-    out.sort_by(|a, b| {
-        match (a.as_integer(), b.as_integer()) {
-            (Some(x), Some(y)) => x.cmp(&y),
-            _ => a.prin1_to_string().cmp(&b.prin1_to_string()),
-        }
+    out.sort_by(|a, b| match (a.as_integer(), b.as_integer()) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        _ => a.prin1_to_string().cmp(&b.prin1_to_string()),
     });
     Ok(from_slice(&out))
 }
@@ -1078,9 +1089,14 @@ pub fn prim_cl_fill(args: &LispObject) -> ElispResult<LispObject> {
     let item = args.nth(1).unwrap_or(LispObject::nil());
     let mut start = 0usize;
     let mut end: Option<usize> = None;
-    let mut cur = args.nth(2).and_then(|_| args.rest().and_then(|r| r.rest())).unwrap_or(LispObject::nil());
+    let mut cur = args
+        .nth(2)
+        .and_then(|_| args.rest().and_then(|r| r.rest()))
+        .unwrap_or(LispObject::nil());
     while let Some((k, vs)) = cur.destructure_cons() {
-        let Some((v, rest2)) = vs.destructure_cons() else { break };
+        let Some((v, rest2)) = vs.destructure_cons() else {
+            break;
+        };
         match k.as_symbol().as_deref() {
             Some(":start") => start = v.as_integer().unwrap_or(0).max(0) as usize,
             Some(":end") => end = v.as_integer().map(|n| n.max(0) as usize),
@@ -1118,9 +1134,14 @@ pub fn prim_cl_replace(args: &LispObject) -> ElispResult<LispObject> {
     let mut end1: Option<usize> = None;
     let mut start2 = 0usize;
     let mut end2: Option<usize> = None;
-    let mut cur = args.rest().and_then(|r| r.rest()).unwrap_or(LispObject::nil());
+    let mut cur = args
+        .rest()
+        .and_then(|r| r.rest())
+        .unwrap_or(LispObject::nil());
     while let Some((k, vs)) = cur.destructure_cons() {
-        let Some((v, rest2)) = vs.destructure_cons() else { break };
+        let Some((v, rest2)) = vs.destructure_cons() else {
+            break;
+        };
         match k.as_symbol().as_deref() {
             Some(":start1") => start1 = v.as_integer().unwrap_or(0).max(0) as usize,
             Some(":end1") => end1 = v.as_integer().map(|n| n.max(0) as usize),
@@ -1149,10 +1170,7 @@ fn subst_tree(new: &LispObject, old: &LispObject, tree: LispObject) -> LispObjec
         return new.clone();
     }
     match tree.destructure_cons() {
-        Some((car, cdr)) => LispObject::cons(
-            subst_tree(new, old, car),
-            subst_tree(new, old, cdr),
-        ),
+        Some((car, cdr)) => LispObject::cons(subst_tree(new, old, car), subst_tree(new, old, cdr)),
         None => tree,
     }
 }
@@ -1200,9 +1218,7 @@ pub fn prim_cl_random(args: &LispObject) -> ElispResult<LispObject> {
     // (cl-random LIM &optional STATE). LIM can be integer or float.
     let lim = args.first().unwrap_or(LispObject::integer(1));
     match lim {
-        LispObject::Integer(n) if n > 0 => Ok(LispObject::integer(
-            (next_rand() % n as u64) as i64,
-        )),
+        LispObject::Integer(n) if n > 0 => Ok(LispObject::integer((next_rand() % n as u64) as i64)),
         LispObject::Float(f) if f > 0.0 => {
             let r = (next_rand() as f64) / (u64::MAX as f64);
             Ok(LispObject::float(r * f))
@@ -1504,20 +1520,55 @@ pub const CL_PRIMITIVE_NAMES: &[&str] = &[
     "cl-values-list",
     "cl-multiple-value-list",
     "cl-sort",
-    "cl-caaar", "cl-caadr", "cl-cadar", "cl-caddr",
-    "cl-cdaar", "cl-cdadr", "cl-cddar", "cl-cdddr",
-    "cl-caaaar", "cl-caaadr", "cl-caadar", "cl-caaddr",
-    "cl-cadaar", "cl-cadadr", "cl-caddar", "cl-cadddr",
-    "cl-cdaaar", "cl-cdaadr", "cl-cdadar", "cl-cdaddr",
-    "cl-cddaar", "cl-cddadr", "cl-cdddar", "cl-cddddr",
-    "cl-evenp", "cl-oddp", "cl-plusp", "cl-minusp", "cl-digit-char-p",
-    "cl-endp", "cl-tailp", "cl-ldiff", "cl-list*",
-    "cl-revappend", "cl-nreconc", "cl-fill", "cl-replace",
-    "cl-subst", "cl-nsubst",
-    "cl-get", "cl-remprop",
-    "cl-random", "cl-make-random-state",
+    "cl-caaar",
+    "cl-caadr",
+    "cl-cadar",
+    "cl-caddr",
+    "cl-cdaar",
+    "cl-cdadr",
+    "cl-cddar",
+    "cl-cdddr",
+    "cl-caaaar",
+    "cl-caaadr",
+    "cl-caadar",
+    "cl-caaddr",
+    "cl-cadaar",
+    "cl-cadadr",
+    "cl-caddar",
+    "cl-cadddr",
+    "cl-cdaaar",
+    "cl-cdaadr",
+    "cl-cdadar",
+    "cl-cdaddr",
+    "cl-cddaar",
+    "cl-cddadr",
+    "cl-cdddar",
+    "cl-cddddr",
+    "cl-evenp",
+    "cl-oddp",
+    "cl-plusp",
+    "cl-minusp",
+    "cl-digit-char-p",
+    "cl-endp",
+    "cl-tailp",
+    "cl-ldiff",
+    "cl-list*",
+    "cl-revappend",
+    "cl-nreconc",
+    "cl-fill",
+    "cl-replace",
+    "cl-subst",
+    "cl-nsubst",
+    "cl-get",
+    "cl-remprop",
+    "cl-random",
+    "cl-make-random-state",
     "cl-constantly",
-    "cl-multiple-value-call", "cl-multiple-value-apply",
-    "cl-proclaim", "cl-fresh-line", "cl-float-limits",
-    "cl-nth-value", "cl-mapcan",
+    "cl-multiple-value-call",
+    "cl-multiple-value-apply",
+    "cl-proclaim",
+    "cl-fresh-line",
+    "cl-float-limits",
+    "cl-nth-value",
+    "cl-mapcan",
 ];

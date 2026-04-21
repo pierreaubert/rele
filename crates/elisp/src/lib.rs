@@ -13,7 +13,7 @@ pub mod vm;
 
 pub use error::{ElispError, ElispResult};
 pub use eval::Interpreter;
-pub use object::{global_cons_count, BytecodeFunction, LispObject};
+pub use object::{BytecodeFunction, LispObject, global_cons_count};
 pub use primitives::add_primitives;
 pub use primitives::core::call_primitive;
 pub use reader::{detect_lexical_binding, read, read_all};

@@ -68,7 +68,10 @@ pub fn prim_equal(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_not(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::from(arg.is_nil()))
 }
 
@@ -77,29 +80,44 @@ pub fn prim_null(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_symbolp(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::from(
         arg.is_symbol() || arg.is_nil() || arg.is_t(),
     ))
 }
 
 pub fn prim_numberp(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::from(arg.is_integer() || arg.is_float()))
 }
 
 pub fn prim_listp(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::from(arg.is_nil() || arg.is_cons()))
 }
 
 pub fn prim_consp(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::from(arg.is_cons()))
 }
 
 pub fn prim_stringp(args: &LispObject) -> ElispResult<LispObject> {
-    let arg = args.clone().first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let arg = args
+        .clone()
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::from(arg.is_string()))
 }
 
@@ -120,7 +138,8 @@ pub fn prim_floatp(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_zerop(args: &LispObject) -> ElispResult<LispObject> {
     let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let n = super::math::get_number(&arg).ok_or(ElispError::WrongTypeArgument("number".to_string()))?;
+    let n =
+        super::math::get_number(&arg).ok_or(ElispError::WrongTypeArgument("number".to_string()))?;
     Ok(LispObject::from(n == 0.0))
 }
 

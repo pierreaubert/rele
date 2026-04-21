@@ -31,9 +31,9 @@
 //! - `cl-check-type` now handles `(satisfies PRED)` (calls PRED via
 //!   `eval`), which `cl-struct-define` itself uses to validate names.
 
+use rele_elisp::LispObject;
 use rele_elisp::add_primitives;
 use rele_elisp::eval::Interpreter;
-use rele_elisp::LispObject;
 
 fn make_interp() -> Interpreter {
     let mut interp = Interpreter::new();
@@ -106,7 +106,10 @@ fn cl_defstruct_constructor_and_conc_name_options() {
     );
     // Custom constructor is defined.
     let t = eval(&interp, "(hierarchy-p (hierarchy--make))");
-    assert!(!t.is_nil(), "hierarchy-p must accept hierarchy--make's output");
+    assert!(
+        !t.is_nil(),
+        "hierarchy-p must accept hierarchy--make's output"
+    );
     // Custom conc-name — the accessor is hierarchy--roots, not hierarchy-roots.
     let t2 = eval(&interp, "(hierarchy--roots (hierarchy--make))");
     assert!(t2.is_nil(), "hierarchy--roots on an empty struct is nil");
@@ -156,14 +159,20 @@ fn cl_check_type_satisfies_calls_predicate() {
     let interp = make_interp();
     eval(&interp, "(defun my-pred (x) (and x (symbolp x)))");
     // Success path: no signal, returns nil.
-    let r = eval(&interp, "(progn (cl-check-type 'foo (satisfies my-pred)) 'ok)");
+    let r = eval(
+        &interp,
+        "(progn (cl-check-type 'foo (satisfies my-pred)) 'ok)",
+    );
     assert_eq!(r.as_symbol().as_deref(), Some("ok"));
     // Failure path: wrong-type-argument signalled.
     let err = make_interp().eval_source(
         "(progn (defun my-pred (x) (and x (symbolp x))) \
                 (cl-check-type 42 (satisfies my-pred)))",
     );
-    assert!(err.is_err(), "cl-check-type should signal when predicate returns nil");
+    assert!(
+        err.is_err(),
+        "cl-check-type should signal when predicate returns nil"
+    );
 }
 
 /// The tags list `cl-struct-NAME-tags` must be bound to `(NAME)` after

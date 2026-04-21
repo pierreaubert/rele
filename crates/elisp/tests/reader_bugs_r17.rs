@@ -39,7 +39,7 @@
 //!   - standalone `+` / `-` remain the one-char operator symbols;
 //!   - numeric literals `+42`, `-.5` are still numbers, not symbols.
 
-use rele_elisp::{read, read_all, LispObject};
+use rele_elisp::{LispObject, read, read_all};
 
 /// Walk a proper list into a flat `Vec<LispObject>`.
 fn list_to_vec(obj: &LispObject) -> Vec<LispObject> {
@@ -78,7 +78,12 @@ fn reader_double_hyphen_wrap_inside_let_binding() {
     let bindings = list_to_vec(&list[1]);
     assert_eq!(bindings.len(), 1, "expected 1 binding, got {:?}", list[1]);
     let binding = list_to_vec(&bindings[0]);
-    assert_eq!(binding.len(), 2, "expected (sym val), got {:?}", bindings[0]);
+    assert_eq!(
+        binding.len(),
+        2,
+        "expected (sym val), got {:?}",
+        bindings[0]
+    );
     assert_eq!(
         binding[0].as_symbol().as_deref(),
         Some("-with-timeout-value-")

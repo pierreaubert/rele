@@ -63,14 +63,54 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
 }
 
 pub const MATH_PRIMITIVE_NAMES: &[&str] = &[
-    "+", "-", "*", "/", "=", "<", ">", "<=", ">=", "/=",
-    "1+", "1-", "mod", "abs", "max", "min", "floor", "ceiling",
-    "round", "truncate", "float", "ash", "logand", "logior", "lognot",
-    "%", "logcount", "logxor", "logb",
-    "random", "evenp", "oddp", "plusp", "minusp",
-    "isnan", "copysign", "frexp", "ldexp",
-    "sin", "cos", "tan", "asin", "acos", "atan",
-    "exp", "log", "sqrt", "expt",
+    "+",
+    "-",
+    "*",
+    "/",
+    "=",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "/=",
+    "1+",
+    "1-",
+    "mod",
+    "abs",
+    "max",
+    "min",
+    "floor",
+    "ceiling",
+    "round",
+    "truncate",
+    "float",
+    "ash",
+    "logand",
+    "logior",
+    "lognot",
+    "%",
+    "logcount",
+    "logxor",
+    "logb",
+    "random",
+    "evenp",
+    "oddp",
+    "plusp",
+    "minusp",
+    "isnan",
+    "copysign",
+    "frexp",
+    "ldexp",
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "exp",
+    "log",
+    "sqrt",
+    "expt",
     "byteorder",
 ];
 
@@ -383,7 +423,8 @@ pub fn prim_max(args: &LispObject) -> ElispResult<LispObject> {
     let mut numbers: Vec<f64> = Vec::new();
     let mut current = args.clone();
     while let Some((arg, rest)) = current.destructure_cons() {
-        let n = get_number(&arg).ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?;
+        let n =
+            get_number(&arg).ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?;
         numbers.push(n);
         current = rest;
     }
@@ -398,7 +439,8 @@ pub fn prim_min(args: &LispObject) -> ElispResult<LispObject> {
     let mut numbers: Vec<f64> = Vec::new();
     let mut current = args.clone();
     while let Some((arg, rest)) = current.destructure_cons() {
-        let n = get_number(&arg).ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?;
+        let n =
+            get_number(&arg).ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?;
         numbers.push(n);
         current = rest;
     }
@@ -473,7 +515,9 @@ pub fn prim_logand(args: &LispObject) -> ElispResult<LispObject> {
     let mut empty = true;
     while let Some((arg, rest)) = current.destructure_cons() {
         empty = false;
-        let n = arg.as_integer().ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
+        let n = arg
+            .as_integer()
+            .ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
         result &= n;
         current = rest;
     }
@@ -489,7 +533,9 @@ pub fn prim_logior(args: &LispObject) -> ElispResult<LispObject> {
     let mut empty = true;
     while let Some((arg, rest)) = current.destructure_cons() {
         empty = false;
-        let n = arg.as_integer().ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
+        let n = arg
+            .as_integer()
+            .ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
         result |= n;
         current = rest;
     }
@@ -501,13 +547,17 @@ pub fn prim_logior(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_lognot(args: &LispObject) -> ElispResult<LispObject> {
     let n = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let n = n.as_integer().ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
+    let n = n
+        .as_integer()
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
     Ok(LispObject::integer(!n))
 }
 
 pub fn prim_logcount(args: &LispObject) -> ElispResult<LispObject> {
     let n = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let n = n.as_integer().ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
+    let n = n
+        .as_integer()
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
     Ok(LispObject::integer(n.count_ones() as i64))
 }
 
@@ -517,7 +567,9 @@ pub fn prim_logxor(args: &LispObject) -> ElispResult<LispObject> {
     let mut empty = true;
     while let Some((arg, rest)) = current.destructure_cons() {
         empty = false;
-        let n = arg.as_integer().ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
+        let n = arg
+            .as_integer()
+            .ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
         result ^= n;
         current = rest;
     }
@@ -591,7 +643,9 @@ fn prim_minusp(args: &LispObject) -> ElispResult<LispObject> {
 
 fn prim_isnan(args: &LispObject) -> ElispResult<LispObject> {
     let x = args.first().unwrap_or_else(LispObject::nil);
-    Ok(LispObject::from(matches!(x, LispObject::Float(f) if f.is_nan())))
+    Ok(LispObject::from(
+        matches!(x, LispObject::Float(f) if f.is_nan()),
+    ))
 }
 
 fn prim_copysign(args: &LispObject) -> ElispResult<LispObject> {

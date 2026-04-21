@@ -64,7 +64,10 @@ fn test_hash_table_literal() {
     let obj = read("#s(hash-table test equal data nil)").unwrap();
     // We represent hash-table literals as a cons starting with hash-table-literal
     assert!(obj.is_cons(), "expected cons for hash-table literal");
-    assert_eq!(obj.first().unwrap(), LispObject::symbol("hash-table-literal"));
+    assert_eq!(
+        obj.first().unwrap(),
+        LispObject::symbol("hash-table-literal")
+    );
 }
 
 #[test]
@@ -281,18 +284,9 @@ fn test_char_named_unicode_greek() {
 
 #[test]
 fn test_char_named_unicode_control() {
-    assert_eq!(
-        read("?\\N{NULL}").unwrap(),
-        LispObject::integer(0)
-    );
-    assert_eq!(
-        read("?\\N{SPACE}").unwrap(),
-        LispObject::integer(32)
-    );
-    assert_eq!(
-        read("?\\N{NEWLINE}").unwrap(),
-        LispObject::integer(10)
-    );
+    assert_eq!(read("?\\N{NULL}").unwrap(), LispObject::integer(0));
+    assert_eq!(read("?\\N{SPACE}").unwrap(), LispObject::integer(32));
+    assert_eq!(read("?\\N{NEWLINE}").unwrap(), LispObject::integer(10));
 }
 
 #[test]
