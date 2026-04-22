@@ -69,6 +69,8 @@ pub(super) fn eval_condition_case(
     match eval(obj_to_value(bodyform), env, editor, macros, state) {
         Ok(value) => Ok(value),
         Err(ref err @ ElispError::Throw(..)) => Err(err.clone()),
+        Err(ref err @ ElispError::StackOverflow) => Err(err.clone()),
+        Err(ref err) if err.is_eval_ops_exceeded() => Err(err.clone()),
         Err(err) => {
             let mut handlers = rest;
             while let Some((handler, more)) = handlers.destructure_cons() {

@@ -70,15 +70,22 @@ impl ElispError {
         }
     }
 
+    /// True if this error is the eval-ops limit sentinel.
+    pub fn is_eval_ops_exceeded(&self) -> bool {
+        matches!(self, ElispError::EvalError(msg) if msg.contains("eval operation limit exceeded") || msg.contains("hard eval limit"))
+    }
+
     /// Check if this error matches a condition name for condition-case.
     pub fn matches_condition(&self, condition: &LispObject) -> bool {
         let sym = match condition.as_symbol() {
             Some(s) => s,
             None => return false,
         };
-        // 'error' matches everything (except throw)
+        // 'error' matches everything except throw and eval-ops-exceeded
+        // (the latter must propagate uncatchably to terminate runaway code)
         if sym == "error" {
-            return !matches!(self, ElispError::Throw(..));
+            return !matches!(self, ElispError::Throw(..) | ElispError::StackOverflow)
+                && !self.is_eval_ops_exceeded();
         }
         // Match specific error symbols
         let signal = self.to_signal();

@@ -240,6 +240,8 @@ fn is_symbol_char(c: char) -> bool {
                 | '~'
                 | '^'
                 | '|'
+                | '{'
+                | '}'
         )
 }
 
@@ -265,6 +267,8 @@ fn is_symbol_initial(c: char) -> bool {
                 | '~'
                 | '^'
                 | '|'
+                | '{'
+                | '}'
         )
 }
 
@@ -693,11 +697,19 @@ impl Reader {
                         self.shared.insert(n, obj.clone());
                         Ok(obj)
                     }
-                    Some('#') => self.shared.get(&n).cloned().ok_or_else(|| {
-                        ElispError::ReaderError(format!(
-                            "back-reference #{n}# before #{n}= definition"
-                        ))
-                    }),
+                    Some('#') => {
+                        // Forward references are valid in circular
+                        // structures; substitute nil as a placeholder.
+                        Ok(self
+                            .shared
+                            .get(&n)
+                            .cloned()
+                            .unwrap_or(LispObject::nil()))
+                    }
+                    Some('r') | Some('R') => {
+                        // #NrDIGITS — read integer in radix N.
+                        self.read_radix_number(n as u32)
+                    }
                     Some(other) => Err(ElispError::ReaderError(format!(
                         "expected = or # after #{n}, got {other}"
                     ))),
@@ -705,6 +717,14 @@ impl Reader {
                         "unexpected end of input after #{n}"
                     ))),
                 }
+            }
+            '_' => {
+                // #_ — read and discard the next sexp (comment syntax).
+                self.advance(); // consume '_'
+                let _discarded = self.read()?;
+                // Return the NEXT form instead — the discarded one is gone.
+                self.skip_whitespace();
+                self.read()
             }
             _ => Err(ElispError::ReaderError(format!(
                 "unknown # dispatch: #{}",
@@ -1041,14 +1061,12 @@ impl Reader {
                             let code = u32::from_str_radix(&hex, 16).map_err(|_| {
                                 ElispError::ReaderError(format!("invalid hex escape: \\x{}", hex))
                             })?;
-                            if let Some(ch) = char::from_u32(code) {
-                                s.push(ch);
-                            } else {
-                                return Err(ElispError::ReaderError(format!(
-                                    "invalid unicode code point: \\x{}",
-                                    hex
-                                )));
-                            }
+                            // Emacs allows hex escapes > U+10FFFF (they
+                            // map to raw bytes in unibyte strings). We
+                            // substitute the replacement character for
+                            // out-of-range values rather than erroring.
+                            let ch = char::from_u32(code).unwrap_or('\u{FFFD}');
+                            s.push(ch);
                         }
                     }
                     c if c.is_ascii_digit() && c < '8' => {
@@ -1160,15 +1178,27 @@ impl Reader {
         }
 
         if has_dot || has_exp {
+            // Ensure exponent has at least one digit (Rust requires it;
+            // Emacs reads "0E" as 0.0).
+            if has_exp && s.ends_with(|c: char| c == 'e' || c == 'E' || c == '+' || c == '-') {
+                s.push('0');
+            }
             let f: f64 = s
                 .parse()
                 .map_err(|_| ElispError::ReaderError(format!("invalid float: {}", s)))?;
             Ok(LispObject::float(f))
         } else {
-            let n: i64 = s
-                .parse()
-                .map_err(|_| ElispError::ReaderError(format!("invalid integer: {}", s)))?;
-            Ok(LispObject::integer(n))
+            match s.parse::<i64>() {
+                Ok(n) => Ok(LispObject::integer(n)),
+                Err(_) => {
+                    // Overflow: fall back to float (Emacs uses bignums;
+                    // we approximate with f64 for now).
+                    let f: f64 = s
+                        .parse()
+                        .map_err(|_| ElispError::ReaderError(format!("invalid integer: {}", s)))?;
+                    Ok(LispObject::float(f))
+                }
+            }
         }
     }
 

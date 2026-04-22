@@ -6179,12 +6179,26 @@ pub fn probe_emacs_file(interp: &Interpreter, file_path: &str) -> Option<(usize,
     let total = forms.len();
     let mut ok = 0;
     for form in forms {
-        // Generous per-form budget; ERT macros expand into nested bytecode.
+        // Per-form budget + wall-clock watchdog. The watchdog
+        // guarantees termination even when a code path doesn't
+        // check eval-ops (e.g. deep bytecode condition-case loops).
         interp.reset_eval_ops();
         interp.set_eval_ops_limit(2_000_000);
+        let limit_arc = std::sync::Arc::clone(&interp.state.eval_ops_limit);
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let watchdog = std::thread::spawn(move || {
+            if done_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_err()
+            {
+                limit_arc.store(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
         if interp.eval(form).is_ok() {
             ok += 1;
         }
+        let _ = done_tx.send(());
+        let _ = watchdog.join();
     }
     interp.set_eval_ops_limit(0);
     Some((ok, total))

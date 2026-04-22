@@ -1681,6 +1681,8 @@ fn eval_inner(
                                 LispObject::nil(),
                             ),
                         }))),
+                        Err(ElispError::StackOverflow) => Err(ElispError::StackOverflow),
+                        Err(ref e) if e.is_eval_ops_exceeded() => Err(e.clone()),
                         Err(_) => Ok(Value::t()),
                     }
                 }
@@ -1726,6 +1728,8 @@ fn eval_inner(
                             // re-raise so catch/throw still works.
                             Err(ElispError::EvalError("re-raise throw".to_string()))
                         }
+                        Err(ElispError::StackOverflow) => Err(ElispError::StackOverflow),
+                        Err(ref e) if e.is_eval_ops_exceeded() => Err(e.clone()),
                         Err(_) => Ok(Value::nil()),
                     }
                 }
@@ -3241,6 +3245,10 @@ fn eval_inner(
                     };
                     match crate::vm::execute_bytecode(&func, &[], env, editor, macros, state) {
                         Ok(result) => Ok(obj_to_value(result)),
+                        Err(e) if e.is_eval_ops_exceeded() => {
+                            // Eval-ops-exceeded must propagate uncatchably.
+                            Err(e)
+                        }
                         Err(e) => {
                             // Tolerate per-form VM errors so the rest of
                             // the file continues to load — mirrors the

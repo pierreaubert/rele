@@ -450,6 +450,123 @@ fn arb_mapcar_closure() -> impl Strategy<Value = JsonVal> {
     })
 }
 
+/// (cond (COND1 RESULT1) (COND2 RESULT2)) — first non-nil cond returns its result.
+fn arb_cond() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom(), arb_atom(), arb_atom()).prop_map(|(c1, r1, c2, r2)| {
+        JsonVal::list(vec![
+            JsonVal::sym("cond"),
+            JsonVal::list(vec![c1.clone(), r1]),
+            JsonVal::list(vec![c2, r2]),
+        ])
+    })
+}
+
+/// (and E1 E2 E3) — short-circuit AND.
+fn arb_and() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(a, b, c)| {
+        JsonVal::list(vec![
+            JsonVal::sym("and"),
+            a,
+            b,
+            c,
+        ])
+    })
+}
+
+/// (or E1 E2 E3) — short-circuit OR.
+fn arb_or() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(a, b, c)| {
+        JsonVal::list(vec![
+            JsonVal::sym("or"),
+            a,
+            b,
+            c,
+        ])
+    })
+}
+
+/// (when COND BODY1 BODY2) — if COND is non-nil, evaluate body.
+fn arb_when() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(cond, b1, b2)| {
+        JsonVal::list(vec![
+            JsonVal::sym("when"),
+            cond,
+            b1,
+            b2,
+        ])
+    })
+}
+
+/// (unless COND BODY1 BODY2) — if COND is nil, evaluate body.
+fn arb_unless() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(cond, b1, b2)| {
+        JsonVal::list(vec![
+            JsonVal::sym("unless"),
+            cond,
+            b1,
+            b2,
+        ])
+    })
+}
+
+/// (prog1 E1 E2 E3) — evaluate all, return first.
+fn arb_prog1() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(e1, e2, e3)| {
+        JsonVal::list(vec![
+            JsonVal::sym("prog1"),
+            e1,
+            e2,
+            e3,
+        ])
+    })
+}
+
+/// (prog2 E1 E2 E3) — evaluate all, return second.
+fn arb_prog2() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(e1, e2, e3)| {
+        JsonVal::list(vec![
+            JsonVal::sym("prog2"),
+            e1,
+            e2,
+            e3,
+        ])
+    })
+}
+
+/// (car (cons A B)) — first element of a cons cell.
+fn arb_car() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom()).prop_map(|(a, b)| {
+        JsonVal::list(vec![
+            JsonVal::sym("car"),
+            JsonVal::cons(a.clone(), b),
+        ])
+    })
+}
+
+/// (cdr (cons A B)) — rest of a cons cell.
+fn arb_cdr() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom()).prop_map(|(a, b)| {
+        JsonVal::list(vec![
+            JsonVal::sym("cdr"),
+            JsonVal::cons(a, b.clone()),
+        ])
+    })
+}
+
+/// (cons A B) — construct a cons cell.
+fn arb_cons() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom()).prop_map(|(a, b)| {
+        JsonVal::cons(a, b)
+    })
+}
+
+/// (list* A B C D) — dotted list: (A B C . D).
+fn arb_list_star() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom(), arb_atom(), arb_atom()).prop_map(|(a, b, c, d)| {
+        JsonVal::cons(a, JsonVal::cons(b, JsonVal::cons(c, d)))
+    })
+}
+
 /// ((let ((x A)) (lambda (y) (op x y))) B) — lambda-from-let-escape.
 /// The lambda is created inside a `let`, the let evaluates to the lambda
 /// value, and the lambda is then immediately called with a single argument.
@@ -472,6 +589,70 @@ fn arb_lambda_from_let_escape() -> impl Strategy<Value = JsonVal> {
                 ]),
             ]),
             JsonVal::int(b),
+        ])
+    })
+}
+
+/// (condition-case BODY ((TAG) HANDLER...)) — catches throws with matching tag.
+fn arb_condition_case() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), "[a-z]+".prop_filter("non-empty identifier", |s| !s.is_empty()), arb_atom(), arb_atom())
+        .prop_map(|(body, tag, handler_a, handler_b)| {
+            JsonVal::list(vec![
+                JsonVal::sym("condition-case"),
+                body,
+                JsonVal::list(vec![
+                    JsonVal::list(vec![
+                        JsonVal::sym(&tag),
+                        handler_a,
+                        handler_b,
+                    ]),
+                ]),
+            ])
+        })
+}
+
+/// (save-excursion BODY...) — save and restore point/mark.
+fn arb_save_excursion() -> impl Strategy<Value = JsonVal> {
+    (arb_atom(), arb_atom()).prop_map(|(a, b)| {
+        JsonVal::list(vec![
+            JsonVal::sym("save-excursion"),
+            a,
+            b,
+        ])
+    })
+}
+
+/// (defvar SYMBOL VALUE) — declare a dynamic variable.
+fn arb_defvar() -> impl Strategy<Value = JsonVal> {
+    ("[a-z]{1,4}", -50i64..50).prop_map(|(name, val)| {
+        JsonVal::list(vec![
+            JsonVal::sym("defvar"),
+            JsonVal::sym(name),
+            JsonVal::int(val),
+        ])
+    })
+}
+
+/// (funcall FN ARG...) — call FN with evaluated args.
+fn arb_funcall() -> impl Strategy<Value = JsonVal> {
+    (arb_arith_op(), -50i64..50, -50i64..50).prop_map(|(op, a, b)| {
+        JsonVal::list(vec![
+            JsonVal::sym("funcall"),
+            JsonVal::list(vec![
+                JsonVal::sym("lambda"),
+                JsonVal::list(vec![]),
+                JsonVal::list(vec![JsonVal::sym(op), JsonVal::int(a), JsonVal::int(b)]),
+            ]),
+        ])
+    })
+}
+
+/// (eval FORM) — evaluate a form at runtime.
+fn arb_eval() -> impl Strategy<Value = JsonVal> {
+    arb_arith().prop_map(|form| {
+        JsonVal::list(vec![
+            JsonVal::sym("eval"),
+            form,
         ])
     })
 }
@@ -500,6 +681,20 @@ fn arb_expr() -> impl Strategy<Value = JsonVal> {
         arb_curried_lambda(),
         arb_closure_snapshot_after_setq(),
         arb_mapcar_closure(),
+        arb_cond(),
+        arb_and(),
+        arb_or(),
+        arb_when(),
+        arb_unless(),
+        arb_prog1(),
+        arb_prog2(),
+        arb_car(),
+        arb_cdr(),
+        arb_cons(),
+        arb_list_star(),
+        arb_defvar(),
+        arb_funcall(),
+        arb_eval(),
     ]
 }
 

@@ -574,20 +574,54 @@ pub(super) fn eval_load(
             std::fs::read_to_string(path).ok()
         };
         if let Some(source) = source {
+            eprintln!("load: reading {path} ({} bytes)", source.len());
             let forms = crate::read_all(&source).map_err(|_| ElispError::FileError {
                 operation: "load".into(),
                 path: path.clone(),
                 message: "read error".into(),
             })?;
+            eprintln!("load: parsed {} forms from {path}", forms.len());
+            let is_elc = path.ends_with(".elc");
+            let forms_count = forms.len();
+            let mut ok: usize = 0;
             // Phase 7: be tolerant of per-form errors during load.
             // Emacs's own behaviour is to propagate; we diverge because
             // our interpreter is incomplete (missing primitives, some
             // bytecode bugs) and most stdlib files are useful even when
             // a few forms fail. Errors are surfaced via stderr so
             // debugging still works.
+            let load_start = std::time::Instant::now();
             for (i, form) in forms.into_iter().enumerate() {
+                // Wall-clock safety: abort loading if a single file
+                // takes more than 3 seconds. This catches cases where
+                // eval-ops limits aren't respected (e.g., nested
+                // require chains that reset interpreter state).
+                if load_start.elapsed().as_secs() >= 3 {
+                    let ops = state.eval_ops.load(std::sync::atomic::Ordering::Relaxed);
+                    let limit = state.eval_ops_limit.load(std::sync::atomic::Ordering::Relaxed);
+                    eprintln!("load {path}: wall-clock timeout at form {i}/{forms_count} (ops={ops}, limit={limit})");
+                    break;
+                }
                 if let Err(e) = eval(obj_to_value(form), env, editor, macros, state) {
+                    // Eval-ops-exceeded must propagate — never swallow it,
+                    // or condition-case + eval_load creates an infinite loop.
+                    if e.is_eval_ops_exceeded() {
+                        return Err(e);
+                    }
                     eprintln!("load {path}: form {i}: {e}");
+                    // Early-abort for .elc: if the first 8 forms all
+                    // failed, the bytecode VM almost certainly can't
+                    // handle this file. Bail out fast instead of
+                    // burning eval-ops on hundreds of doomed forms.
+                    if is_elc && ok == 0 && i >= 7 {
+                        eprintln!(
+                            "load {path}: first {} bytecode forms failed, aborting early",
+                            i + 1
+                        );
+                        break;
+                    }
+                } else {
+                    ok += 1;
                 }
             }
             return Ok(Value::t());

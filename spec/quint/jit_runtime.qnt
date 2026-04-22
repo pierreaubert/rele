@@ -108,8 +108,10 @@ module jit_runtime {
   /// Deoptimization: compiled code bails out (type guard failure).
   /// Function falls back to interpreter for this invocation.
   /// Compiled code stays in cache (it's still valid, just hit a slow path).
+  /// Precondition: compiled code must be stale (version mismatch).
   action deopt(f: FuncId): bool = all {
     hasCompiled.get(f),
+    cache.get(f) != defVersion.get(f),
     tier' = tier.set(f, "Interp"),
     defVersion' = defVersion,
     callCount' = callCount,
@@ -142,5 +144,31 @@ module jit_runtime {
   val noStaleKeepsRunning: bool =
     FUNCS.forall(f =>
       hasCompiled.get(f) == false implies tier.get(f) == "Interp"
+    )
+
+  /// If tier is "Compiled", hasCompiled must be true.
+  val compiledTierRequiresHasCompiled: bool =
+    FUNCS.forall(f =>
+      tier.get(f) == "Compiled" implies hasCompiled.get(f)
+    )
+
+  /// Cache version never exceeds current def version (when compiled).
+  val cacheVersionLeqDefVersion: bool =
+    FUNCS.forall(f =>
+      hasCompiled.get(f) implies cache.get(f) <= defVersion.get(f)
+    )
+
+  /// Cache is -1 exactly when hasCompiled is false.
+  val deoptPreservesCompiledCode: bool =
+    FUNCS.forall(f =>
+      cache.get(f) == -1 implies not(hasCompiled.get(f))
+    )
+
+  /// If hasCompiled is true and tier is Interp, the compiled code
+  /// is stale (version mismatch) OR this is a transient deopt.
+  val deoptOnlyWhenHasCompiled: bool =
+    FUNCS.forall(f =>
+      hasCompiled.get(f) and tier.get(f) == "Interp"
+        implies cache.get(f) != defVersion.get(f)
     )
 }

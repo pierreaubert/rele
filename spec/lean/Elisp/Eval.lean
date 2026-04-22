@@ -18,6 +18,7 @@ inductive EvalError where
   | wrongNumberOfArgs : (expected got : Nat) → EvalError
   | wrongTypeArgument : (msg : String) → EvalError
   | thrown            : (tag value : Val) → EvalError
+  | conditionCaseError : (msg : String) → EvalError
   | internalError     : (msg : String) → EvalError
   deriving Repr, Inhabited
 
@@ -131,6 +132,38 @@ def bindParams : List Sym → List Val → Frame → Frame × List Val
   | p :: ps, v :: as_, acc   => bindParams ps as_ ((p, v) :: acc)
   | p :: ps, [], acc         => bindParams ps [] ((p, .nil) :: acc)
 
+/-- `car` — first element of a cons cell. -/
+def primCar : List Val → Except EvalError Val
+  | [v] => do
+    match v with
+    | .cons a _ => .ok a
+    | .nil      => .ok .nil
+    | _         => .error (.wrongTypeArgument " cons or list")
+  | vs => .error (.wrongNumberOfArgs 1 vs.length)
+
+/-- `cdr` — rest of a cons cell. -/
+def primCdr : List Val → Except EvalError Val
+  | [v] => do
+    match v with
+    | .cons _ d => .ok d
+    | .nil      => .ok .nil
+    | _         => .error (.wrongTypeArgument " cons or list")
+  | vs => .error (.wrongNumberOfArgs 1 vs.length)
+
+/-- `cons` — construct a new cons cell. -/
+def primCons : List Val → Except EvalError Val
+  | [a, d] => .ok (.cons a d)
+  | vs     => .error (.wrongNumberOfArgs 2 vs.length)
+
+/-- `list*` — construct a list with the last arg as the cdr. -/
+def primListStar : List Val → Except EvalError Val
+  | []     => .error (.wrongNumberOfArgs 1 0)
+  | [d]    => .ok d
+  | [a, d]  => .ok (.cons a d)
+  | a :: rest => do
+    let tail ← primListStar rest
+    .ok (.cons a tail)
+
 /-- The core evaluator. All helpers are defined via `where` to enable
     mutual recursion under a single `partial` annotation. -/
 partial def eval (env : Env) (expr : Val) : EvalResult :=
@@ -162,6 +195,10 @@ partial def eval (env : Env) (expr : Val) : EvalResult :=
     | .sym "catch"           => evalCatch env args
     | .sym "throw"           => evalThrow env args
     | .sym "unwind-protect"  => evalUnwindProtect env args
+    | .sym "condition-case"  => evalConditionCase env args
+    | .sym "defvar"          => evalDefvar env args
+    | .sym "funcall"         => evalFuncall env args
+    | .sym "eval"            => evalEval_ env args
     | .sym "+"               => evalPrim env args primAdd
     | .sym "-"               => evalPrim env args primSub
     | .sym "*"               => evalPrim env args primMul
@@ -174,6 +211,17 @@ partial def eval (env : Env) (expr : Val) : EvalResult :=
     | .sym "/="              => evalPrim env args primNe
     | .sym "list"            => evalList env args
     | .sym "mapcar"          => evalMapcar env args
+    | .sym "cond"            => evalCond env args
+    | .sym "and"             => evalAnd_ env args
+    | .sym "or"              => evalOr_ env args
+    | .sym "when"            => evalWhen_ env args
+    | .sym "unless"          => evalUnless_ env args
+    | .sym "prog1"           => evalProg1 env args
+    | .sym "prog2"           => evalProg2 env args
+    | .sym "car"             => evalPrim env args primCar
+    | .sym "cdr"             => evalPrim env args primCdr
+    | .sym "cons"            => evalPrim env args primCons
+    | .sym "list*"           => evalPrim env args primListStar
     | _                      => evalCall env car args
 where
   evalIf (env : Env) (args : List Val) : EvalResult :=
@@ -308,6 +356,80 @@ where
         .error e
     | _ => .error (.wrongNumberOfArgs 1 args.length)
 
+  /-- `condition-case` — established error handlers around a body form.
+      Syntax: (condition-case BODYFORM HANDLERS...)
+      where each HANDLER is (ERROR-SYMBOL BODY...).
+      For the oracle subset, we match thrown errors by symbol name. -/
+  evalConditionCase (env : Env) (args : List Val) : EvalResult :=
+    match args with
+    | bodyForm :: [] => eval env bodyForm
+    | bodyForm :: handlers =>
+      match eval env bodyForm with
+      | .ok (env', v) => .ok (env', v)
+      | .error (.thrown thrownTag value) =>
+        runConditionCaseHandler env thrownTag value handlers
+      | .error e => .error e
+    | _ => .error (.wrongNumberOfArgs 2 args.length)
+
+  /-- Run the first matching handler for a thrown error. -/
+  runConditionCaseHandler (env : Env) (tag : Val) (value : Val)
+      (handlers : List Val) : EvalResult :=
+    match handlers with
+    | [] => .error (.thrown tag value)
+    | handler :: rest =>
+      match handler with
+      | .cons (.sym handlerTag) body =>
+        if handlerTag == ".error" then
+          evalProgn env (toList body)
+        else
+          match tag with
+          | .sym s =>
+            if handlerTag == s then
+              evalProgn env (toList body)
+            else
+              runConditionCaseHandler env tag value rest
+          | _ => runConditionCaseHandler env tag value rest
+      | _ => runConditionCaseHandler env tag value rest
+
+  /-- `defvar SYMBOL VALUE` — declare a dynamic variable.
+      If SYMBOL is not already bound as a dynamic variable, create a
+      dynamic binding with VALUE. If already bound, leave the existing
+      binding untouched ( Emacs semantics). Always returns the symbol. -/
+  evalDefvar (env : Env) (args : List Val) : EvalResult :=
+    match args with
+    | [.sym s, valExpr] => do
+      let (env', v) ← eval env valExpr
+      if env'.dynVars.contains s then
+        .ok (env', .sym s)
+      else
+        .ok ({ env' with
+                dynVars := s :: env'.dynVars,
+                dyn := env'.dyn.push [(s, v)] }, .sym s)
+    | _ => .error (.wrongNumberOfArgs 2 args.length)
+
+  /-- `funcall FN ARG...` — call FN with evaluated arguments.
+      Unlike a bare call where the head is a symbol looked up in the
+      function slot, `funcall` evaluates FN first (so any callable
+      value works: a lambda, a symbol-as-function, etc.). -/
+  evalFuncall (env : Env) (args : List Val) : EvalResult :=
+    match args with
+    | []      => .error (.wrongNumberOfArgs 1 0)
+    | fnExpr :: rest => do
+      let (env', fnVal) ← eval env fnExpr
+      let (env'', evaledArgs) ← evalCallArgs env' rest []
+      applyFn env'' fnVal evaledArgs
+
+  /-- `eval FORM` — evaluate FORM at runtime (re-entrant evaluation).
+      This is the same tree-walker as the top-level `eval`; the oracle
+      is a pure interpreter so re-entrant invocation has no semantic
+      cost beyond normal recursion. -/
+  evalEval_ (env : Env) (args : List Val) : EvalResult :=
+    match args with
+    | [form] => do
+      let (_, v) ← eval env form
+      .ok (env, v)
+    | _ => .error (.wrongNumberOfArgs 1 args.length)
+
   evalPrim (env : Env) (args : List Val)
       (f : List Val → Except EvalError Val) : EvalResult := do
     let (env', vs) ← evalCallArgs env args []
@@ -388,5 +510,77 @@ where
     | item :: rest => do
       let (env', r) ← applyFn env fnVal [item]
       mapcarGo env' fnVal rest (r :: acc)
+
+  evalCond (env : Env) (clauses : List Val) : EvalResult :=
+    match clauses with
+    | [] => .ok (env, .nil)
+    | clause :: rest =>
+      match clause with
+      | .cons testExpr thenExprs => do
+        let (env', testVal) ← eval env testExpr
+        if testVal != .nil then
+          if thenExprs == .nil then .ok (env', testVal)
+          else evalProgn env' (toList thenExprs)
+        else evalCond env' rest
+      | _ => do
+        let (env', testVal) ← eval env clause
+        if testVal != .nil then .ok (env', testVal)
+        else evalCond env' rest
+
+  evalAnd_ (env : Env) (args : List Val) : EvalResult :=
+    match args with
+    | []      => .ok (env, .t)
+    | [e]     => eval env e
+    | e :: es => do
+      let (env', v) ← eval env e
+      if v == .nil then .ok (env', .nil)
+      else evalAnd_ env' es
+
+  evalOr_ (env : Env) (args : List Val) : EvalResult :=
+    match args with
+    | []      => .ok (env, .nil)
+    | [e]     => eval env e
+    | e :: es => do
+      let (env', v) ← eval env e
+      if v != .nil then .ok (env', v)
+      else evalOr_ env' es
+
+  evalWhen_ (env : Env) (args : List Val) : EvalResult :=
+    match args with
+    | cond :: body => do
+      let (env', v) ← eval env cond
+      if v != .nil then evalProgn env' body
+      else .ok (env', .nil)
+    | _ => .error (.wrongNumberOfArgs 2 0)
+
+  evalUnless_ (env : Env) (args : List Val) : EvalResult :=
+    match args with
+    | cond :: body => do
+      let (env', v) ← eval env cond
+      if v == .nil then evalProgn env' body
+      else .ok (env', .nil)
+    | _ => .error (.wrongNumberOfArgs 2 0)
+
+  evalProg1 (env : Env) (args : List Val) : EvalResult :=
+    match args with
+    | []      => .error (.wrongNumberOfArgs 1 0)
+    | [e]     => eval env e
+    | e :: es => do
+      let (env', v) ← eval env e
+      let _ ← evalProgn env' es
+      .ok (env', v)
+
+  evalProg2 (env : Env) (args : List Val) : EvalResult :=
+    match args with
+    | []        => .error (.wrongNumberOfArgs 2 0)
+    | [_e1]      => .error (.wrongNumberOfArgs 2 1)
+    | [_e1, e2]  => do
+      let (env', _) ← eval env _e1
+      eval env' e2
+    | _e1 :: e2 :: es => do
+      let (env', _) ← eval env _e1
+      let (env'', v) ← eval env' e2
+      let _ ← evalProgn env'' es
+      .ok (env'', v)
 
 end Elisp

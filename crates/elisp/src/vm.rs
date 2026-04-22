@@ -186,9 +186,24 @@ impl<'a> Vm<'a> {
     }
 
     fn run(&mut self) -> ElispResult<LispObject> {
+        let mut ops_since_check: u32 = 0;
         while self.pc < self.code.len() {
             let op = self.fetch_u8();
             self.dispatch(op)?;
+            // Check the eval-ops budget every 64 opcodes. With
+            // a 2M limit this allows ~128M opcodes before firing
+            // (~1s on modern hardware); with bootstrap's 5M limit,
+            // ~320M opcodes (~3s). Tight enough to catch runaway
+            // bytecode without measurably slowing normal execution.
+            ops_since_check += 1;
+            if ops_since_check >= 64 {
+                ops_since_check = 0;
+                self.state.charge(1)?;
+            }
+        }
+        // Charge one op for the remaining tail that didn't reach 4096.
+        if ops_since_check > 0 {
+            self.state.charge(1)?;
         }
         // Return top of stack converted back to LispObject, or nil
         Ok(self
@@ -1148,8 +1163,13 @@ impl<'a> Vm<'a> {
                         // Body completed normally — continue at target
                     }
                     Err(ElispError::Throw(throw_data)) => {
-                        // Throws are NOT caught by condition-case
                         return Err(ElispError::Throw(throw_data));
+                    }
+                    Err(ElispError::StackOverflow) => {
+                        return Err(ElispError::StackOverflow);
+                    }
+                    Err(ref err) if err.is_eval_ops_exceeded() => {
+                        return Err(err.clone());
                     }
                     Err(err) => {
                         // Build the error data as (symbol . data) like eval does
@@ -1638,13 +1658,22 @@ impl<'a> Vm<'a> {
     /// Execute bytecodes from the current PC until reaching `target_pc`.
     /// Returns Ok(()) if we reach the target normally, or propagates errors.
     fn run_until(&mut self, target_pc: usize) -> ElispResult<()> {
+        let mut ops_since_check: u32 = 0;
         while self.pc < self.code.len() && self.pc != target_pc {
             let op = self.fetch_u8();
             self.dispatch(op)?;
+            ops_since_check += 1;
+            if ops_since_check >= 64 {
+                ops_since_check = 0;
+                self.state.charge(1)?;
+            }
             // After dispatch, check if a goto put us at or past the target
             if self.pc == target_pc {
                 break;
             }
+        }
+        if ops_since_check > 0 {
+            self.state.charge(1)?;
         }
         Ok(())
     }

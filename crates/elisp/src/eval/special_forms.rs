@@ -329,6 +329,21 @@ pub(super) fn eval_progn(
     let mut current = Some(body_obj);
     while let Some(curr) = current {
         if let Some((expr, rest)) = curr.destructure_cons() {
+            // Re-check the limit here in case a watchdog thread lowered
+            // it while we were inside a non-eval code path.
+            let limit = state
+                .eval_ops_limit
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if limit > 0 {
+                let ops = state
+                    .eval_ops
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                if ops >= limit {
+                    return Err(ElispError::EvalError(
+                        "eval operation limit exceeded".into(),
+                    ));
+                }
+            }
             result = eval(obj_to_value(expr), env, editor, macros, state)?;
             current = Some(rest);
         } else {
@@ -395,6 +410,7 @@ pub(super) fn eval_while(
     let body = args_obj.rest().unwrap_or(LispObject::nil());
     let body_val = obj_to_value(body);
     loop {
+        state.charge(1)?;
         let cond_val = eval(obj_to_value(cond.clone()), env, editor, macros, state)?;
         if cond_val.is_nil() {
             return Ok(Value::nil());

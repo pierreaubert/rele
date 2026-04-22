@@ -27,15 +27,20 @@ fn hand_written_call_compile_deopt_cycle() {
         },
         // f should now be Compiled (threshold=3)
         TraceStep {
+            action: "redefine".into(),
+            func: "f".into(),
+        },
+        // f is now Interp with stale compiled code (cache=0, defVersion=1)
+        TraceStep {
             action: "deopt".into(),
             func: "f".into(),
         },
-        // f falls back to Interp, but compiled code stays in cache
+        // f falls back to Interp, compiled code stays but is stale
         TraceStep {
             action: "call".into(),
             func: "f".into(),
         },
-        // f should be Compiled again (cache still valid)
+        // f is still Interp (only 1 call, below threshold)
     ];
 
     let result = replay::replay_trace(&steps, 3);

@@ -40,6 +40,16 @@ path = "src/bin/emacs_test_worker.rs"
 # builds of the library).
 required-features = []
 
+[[bin]]
+name = "reader_audit"
+path = "src/bin/reader_audit.rs"
+required-features = []
+
+[[bin]]
+name = "load_audit"
+path = "src/bin/load_audit.rs"
+required-features = []
+
 # Microbenchmarks for hot eval paths. Run with
 # `cargo bench -p rele-elisp --bench eval_dispatch` (or value_fastpath).
 [[bench]]
