@@ -591,16 +591,28 @@ pub(super) fn eval_load(
             // a few forms fail. Errors are surfaced via stderr so
             // debugging still works.
             let load_start = std::time::Instant::now();
+            let mut since_gc: usize = 0;
             for (i, form) in forms.into_iter().enumerate() {
                 // Wall-clock safety: abort loading if a single file
-                // takes more than 3 seconds. This catches cases where
-                // eval-ops limits aren't respected (e.g., nested
-                // require chains that reset interpreter state).
-                if load_start.elapsed().as_secs() >= 3 {
+                // takes too long. Increased from 3s to 30s to allow
+                // legitimate require chains (cl-macs.el alone is 3500
+                // lines of macro definitions).
+                if load_start.elapsed().as_secs() >= 30 {
                     let ops = state.eval_ops.load(std::sync::atomic::Ordering::Relaxed);
                     let limit = state.eval_ops_limit.load(std::sync::atomic::Ordering::Relaxed);
                     eprintln!("load {path}: wall-clock timeout at form {i}/{forms_count} (ops={ops}, limit={limit})");
                     break;
+                }
+                // Periodic GC: the heap runs in Manual mode, so without
+                // explicit collection large files (cl-macs.el, etc.) can
+                // allocate hundreds of MB. Sweep every 200 forms.
+                since_gc += 1;
+                if since_gc >= 200 {
+                    since_gc = 0;
+                    let mut heap = state.heap.lock();
+                    if heap.should_gc() {
+                        heap.collect();
+                    }
                 }
                 if let Err(e) = eval(obj_to_value(form), env, editor, macros, state) {
                     // Eval-ops-exceeded must propagate — never swallow it,

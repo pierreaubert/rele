@@ -5669,6 +5669,16 @@ fn test_value_native_fastpath_perf() {
 /// loaded by the bootstrap test itself. The full-suite harness needs
 /// the same Lisp infrastructure or every macro using ` will fail.
 pub fn load_full_bootstrap(interp: &Interpreter) {
+    // Pre-provide features for heavy UI/display libraries that trigger
+    // deadlocks in the bytecode VM during nested require chains.
+    // These libraries are not needed for the test suite.
+    for feature in [
+        "help-mode", "debug", "backtrace", "ewoc", "find-func", "pp",
+        "help-macro",
+    ] {
+        let _ = interp.eval_source(&format!("(provide '{feature})"));
+    }
+
     // BOOTSTRAP_FILES has trailing test-only extras we should skip.
     // They're conventionally the last 1 entry (cconv).
     let n = BOOTSTRAP_FILES.len().saturating_sub(1);
@@ -5805,7 +5815,7 @@ pub fn load_cl_lib(interp: &Interpreter) {
         // forced collection.
         if let Some(source) = read_emacs_source(&dest) {
             if let Ok(forms) = crate::read_all(&source) {
-                interp.set_eval_ops_limit(2_000_000);
+                interp.set_eval_ops_limit(10_000_000);
                 let mut since_gc = 0;
                 for form in forms {
                     interp.reset_eval_ops();

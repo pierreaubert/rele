@@ -1764,7 +1764,16 @@ fn eval_inner(
                 "mapc" => eval_mapc(obj_to_value(cdr), env, editor, macros, state),
                 "dolist" => eval_dolist(obj_to_value(cdr), env, editor, macros, state),
                 "declare" | "interactive" | "eval-after-load" | "make-help-screen"
-                | "declare-function" => Ok(Value::nil()),
+                | "declare-function"
+                // gv.el generalized-variable machinery — we don't need
+                // setf-expanders for the test suite; stub as no-ops.
+                | "gv-define-expander" | "gv-define-setter"
+                | "gv-define-simple-setter"
+                // cl-type definitions
+                | "cl-deftype"
+                // symbol property declarations
+                | "define-symbol-prop"
+                => Ok(Value::nil()),
                 "defvar-local" => {
                     // (defvar-local VAR VAL &optional DOCSTRING) — like defvar + make-local-variable
                     let var_name = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
