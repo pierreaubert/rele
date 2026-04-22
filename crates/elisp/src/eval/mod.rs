@@ -753,10 +753,20 @@ fn eval_cl_defgeneric_or_method(
     is_method: bool,
 ) -> ElispResult<Value> {
     let args_obj = value_to_obj(args);
-    let name = args_obj
-        .first()
-        .and_then(|n| n.as_symbol())
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let name_obj = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    // Name can be a symbol or `(setf NAME)` for setf-methods.
+    let name = match name_obj.as_symbol() {
+        Some(s) => s,
+        None => {
+            // (setf NAME) — skip silently; we don't support setf methods.
+            if let Some((car, _)) = name_obj.destructure_cons() {
+                if car.as_symbol().as_deref() == Some("setf") {
+                    return Ok(Value::nil());
+                }
+            }
+            return Err(ElispError::WrongTypeArgument("symbol".to_string()));
+        }
+    };
     let mut rest = args_obj.rest().unwrap_or(LispObject::nil());
 
     // Skip leading qualifiers (symbols or keywords) that come before the

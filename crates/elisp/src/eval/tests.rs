@@ -896,7 +896,19 @@ pub fn make_stdlib_interp() -> Interpreter {
     // Variables needed by subr.el
     interp.define("features", LispObject::nil());
     interp.define("obarray", LispObject::nil());
-    interp.define("global-map", LispObject::nil());
+    // global-map is a keymap: (keymap CHAR-TABLE . ALIST). We provide
+    // a vector as the char-table so `(set-char-table-range (nth 1 global-map) ...)`
+    // in mule-conf.el doesn't error.
+    {
+        let char_table = LispObject::Vector(std::sync::Arc::new(
+            parking_lot::Mutex::new(vec![LispObject::nil(); 0x10000]),
+        ));
+        let global_map = LispObject::cons(
+            LispObject::symbol("keymap"),
+            LispObject::cons(char_table, LispObject::nil()),
+        );
+        interp.define("global-map", global_map);
+    }
     interp.define("ctl-x-map", LispObject::nil());
     interp.define("ctl-x-4-map", LispObject::nil());
     interp.define("ctl-x-5-map", LispObject::nil());
@@ -917,7 +929,12 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("use-default-ascent", LispObject::nil());
     interp.define("ignored-local-variables", LispObject::nil());
     interp.define("find-word-boundary-function-table", LispObject::nil());
-    interp.define("latin-extra-code-table", LispObject::nil());
+    interp.define(
+        "latin-extra-code-table",
+        LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(
+            vec![LispObject::nil(); 256],
+        ))),
+    );
     interp.define("buffer-invisibility-spec", LispObject::nil());
     interp.define("unicode-category-table", LispObject::nil());
     interp.define("case-replace", LispObject::t());
@@ -1398,7 +1415,14 @@ pub fn make_stdlib_interp() -> Interpreter {
     }
 
     // composite.el / language files — variables and functions
-    interp.define("composition-function-table", LispObject::nil());
+    // composition-function-table is a char-table; needs to be a vector
+    // for `(aset composition-function-table CHAR ...)` in language/*.el.
+    interp.define(
+        "composition-function-table",
+        LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(
+            vec![LispObject::nil(); 0x10000],
+        ))),
+    );
     interp.define(
         "compose-chars-after-function",
         LispObject::primitive("ignore"),
@@ -1973,6 +1997,50 @@ pub fn make_stdlib_interp() -> Interpreter {
     // pre-binding to an empty string lets the skip-unless evaluate cleanly
     // (file-directory-p "" -> nil -> skip). (4 hits)
     interp.define("regex-tests--resources-dir", LispObject::string(""));
+
+    // Step 2: additional variables required by bootstrap files.
+    // key-translation-map — a keymap used by international/iso-transl.el
+    interp.define("key-translation-map", LispObject::nil());
+    // translation-table-vector — used by language/japanese.el, cp51932, eucjp-ms
+    interp.define(
+        "translation-table-vector",
+        LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(
+            vec![LispObject::nil(); 512],
+        ))),
+    );
+    // ccl-encode-ethio-font — used by language/ethiopic.el
+    interp.define("ccl-encode-ethio-font", LispObject::nil());
+    // isearch-mode-map — used by isearch.el
+    interp.define("isearch-mode-map", LispObject::nil());
+    // coding-system-put — used by language/ethiopic.el
+    interp.define("coding-system-put", LispObject::primitive("ignore"));
+    // define-charset-alias — used by mule-conf.el
+    interp.define("define-charset-alias", LispObject::primitive("ignore"));
+    // map-charset-chars — used by international/characters.el
+    interp.define("map-charset-chars", LispObject::primitive("ignore"));
+    // rx-define — used by progmodes/prog-mode.el
+    interp.define("rx-define", LispObject::primitive("ignore"));
+    // seq — used by emacs-lisp/seq.el (the variable, not the library)
+    interp.define("seq", LispObject::nil());
+    // kmacro-register, frame-register — used by register.el
+    interp.define("kmacro-register", LispObject::nil());
+    interp.define("frame-register", LispObject::nil());
+    // lisp-el-font-lock-keywords-1 — used by emacs-lisp/lisp-mode.el
+    interp.define("lisp-el-font-lock-keywords-1", LispObject::nil());
+    // lexical-binding — used by various files
+    interp.define("lexical-binding", LispObject::t());
+    // burmese-composable-pattern — used by language/burmese.el
+    interp.define("burmese-composable-pattern", LispObject::nil());
+    // font-ccl-encoder-alist — used by language/ethiopic.el
+    interp.define("font-ccl-encoder-alist", LispObject::nil());
+    // lisp-mode variables
+    interp.define("lisp-mode-symbol", LispObject::nil());
+    interp.define("lisp-cl-font-lock-keywords-1", LispObject::nil());
+    interp.define("lisp-el-font-lock-keywords-2", LispObject::nil());
+    // oclosure — the module, not loaded yet
+    interp.define("oclosure", LispObject::nil());
+    // loop — CL macro name used as var in some contexts
+    interp.define("loop", LispObject::nil());
 
     interp
 }

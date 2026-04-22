@@ -9,7 +9,6 @@
 //! Falls back to the same probing logic as the test harness.
 
 use rele_elisp::eval::Interpreter;
-use rele_elisp::add_primitives;
 
 fn main() {
     let emacs_dir = std::env::args()
@@ -30,8 +29,20 @@ fn main() {
 
     let bootstrap_files = rele_elisp::eval::tests::BOOTSTRAP_FILES;
 
-    // Ensure files exist
-    for f in bootstrap_files {
+    // Ensure bootstrap files + commonly-required libraries exist
+    let extra_libs = [
+        "emacs-lisp/cl-lib", "emacs-lisp/cl-macs", "emacs-lisp/cl-extra",
+        "emacs-lisp/cl-seq", "emacs-lisp/cl-print",
+        "emacs-lisp/subr-x", "emacs-lisp/pcase", "emacs-lisp/rx",
+        "emacs-lisp/help-macro", "emacs-lisp/icons",
+        "textmodes/text-mode", "emacs-lisp/rect",
+        "international/cp51932", "international/eucjp-ms",
+        "international/charscript",
+    ];
+    let all_files: Vec<&str> = bootstrap_files.iter().copied()
+        .chain(extra_libs.iter().copied())
+        .collect();
+    for f in &all_files {
         let dest = format!("{stdlib_dir}/{f}.el");
         if std::path::Path::new(&dest).exists() {
             continue;
@@ -55,15 +66,13 @@ fn main() {
         }
     }
 
-    // Create interpreter and load bootstrap files one by one
-    let mut interp = Interpreter::new();
-    add_primitives(&mut interp);
+    // Create interpreter with the same setup as the test harness
+    let interp = rele_elisp::eval::tests::make_stdlib_interp();
 
-    // Set up load-path
-    interp.define("load-path", rele_elisp::LispObject::cons(
-        rele_elisp::LispObject::string(stdlib_dir),
-        rele_elisp::LispObject::nil(),
-    ));
+    // make_stdlib_interp already sets up load-path from emacs_lisp_dir(),
+    // so we DON'T override it here — just ensure it also includes our
+    // /tmp/elisp-stdlib dirs at the front.
+    // (make_stdlib_interp already does this when emacs_lisp_dir() is available)
 
     let mut total_ok: usize = 0;
     let mut total_forms: usize = 0;
@@ -94,7 +103,8 @@ fn main() {
         let mut ok_count: usize = 0;
         let mut first_errors: Vec<String> = Vec::new();
 
-        interp.set_eval_ops_limit(5_000_000);
+        // Heavy files (japanese, cp51932, mouse) need a high budget.
+        interp.set_eval_ops_limit(50_000_000);
         let mut since_gc: usize = 0;
 
         for form in forms {
