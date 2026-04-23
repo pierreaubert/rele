@@ -2,7 +2,7 @@
 
 use crate::obarray;
 use crate::object::LispObject;
-use parking_lot::RwLock;
+use super::SyncRefCell as RwLock;
 use std::sync::Arc;
 
 use super::{Environment, InterpreterState};

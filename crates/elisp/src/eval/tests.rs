@@ -901,7 +901,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     // in mule-conf.el doesn't error.
     {
         let char_table = LispObject::Vector(std::sync::Arc::new(
-            parking_lot::Mutex::new(vec![LispObject::nil(); 0x10000]),
+            crate::eval::SyncRefCell::new(vec![LispObject::nil(); 0x10000]),
         ));
         let global_map = LispObject::cons(
             LispObject::symbol("keymap"),
@@ -931,7 +931,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("find-word-boundary-function-table", LispObject::nil());
     interp.define(
         "latin-extra-code-table",
-        LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(
+        LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(
             vec![LispObject::nil(); 256],
         ))),
     );
@@ -1026,7 +1026,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     // Phase 7d — variables referenced by various stdlib files.
     interp.define(
         "function-key-map",
-        LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()))),
+        LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(Vec::new()))),
     );
     interp.define(
         "exec-path",
@@ -1419,7 +1419,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     // for `(aset composition-function-table CHAR ...)` in language/*.el.
     interp.define(
         "composition-function-table",
-        LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(
+        LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(
             vec![LispObject::nil(); 0x10000],
         ))),
     );
@@ -2114,7 +2114,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     // translation-table-vector — used by language/japanese.el, cp51932, eucjp-ms
     interp.define(
         "translation-table-vector",
-        LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(
+        LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(
             vec![LispObject::nil(); 512],
         ))),
     );

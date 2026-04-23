@@ -4,7 +4,7 @@ use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult, SignalData, ThrowData};
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
-use parking_lot::RwLock;
+use super::SyncRefCell as RwLock;
 use std::sync::Arc;
 
 use super::builtins::eval_format;

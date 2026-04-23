@@ -131,7 +131,7 @@ fn prim_copy_hash_table(args: &LispObject) -> ElispResult<LispObject> {
             test: guard.test.clone(),
         };
         Ok(LispObject::HashTable(std::sync::Arc::new(
-            parking_lot::Mutex::new(new_ht),
+            crate::eval::SyncRefCell::new(new_ht),
         )))
     } else {
         Err(ElispError::WrongTypeArgument("hash-table".to_string()))

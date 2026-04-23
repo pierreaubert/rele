@@ -3,9 +3,15 @@ use crate::error::{ElispError, ElispResult};
 use crate::obarray::{self, SymbolId};
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
-use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+pub mod sync_cell;
+pub use sync_cell::SyncRefCell;
+
+/// Alias: drop-in replacement for `parking_lot::RwLock` that panics
+/// instead of deadlocking on re-entrant access.
+type RwLock<T> = SyncRefCell<T>;
 
 pub use environment::{Environment, is_callable_value};
 pub use macro_table::{Macro, MacroTable};
@@ -45,7 +51,7 @@ pub struct InterpreterState {
     /// The root (global) environment. Special variables are always read/written here.
     pub global_env: Arc<RwLock<Environment>>,
     /// Garbage-collected heap for cons cell allocation.
-    pub heap: Arc<parking_lot::Mutex<crate::gc::Heap>>,
+    pub heap: Arc<SyncRefCell<crate::gc::Heap>>,
     /// Counter for total cons cell allocations (monotonically increasing).
     pub cons_count: Arc<std::sync::atomic::AtomicU64>,
     /// Autoload mappings: function-name -> file-to-load.
@@ -195,7 +201,7 @@ impl InterpreterState {
         // itself — doing it under the lock would deadlock the
         // non-reentrant parking_lot::Mutex).
         let items: Vec<LispObject> = elements.into_iter().map(value_to_obj).collect();
-        let arc: crate::object::SharedVec = std::sync::Arc::new(parking_lot::Mutex::new(items));
+        let arc: crate::object::SharedVec = std::sync::Arc::new(crate::eval::SyncRefCell::new(items));
         self.heap.lock().vector_value(arc)
     }
 
@@ -203,7 +209,7 @@ impl InterpreterState {
     /// `LispObject`s. Phase 2n: wraps a fresh `SharedVec`.
     pub fn heap_vector_from_objects(&self, items: &[LispObject]) -> Value {
         let arc: crate::object::SharedVec =
-            std::sync::Arc::new(parking_lot::Mutex::new(items.to_vec()));
+            std::sync::Arc::new(crate::eval::SyncRefCell::new(items.to_vec()));
         self.heap.lock().vector_value(arc)
     }
 
@@ -211,7 +217,7 @@ impl InterpreterState {
     /// `LispHashTable`. Phase 2n: wraps a fresh `SharedHashTable`.
     pub fn heap_hashtable(&self, table: crate::object::LispHashTable) -> Value {
         let arc: crate::object::SharedHashTable =
-            std::sync::Arc::new(parking_lot::Mutex::new(table));
+            std::sync::Arc::new(crate::eval::SyncRefCell::new(table));
         self.heap.lock().hashtable_value(arc)
     }
 
@@ -292,7 +298,7 @@ impl Interpreter {
                 special_vars: Arc::new(RwLock::new(special_vars)),
                 specpdl: Arc::new(RwLock::new(Vec::new())),
                 global_env: env,
-                heap: Arc::new(parking_lot::Mutex::new({
+                heap: Arc::new(SyncRefCell::new({
                     let mut h = crate::gc::Heap::new();
                     // The interpreter runs in Manual mode so that GC only
                     // fires at explicit safepoints — the `(garbage-collect)`
@@ -4120,7 +4126,7 @@ fn eval_inner(
                     const CHAR_TABLE_SIZE: usize = 0x10000;
                     let v: Vec<LispObject> = vec![init; CHAR_TABLE_SIZE];
                     Ok(obj_to_value(LispObject::Vector(std::sync::Arc::new(
-                        parking_lot::Mutex::new(v),
+                        crate::eval::SyncRefCell::new(v),
                     ))))
                 }
                 "set-char-table-range" => {
@@ -4651,7 +4657,7 @@ fn eval_backquote_form(
                     item, depth, env, editor, macros, state,
                 )?);
             }
-            return Ok(LispObject::Vector(Arc::new(parking_lot::Mutex::new(out))));
+            return Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(out))));
         }
         return Ok(form);
     };

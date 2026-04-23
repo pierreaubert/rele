@@ -1,5 +1,5 @@
 use crate::obarray::{self, SymbolId};
-use parking_lot::Mutex;
+use crate::eval::SyncRefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -12,9 +12,11 @@ pub fn global_cons_count() -> u64 {
 }
 
 /// Shared mutable cell used for cons, vector, and hash table mutation semantics.
-pub type ConsCell = Arc<Mutex<(LispObject, LispObject)>>;
-pub type SharedVec = Arc<Mutex<Vec<LispObject>>>;
-pub type SharedHashTable = Arc<Mutex<LispHashTable>>;
+/// Uses SyncRefCell (RefCell wrapper) instead of parking_lot::Mutex to avoid
+/// deadlocks from re-entrant access in the single-threaded evaluator.
+pub type ConsCell = Arc<SyncRefCell<(LispObject, LispObject)>>;
+pub type SharedVec = Arc<SyncRefCell<Vec<LispObject>>>;
+pub type SharedHashTable = Arc<SyncRefCell<LispHashTable>>;
 
 /// Hash table test function type.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -54,11 +56,19 @@ impl PartialEq for LispObject {
             (LispObject::Integer(a), LispObject::Integer(b)) => a == b,
             (LispObject::Float(a), LispObject::Float(b)) => a == b,
             (LispObject::String(a), LispObject::String(b)) => a == b,
-            (LispObject::Cons(a), LispObject::Cons(b)) => *a.lock() == *b.lock(),
+            (LispObject::Cons(a), LispObject::Cons(b)) => {
+                // Check pointer identity first to avoid re-entrant borrow
+                // when comparing a cons cell to itself.
+                Arc::ptr_eq(a, b) || *a.lock() == *b.lock()
+            }
             (LispObject::Primitive(a), LispObject::Primitive(b)) => a == b,
-            (LispObject::Vector(a), LispObject::Vector(b)) => *a.lock() == *b.lock(),
+            (LispObject::Vector(a), LispObject::Vector(b)) => {
+                Arc::ptr_eq(a, b) || *a.lock() == *b.lock()
+            }
             (LispObject::BytecodeFn(a), LispObject::BytecodeFn(b)) => a == b,
-            (LispObject::HashTable(a), LispObject::HashTable(b)) => a.lock().test == b.lock().test,
+            (LispObject::HashTable(a), LispObject::HashTable(b)) => {
+                Arc::ptr_eq(a, b) || a.lock().test == b.lock().test
+            }
             _ => false,
         }
     }
@@ -251,7 +261,7 @@ impl LispObject {
 
     pub fn cons(car: LispObject, cdr: LispObject) -> Self {
         GLOBAL_CONS_COUNT.fetch_add(1, Ordering::Relaxed);
-        LispObject::Cons(Arc::new(Mutex::new((car, cdr))))
+        LispObject::Cons(Arc::new(SyncRefCell::new((car, cdr))))
     }
 
     pub fn integer(i: i64) -> Self {

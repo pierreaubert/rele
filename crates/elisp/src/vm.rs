@@ -8,7 +8,7 @@ use crate::error::{ElispError, ElispResult};
 use crate::eval::InterpreterState;
 use crate::object::{BytecodeFunction, LispObject};
 use crate::value::{Value, obj_to_value, value_to_obj};
-use parking_lot::RwLock;
+use crate::eval::SyncRefCell as RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -1574,7 +1574,7 @@ impl<'a> Vm<'a> {
                         _ => result.push(item),
                     }
                 }
-                self.push_obj(LispObject::Vector(Arc::new(parking_lot::Mutex::new(
+                self.push_obj(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(
                     result,
                 ))));
             }
@@ -1821,7 +1821,7 @@ mod tests {
             // Phase 3: match `Interpreter::new`'s Manual mode so
             // bytecode tests don't hit mid-execution sweeps that would
             // collect Values off the VM stack.
-            heap: Arc::new(parking_lot::Mutex::new({
+            heap: Arc::new(crate::eval::SyncRefCell::new({
                 let mut h = crate::gc::Heap::new();
                 h.set_gc_mode(crate::gc::GcMode::Manual);
                 h

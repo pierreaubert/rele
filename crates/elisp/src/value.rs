@@ -971,7 +971,7 @@ thread_local! {
     /// `LispObject`s through. `None` means no scope is installed —
     /// heap-typed conversions that need a heap will return `nil`
     /// (see `obj_to_value`). Installed by `HeapScope::enter`.
-    static CURRENT_HEAP: RefCell<Option<std::sync::Arc<parking_lot::Mutex<crate::gc::Heap>>>> =
+    static CURRENT_HEAP: RefCell<Option<std::sync::Arc<crate::eval::SyncRefCell<crate::gc::Heap>>>> =
         const { RefCell::new(None) };
 }
 
@@ -984,13 +984,13 @@ thread_local! {
 /// interpreter's own eval re-enters with the same `Arc<Mutex<Heap>>`),
 /// and the LIFO restore keeps the behaviour correct either way.
 pub struct HeapScope {
-    previous: Option<std::sync::Arc<parking_lot::Mutex<crate::gc::Heap>>>,
+    previous: Option<std::sync::Arc<crate::eval::SyncRefCell<crate::gc::Heap>>>,
 }
 
 impl HeapScope {
     /// Install `heap` as the current scope's active heap. The returned
     /// guard restores the previous heap on drop.
-    pub fn enter(heap: std::sync::Arc<parking_lot::Mutex<crate::gc::Heap>>) -> Self {
+    pub fn enter(heap: std::sync::Arc<crate::eval::SyncRefCell<crate::gc::Heap>>) -> Self {
         let previous = CURRENT_HEAP.with(|h| h.borrow_mut().replace(heap));
         HeapScope { previous }
     }
@@ -1286,7 +1286,7 @@ mod bridge_tests {
         // Phase 2m + 2o: when a HeapScope is installed, obj_to_value for
         // String produces a TAG_HEAP_PTR Value and the string lives on
         // the real GC heap.
-        let heap = std::sync::Arc::new(parking_lot::Mutex::new(crate::gc::Heap::new()));
+        let heap = std::sync::Arc::new(crate::eval::SyncRefCell::new(crate::gc::Heap::new()));
         heap.lock().set_gc_mode(crate::gc::GcMode::Manual);
         let _scope = crate::value::HeapScope::enter(heap.clone());
 
@@ -1324,7 +1324,7 @@ mod bridge_tests {
     #[test]
     fn bridge_bignum_routes_to_heap_when_scope_active() {
         // Phase 2m: oversized integers route to heap.bignum_value under scope.
-        let heap = std::sync::Arc::new(parking_lot::Mutex::new(crate::gc::Heap::new()));
+        let heap = std::sync::Arc::new(crate::eval::SyncRefCell::new(crate::gc::Heap::new()));
         heap.lock().set_gc_mode(crate::gc::GcMode::Manual);
         let _scope = crate::value::HeapScope::enter(heap.clone());
 

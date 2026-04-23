@@ -15,10 +15,10 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 
 pub fn prim_make_sparse_keymap(args: &LispObject) -> ElispResult<LispObject> {
     let _ = args;
-    Ok(LispObject::Vector(Arc::new(parking_lot::Mutex::new(vec![
+    Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec![
         LispObject::symbol("keymap"),
-        LispObject::Vector(Arc::new(parking_lot::Mutex::new(vec![]))),
-        LispObject::Vector(Arc::new(parking_lot::Mutex::new(vec![]))),
+        LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec![]))),
+        LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec![]))),
         LispObject::cons(LispObject::nil(), LispObject::nil()),
     ]))))
 }

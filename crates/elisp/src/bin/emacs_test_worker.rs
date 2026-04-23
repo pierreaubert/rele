@@ -107,24 +107,39 @@ fn process_file<W: Write>(
     per_test_ms: u64,
     out: &mut W,
 ) -> std::io::Result<()> {
-    let load = probe_emacs_file(interp, path);
-    let (stats, results) = run_rele_ert_tests_detailed_with_timeout(interp, per_test_ms);
-    for r in &results {
-        writeln!(out, "{}", r.to_jsonl(path))?;
+    // Catch panics from RefCell re-entrant borrow violations (former
+    // deadlocks, now exposed by SyncRefCell). The file is recorded as
+    // having 0 tests with a "panic" marker so the parent doesn't
+    // think the worker crashed.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let load = probe_emacs_file(interp, path);
+        let (stats, results) = run_rele_ert_tests_detailed_with_timeout(interp, per_test_ms);
+        (load, stats, results)
+    }));
+
+    match result {
+        Ok((load, stats, results)) => {
+            for r in &results {
+                writeln!(out, "{}", r.to_jsonl(path))?;
+            }
+            let (loaded, total) = load.unwrap_or((0, 0));
+            writeln!(
+                out,
+                "__SUMMARY__ {} {} {} {} {} {} {} {}",
+                stats.passed, stats.failed, stats.errored, stats.skipped,
+                stats.panicked, stats.timed_out, loaded, total,
+            )?;
+        }
+        Err(_) => {
+            eprintln!("process_file: panic caught for {path}");
+            writeln!(
+                out,
+                r#"{{"file":"{path}","test":"<file>","result":"panic","ms":0,"detail":"RefCell re-entrant borrow"}}"#,
+            )?;
+            writeln!(out, "__SUMMARY__ 0 0 0 0 1 0 0 0")?;
+        }
     }
-    let (loaded, total) = load.unwrap_or((0, 0));
-    writeln!(
-        out,
-        "__SUMMARY__ {} {} {} {} {} {} {} {}",
-        stats.passed,
-        stats.failed,
-        stats.errored,
-        stats.skipped,
-        stats.panicked,
-        stats.timed_out,
-        loaded,
-        total,
-    )?;
+
     writeln!(out, "__DONE__")?;
     out.flush()
 }
@@ -144,7 +159,7 @@ fn main() {
     // Run everything on a thread with a large stack to avoid
     // stack overflow from deep macro expansion in .el files.
     let handle = std::thread::Builder::new()
-        .stack_size(128 * 1024 * 1024)
+        .stack_size(256 * 1024 * 1024)
         .spawn(move || worker_main(cfg))
         .expect("spawn worker thread");
     handle.join().unwrap_or_else(|_| std::process::exit(1));

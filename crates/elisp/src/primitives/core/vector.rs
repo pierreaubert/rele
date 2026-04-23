@@ -91,7 +91,7 @@ pub fn prim_make_vector(args: &LispObject) -> ElispResult<LispObject> {
     }
 
     let vec: Vec<LispObject> = vec![init; length as usize];
-    Ok(LispObject::Vector(Arc::new(parking_lot::Mutex::new(vec))))
+    Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec))))
 }
 
 pub fn prim_vconcat(args: &LispObject) -> ElispResult<LispObject> {
@@ -117,7 +117,7 @@ pub fn prim_vconcat(args: &LispObject) -> ElispResult<LispObject> {
         current = rest;
     }
 
-    Ok(LispObject::Vector(Arc::new(parking_lot::Mutex::new(
+    Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(
         result,
     ))))
 }
@@ -142,7 +142,7 @@ pub fn prim_make_bool_vector(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::t()
     };
     let vec: Vec<LispObject> = vec![val; length as usize];
-    Ok(LispObject::Vector(Arc::new(parking_lot::Mutex::new(vec))))
+    Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec))))
 }
 
 pub fn prim_bool_vector(args: &LispObject) -> ElispResult<LispObject> {
@@ -156,5 +156,5 @@ pub fn prim_bool_vector(args: &LispObject) -> ElispResult<LispObject> {
         });
         cur = rest;
     }
-    Ok(LispObject::Vector(Arc::new(parking_lot::Mutex::new(elems))))
+    Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(elems))))
 }

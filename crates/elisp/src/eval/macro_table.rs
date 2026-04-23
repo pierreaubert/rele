@@ -1,5 +1,5 @@
 use crate::object::LispObject;
-use parking_lot::RwLock;
+use super::SyncRefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -9,4 +9,4 @@ pub struct Macro {
     pub body: LispObject,
 }
 
-pub type MacroTable = Arc<RwLock<HashMap<String, Macro>>>;
+pub type MacroTable = Arc<SyncRefCell<HashMap<String, Macro>>>;

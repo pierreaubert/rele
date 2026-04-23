@@ -1,5 +1,5 @@
 use crate::error::ElispError;
-use parking_lot::RwLock;
+use super::SyncRefCell as RwLock;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;

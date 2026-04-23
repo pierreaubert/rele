@@ -851,14 +851,14 @@ pub fn prim_cl_coerce(args: &LispObject) -> ElispResult<LispObject> {
             LispObject::Cons(_) | LispObject::Nil => {
                 let items = to_vec(&v, 1 << 20);
                 Ok(LispObject::Vector(std::sync::Arc::new(
-                    parking_lot::Mutex::new(items),
+                    crate::eval::SyncRefCell::new(items),
                 )))
             }
             LispObject::String(s) => {
                 let items: Vec<LispObject> =
                     s.chars().map(|c| LispObject::integer(c as i64)).collect();
                 Ok(LispObject::Vector(std::sync::Arc::new(
-                    parking_lot::Mutex::new(items),
+                    crate::eval::SyncRefCell::new(items),
                 )))
             }
             _ => Ok(v),

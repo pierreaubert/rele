@@ -1437,7 +1437,7 @@ mod tests {
     #[test]
     fn vector_allocation_and_identity() {
         use crate::object::LispObject;
-        use parking_lot::Mutex;
+        use crate::eval::SyncRefCell as Mutex;
         use std::sync::Arc;
         let mut heap = Heap::new();
         heap.set_gc_mode(GcMode::Manual);
@@ -1466,7 +1466,7 @@ mod tests {
     #[test]
     fn vector_unrooted_swept() {
         use crate::object::LispObject;
-        use parking_lot::Mutex;
+        use crate::eval::SyncRefCell as Mutex;
         use std::sync::Arc;
         let mut heap = Heap::new();
         heap.set_gc_mode(GcMode::Manual);
@@ -1479,7 +1479,7 @@ mod tests {
     #[test]
     fn hashtable_allocation_and_sweep() {
         use crate::object::{HashTableTest, LispHashTable};
-        use parking_lot::Mutex;
+        use crate::eval::SyncRefCell as Mutex;
         use std::sync::Arc;
         let mut heap = Heap::new();
         heap.set_gc_mode(GcMode::Manual);
@@ -1526,7 +1526,7 @@ mod tests {
         // other. This test inspects the heap layer directly to make
         // the identity guarantee explicit.
         use crate::object::LispObject;
-        use parking_lot::Mutex;
+        use crate::eval::SyncRefCell as Mutex;
         use std::sync::Arc;
 
         let mut heap = Heap::new();
@@ -1551,7 +1551,7 @@ mod tests {
     #[test]
     fn cons_arc_unrooted_swept() {
         use crate::object::LispObject;
-        use parking_lot::Mutex;
+        use crate::eval::SyncRefCell as Mutex;
         use std::sync::Arc;
         let mut heap = Heap::new();
         heap.set_gc_mode(GcMode::Manual);

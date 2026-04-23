@@ -198,7 +198,7 @@ pub fn prim_make_instance(args: &LispObject) -> ElispResult<LispObject> {
         items.push(val);
     }
     Ok(LispObject::Vector(std::sync::Arc::new(
-        parking_lot::Mutex::new(items),
+        crate::eval::SyncRefCell::new(items),
     )))
 }
 
@@ -781,7 +781,7 @@ mod tests {
             }],
         });
         // Forge a plain vector [class-symbol, 42] and try to slot-value it.
-        let fake = LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(vec![
+        let fake = LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(vec![
             symbol("r10-class"),
             LispObject::integer(42),
         ])));
@@ -823,7 +823,7 @@ mod tests {
             parent: None,
             slots: vec![],
         });
-        let fake = LispObject::Vector(std::sync::Arc::new(parking_lot::Mutex::new(vec![symbol(
+        let fake = LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(vec![symbol(
             "r10-plainreject",
         )])));
         let r = prim_eieio_object_p(&LispObject::cons(fake, LispObject::nil())).unwrap();

@@ -495,7 +495,7 @@ impl Reader {
             elements.push(self.read()?);
         }
         Ok(LispObject::Vector(std::sync::Arc::new(
-            parking_lot::Mutex::new(elements),
+            crate::eval::SyncRefCell::new(elements),
         )))
     }
 
@@ -575,7 +575,7 @@ impl Reader {
                         // CL struct record: return as a vector (Emacs records
                         // are vector-like). The first element is the type tag.
                         Ok(LispObject::Vector(std::sync::Arc::new(
-                            parking_lot::Mutex::new(inner),
+                            crate::eval::SyncRefCell::new(inner),
                         )))
                     }
                 } else {
