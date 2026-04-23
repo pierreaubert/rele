@@ -1524,14 +1524,14 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("treesit-ready-p", LispObject::primitive("ignore"));
     interp.define("treesit-parser-create", LispObject::primitive("ignore"));
     interp.define("indent-line-to", LispObject::primitive("ignore"));
-    interp.define("current-indentation", LispObject::primitive("ignore"));
+    interp.define("current-indentation", LispObject::primitive("current-indentation"));
     interp.define("indent-to", LispObject::primitive("ignore"));
 
     // Phase 5 stubs — display, timer, font-lock, syntax, mouse, isearch
     interp.define("make-syntax-table", LispObject::primitive("ignore"));
     interp.define("syntax-table-p", LispObject::primitive("ignore"));
     interp.define("category-table-p", LispObject::primitive("ignore"));
-    interp.define("syntax-ppss", LispObject::primitive("ignore"));
+    interp.define("syntax-ppss", LispObject::primitive("syntax-ppss"));
     interp.define("syntax-ppss-flush-cache", LispObject::primitive("ignore"));
     interp.define("syntax-propertize", LispObject::primitive("ignore"));
     interp.define("add-face-text-property", LispObject::primitive("ignore"));

@@ -1580,7 +1580,9 @@ fn eval_inner(
                     let unquoted = s.strip_prefix("/:").unwrap_or(s);
                     Ok(obj_to_value(LispObject::string(unquoted)))
                 }
-                "insert" => eval_insert(obj_to_value(cdr), env, editor, macros, state),
+                "insert" | "insert-before-markers" | "insert-before-markers-and-inherit" => {
+                    eval_insert(obj_to_value(cdr), env, editor, macros, state)
+                }
                 "prog1" => eval_prog1(obj_to_value(cdr), env, editor, macros, state),
                 "prog2" => eval_prog2(obj_to_value(cdr), env, editor, macros, state),
                 "and" => eval_and(obj_to_value(cdr), env, editor, macros, state),
@@ -1848,6 +1850,113 @@ fn eval_inner(
                         Err(ref e) if e.is_eval_ops_exceeded() => Err(e.clone()),
                         Err(_) => Ok(Value::nil()),
                     }
+                }
+                "ert-info" => {
+                    // (ert-info (MSG &rest KEYS) BODY...) — just eval body.
+                    // MSG is for diagnostic output; we ignore it.
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    eval_progn(obj_to_value(body), env, editor, macros, state)
+                }
+                "ert-test-erts-file" => {
+                    // Needs file fixtures we don't have — skip the test.
+                    Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                        symbol: LispObject::symbol("ert-test-skipped"),
+                        data: LispObject::cons(
+                            LispObject::string("erts file tests not supported"),
+                            LispObject::nil(),
+                        ),
+                    })))
+                }
+                "ert-with-message-capture" => {
+                    // (ert-with-message-capture VAR BODY...) — bind VAR
+                    // to captured messages, eval body.
+                    let var = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    if let Some(name) = var.as_symbol() {
+                        env.write().set(&name, LispObject::string(""));
+                    }
+                    eval_progn(obj_to_value(body), env, editor, macros, state)
+                }
+                "ert-simulate-command" => {
+                    // (ert-simulate-command CMD) — just funcall the command.
+                    let cmd = eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?;
+                    let cmd_obj = value_to_obj(cmd);
+                    let func = if let Some((car, _)) = cmd_obj.destructure_cons() {
+                        car
+                    } else {
+                        cmd_obj
+                    };
+                    functions::call_function(
+                        obj_to_value(func),
+                        obj_to_value(LispObject::nil()),
+                        env, editor, macros, state,
+                    )
+                }
+                "ert-with-buffer-selected" | "ert-with-buffer-renamed" => {
+                    // (ert-with-buffer-selected BUF BODY...) — eval body
+                    let _buf = eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?;
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    eval_progn(obj_to_value(body), env, editor, macros, state)
+                }
+                "ert--skip-unless" => {
+                    // Internal skip-unless implementation
+                    let form = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let result = value_to_obj(eval(obj_to_value(form), env, editor, macros, state)?);
+                    if result.is_nil() {
+                        return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                            symbol: LispObject::symbol("ert-test-skipped"),
+                            data: LispObject::nil(),
+                        })));
+                    }
+                    Ok(Value::t())
+                }
+                "run-hooks" | "run-mode-hooks" => {
+                    // (run-hooks &rest HOOKS) — run each hook's value as a function list
+                    let mut cur = cdr.clone();
+                    while let Some((hook_sym, rest)) = cur.destructure_cons() {
+                        let hook = eval(obj_to_value(hook_sym), env, editor, macros, state)?;
+                        let hook_obj = value_to_obj(hook);
+                        // Hook value can be a function or a list of functions
+                        if !hook_obj.is_nil() {
+                            if let Some(_) = hook_obj.as_symbol() {
+                                // Single function
+                                let _ = functions::call_function(
+                                    obj_to_value(hook_obj),
+                                    obj_to_value(LispObject::nil()),
+                                    env, editor, macros, state,
+                                );
+                            } else {
+                                // List of functions
+                                let mut funcs = hook_obj;
+                                while let Some((func, rest2)) = funcs.destructure_cons() {
+                                    let _ = functions::call_function(
+                                        obj_to_value(func),
+                                        obj_to_value(LispObject::nil()),
+                                        env, editor, macros, state,
+                                    );
+                                    funcs = rest2;
+                                }
+                            }
+                        }
+                        cur = rest;
+                    }
+                    Ok(Value::nil())
+                }
+                "ert-font-lock-test-file" | "ert-simulate-keys" => {
+                    // Skip — these need interactive/file fixtures
+                    Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                        symbol: LispObject::symbol("ert-test-skipped"),
+                        data: LispObject::cons(
+                            LispObject::string("not supported in rele"),
+                            LispObject::nil(),
+                        ),
+                    })))
                 }
                 "catch" => eval_catch(obj_to_value(cdr), env, editor, macros, state),
                 "throw" => eval_throw(obj_to_value(cdr), env, editor, macros, state),

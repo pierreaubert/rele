@@ -354,6 +354,7 @@ pub(super) fn eval_format(
     let fmt = value_to_obj(eval(obj_to_value(fmt_expr), env, editor, macros, state)?);
     let fmt_str = match fmt {
         LispObject::String(s) => s,
+        LispObject::Nil => return Ok(obj_to_value(LispObject::string("nil"))),
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
 

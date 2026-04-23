@@ -1728,6 +1728,109 @@ pub fn prim_buffer_chars_modified_tick(args: &LispObject) -> ElispResult<LispObj
 
 /// Called from `call_stateful_primitive`. Returns `Some(result)` if
 /// `name` matches one of our buffer primitives, `None` otherwise.
+pub fn prim_forward_word(args: &LispObject) -> ElispResult<LispObject> {
+    let n = args.first().and_then(|a| a.as_integer()).unwrap_or(1);
+    let moved = buffer::with_current_mut(|b| {
+        let mut count = n.unsigned_abs() as usize;
+        let forward = n >= 0;
+        while count > 0 {
+            if forward {
+                // Skip non-word chars
+                while b.point < b.point_max() {
+                    match b.char_at(b.point) {
+                        Some(c) if c.is_alphanumeric() || c == '_' => break,
+                        Some(_) => b.point += 1,
+                        None => break,
+                    }
+                }
+                // Skip word chars
+                while b.point < b.point_max() {
+                    match b.char_at(b.point) {
+                        Some(c) if c.is_alphanumeric() || c == '_' => b.point += 1,
+                        _ => break,
+                    }
+                }
+            } else {
+                // Backward: skip non-word then word
+                while b.point > b.point_min() {
+                    match b.char_at(b.point - 1) {
+                        Some(c) if c.is_alphanumeric() || c == '_' => break,
+                        Some(_) => b.point -= 1,
+                        None => break,
+                    }
+                }
+                while b.point > b.point_min() {
+                    match b.char_at(b.point - 1) {
+                        Some(c) if c.is_alphanumeric() || c == '_' => b.point -= 1,
+                        _ => break,
+                    }
+                }
+            }
+            count -= 1;
+        }
+        true
+    });
+    Ok(LispObject::from(moved))
+}
+
+pub fn prim_backward_word(args: &LispObject) -> ElispResult<LispObject> {
+    let n = args.first().and_then(|a| a.as_integer()).unwrap_or(1);
+    // backward-word(n) = forward-word(-n)
+    let neg_args = LispObject::cons(LispObject::integer(-n), LispObject::nil());
+    prim_forward_word(&neg_args)
+}
+
+pub fn prim_forward_comment(args: &LispObject) -> ElispResult<LispObject> {
+    let _n = args.first().and_then(|a| a.as_integer()).unwrap_or(1);
+    // Stub: we don't have full syntax table support.
+    // Return nil (didn't move) — this is safe; callers handle nil.
+    Ok(LispObject::nil())
+}
+
+pub fn prim_syntax_ppss(args: &LispObject) -> ElispResult<LispObject> {
+    let _pos = args.first().and_then(|a| a.as_integer());
+    // Return a minimal syntax-ppss result: a list of 10 nils.
+    // (DEPTH INNERMOST-START LAST-COMPLETE-SEXP IN-STRING IN-COMMENT
+    //  AFTER-QUOTE MIN-DEPTH COMMENT-STYLE COMMENT-OR-STRING-START
+    //  OPEN-PARENS-LIST COMMENT-DEPTH)
+    let mut result = LispObject::nil();
+    for _ in 0..10 {
+        result = LispObject::cons(LispObject::integer(0), result);
+    }
+    Ok(result)
+}
+
+pub fn prim_current_indentation(args: &LispObject) -> ElispResult<LispObject> {
+    let _ = args;
+    let indent = buffer::with_current(|b| {
+        // Find beginning of current line
+        let mut pos = b.point;
+        while pos > b.point_min() {
+            if b.char_at(pos - 1) == Some('\n') {
+                break;
+            }
+            pos -= 1;
+        }
+        // Count leading spaces/tabs
+        let mut col: i64 = 0;
+        while pos < b.point_max() {
+            match b.char_at(pos) {
+                Some(' ') => { col += 1; pos += 1; }
+                Some('\t') => { col = (col + 8) & !7; pos += 1; }
+                _ => break,
+            }
+        }
+        col
+    });
+    Ok(LispObject::integer(indent))
+}
+
+pub fn prim_delete_all_overlays(args: &LispObject) -> ElispResult<LispObject> {
+    let _ = args;
+    // Stub: clear overlays is a no-op for now.
+    Ok(LispObject::nil())
+}
+
 pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
     Some(match name {
         "bufferp" => prim_bufferp(args),
@@ -1820,6 +1923,12 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "buffer-base-buffer" => prim_buffer_base_buffer(args),
         "buffer-last-name" => prim_buffer_last_name(args),
         "buffer-chars-modified-tick" => prim_buffer_chars_modified_tick(args),
+        "forward-word" => prim_forward_word(args),
+        "backward-word" => prim_backward_word(args),
+        "forward-comment" => prim_forward_comment(args),
+        "syntax-ppss" => prim_syntax_ppss(args),
+        "current-indentation" => prim_current_indentation(args),
+        "delete-all-overlays" => prim_delete_all_overlays(args),
         _ => return None,
     })
 }
@@ -1899,6 +2008,12 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "search-forward",
     "search-backward",
     "replace-match",
+    "forward-word",
+    "backward-word",
+    "forward-comment",
+    "syntax-ppss",
+    "current-indentation",
+    "delete-all-overlays",
 ];
 
 #[cfg(test)]

@@ -131,6 +131,16 @@ pub(super) fn eval_error_fn(
     macros: &MacroTable,
     state: &InterpreterState,
 ) -> ElispResult<Value> {
+    // Handle (error nil) — signal with nil data, matching Emacs behavior.
+    let args_obj = value_to_obj(args);
+    let first = args_obj.first().unwrap_or(LispObject::nil());
+    let first_val = value_to_obj(eval(obj_to_value(first), env, editor, macros, state)?);
+    if first_val.is_nil() {
+        return Err(ElispError::Signal(Box::new(SignalData {
+            symbol: LispObject::symbol("error"),
+            data: LispObject::nil(),
+        })));
+    }
     let formatted = value_to_obj(eval_format(args, env, editor, macros, state)?);
     let msg_str = formatted.princ_to_string();
 
