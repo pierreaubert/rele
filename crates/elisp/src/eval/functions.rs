@@ -294,10 +294,12 @@ fn stateful_symbol_function(
     let name = sym
         .as_symbol()
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-    if let Some(val) = env.read().get_function(&name) {
+    let func_val = env.read().get_function(&name);
+    if let Some(val) = func_val {
         return Ok(val);
     }
-    if let Some(m) = macros.read().get(&name).cloned() {
+    let macro_val = macros.read().get(&name).cloned();
+    if let Some(m) = macro_val {
         // Build `(macro lambda ARGS . BODY)`.
         let args_body = LispObject::cons(m.args, m.body);
         let lambda_form = LispObject::cons(LispObject::symbol("lambda"), args_body);
@@ -655,17 +657,21 @@ pub(super) fn resolve_function(
     let func_obj = value_to_obj(func);
     if let LispObject::Symbol(id) = func_obj {
         let name = crate::obarray::symbol_name(id);
-        if let Some(val) = env.read().get_function(&name) {
+        // Drop the Ref before any recursive call.
+        let resolved = env.read().get_function(&name);
+        if let Some(val) = resolved {
             return Ok(obj_to_value(val));
         }
         // Check autoloads — load the file and retry
-        if let Some(file) = state.autoloads.read().get(&name).cloned() {
+        let autoload_file = state.autoloads.read().get(&name).cloned();
+        if let Some(file) = autoload_file {
             let load_args = LispObject::cons(
                 LispObject::string(&file),
                 LispObject::cons(LispObject::t(), LispObject::nil()),
             );
             let _ = super::builtins::eval_load(obj_to_value(load_args), env, editor, macros, state);
-            if let Some(val) = env.read().get_function(&name) {
+            let resolved2 = env.read().get_function(&name);
+            if let Some(val) = resolved2 {
                 return Ok(obj_to_value(val));
             }
         }
@@ -1030,18 +1036,24 @@ pub fn call_function(
             let name = crate::obarray::symbol_name(id);
             // Function-position lookup: env chain for callable, then
             // the symbol's function cell.
-            if let Some(val) = env.read().get_function(&name) {
+            // IMPORTANT: extract value before calling call_function to
+            // avoid holding a Ref<Environment> across the recursive call
+            // (which would re-borrow and panic with SyncRefCell).
+            let resolved = env.read().get_function(&name);
+            if let Some(val) = resolved {
                 return call_function(obj_to_value(val), args, env, editor, macros, state);
             }
             // Check autoloads — load the file and retry
-            if let Some(file) = state.autoloads.read().get(&name).cloned() {
+            let autoload_file = state.autoloads.read().get(&name).cloned();
+            if let Some(file) = autoload_file {
                 let load_args = LispObject::cons(
                     LispObject::string(&file),
                     LispObject::cons(LispObject::t(), LispObject::nil()),
                 );
                 let _ =
                     super::builtins::eval_load(obj_to_value(load_args), env, editor, macros, state);
-                if let Some(val) = env.read().get_function(&name) {
+                let resolved2 = env.read().get_function(&name);
+                if let Some(val) = resolved2 {
                     return call_function(obj_to_value(val), args, env, editor, macros, state);
                 }
             }
