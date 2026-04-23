@@ -1830,6 +1830,7 @@ mod tests {
             autoloads: Arc::new(RwLock::new(HashMap::new())),
             eval_ops: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             eval_ops_limit: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            deadline: std::cell::Cell::new(None),
         };
         (env, editor, macros, state)
     }

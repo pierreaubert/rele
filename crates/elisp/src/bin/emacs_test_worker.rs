@@ -45,7 +45,7 @@ use rele_elisp::eval::tests::{
 /// down by a watchdog, which yields an `EvalError` that the runner
 /// reclassifies as a `timeout` result. The parent harness also has a
 /// per-file deadline (currently 15 s) as a last-resort safety net.
-const DEFAULT_PER_TEST_MS: u64 = 8_000;
+const DEFAULT_PER_TEST_MS: u64 = 3_000;
 
 enum Mode {
     /// Read paths from stdin (one per line); exit on EOF. Pool mode.

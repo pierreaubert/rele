@@ -511,14 +511,14 @@ pub(super) fn eval_load(
     // 4th arg (nosuffix): when non-nil, don't add .el / .elc suffixes
     let nosuffix = args_obj.nth(3).map(|v| !v.is_nil()).unwrap_or(false);
 
-    // Prefer .el over .elc: the bytecode VM can deadlock on some .elc
-    // files (help-mode, ert) due to re-entrant lock issues. The tree-
-    // walking interpreter handles .el files reliably with proper
-    // eval-ops timeout. TCO keeps stack depth bounded for .el files.
+    // Prefer .elc (fast bytecode) over .el. The former deadlock issue
+    // with re-entrant RwLock is fixed — SyncRefCell panics instead of
+    // hanging, and the PartialEq identity check prevents the main
+    // re-entrant path.
     let suffixes: &[&str] = if nosuffix {
         &["", ".gz"]
     } else {
-        &[".el", ".el.gz", ".elc", ""]
+        &[".elc", ".el", ".el.gz", ""]
     };
 
     // Gather load-path directories

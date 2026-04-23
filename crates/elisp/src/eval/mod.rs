@@ -38,7 +38,6 @@ type SpecialVars = Arc<RwLock<HashSet<SymbolId>>>;
 type AutoloadTable = Arc<RwLock<HashMap<String, String>>>;
 
 /// Shared interpreter state accessible during evaluation.
-#[derive(Clone)]
 pub struct InterpreterState {
     pub features: FeatureList,
     pub profiler: Arc<RwLock<crate::jit::Profiler>>,
@@ -61,6 +60,30 @@ pub struct InterpreterState {
     pub eval_ops: Arc<std::sync::atomic::AtomicU64>,
     /// Maximum number of eval operations before aborting (0 = unlimited).
     pub eval_ops_limit: Arc<std::sync::atomic::AtomicU64>,
+    /// Wall-clock deadline. When set, `eval()` checks `Instant::now()`
+    /// every 1024 ops and errors if past the deadline. Replaces the
+    /// watchdog thread approach — no threads needed.
+    pub deadline: std::cell::Cell<Option<std::time::Instant>>,
+}
+
+impl Clone for InterpreterState {
+    fn clone(&self) -> Self {
+        InterpreterState {
+            features: self.features.clone(),
+            profiler: self.profiler.clone(),
+            #[cfg(feature = "jit")]
+            jit: self.jit.clone(),
+            special_vars: self.special_vars.clone(),
+            specpdl: self.specpdl.clone(),
+            global_env: self.global_env.clone(),
+            heap: self.heap.clone(),
+            cons_count: self.cons_count.clone(),
+            autoloads: self.autoloads.clone(),
+            eval_ops: self.eval_ops.clone(),
+            eval_ops_limit: self.eval_ops_limit.clone(),
+            deadline: std::cell::Cell::new(self.deadline.get()),
+        }
+    }
 }
 
 impl InterpreterState {
@@ -81,6 +104,16 @@ impl InterpreterState {
             return Err(ElispError::EvalError(
                 "eval operation limit exceeded".to_string(),
             ));
+        }
+        // Wall-clock deadline check every 1024 charges (~16K bytecodes).
+        if new_ops & 0x3FF == 0 {
+            if let Some(dl) = self.deadline.get() {
+                if std::time::Instant::now() >= dl {
+                    return Err(ElispError::EvalError(
+                        "hard eval limit".into(),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -313,6 +346,7 @@ impl Interpreter {
                 autoloads: Arc::new(RwLock::new(HashMap::new())),
                 eval_ops: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 eval_ops_limit: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                deadline: std::cell::Cell::new(None),
             },
         }
     }
@@ -391,6 +425,16 @@ impl Interpreter {
     /// `cl-macs.el`.
     pub fn gc(&self) {
         self.state.with_heap(|heap| heap.collect());
+    }
+
+    /// Set a wall-clock deadline. `eval()` will check and error when past it.
+    pub fn set_deadline(&self, deadline: std::time::Instant) {
+        self.state.deadline.set(Some(deadline));
+    }
+
+    /// Clear the wall-clock deadline.
+    pub fn clear_deadline(&self) {
+        self.state.deadline.set(None);
     }
 
     /// Evaluate all forms in a source string. Returns the result of the last form,
@@ -1164,6 +1208,17 @@ fn eval(
                 return Err(ElispError::EvalError(
                     "eval operation limit exceeded".into(),
                 ));
+            }
+            // Wall-clock deadline check every 1024 ops (~20µs overhead).
+            // No watchdog thread needed.
+            if ops & 0x3FF == 0 {
+                if let Some(dl) = state.deadline.get() {
+                    if std::time::Instant::now() >= dl {
+                        return Err(ElispError::EvalError(
+                            "hard eval limit".into(),
+                        ));
+                    }
+                }
             }
         }
         inc_eval_depth()?;

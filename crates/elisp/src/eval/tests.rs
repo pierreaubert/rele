@@ -6371,29 +6371,18 @@ pub fn probe_emacs_file(interp: &Interpreter, file_path: &str) -> Option<(usize,
 
     let total = forms.len();
     let mut ok = 0;
-    for form in forms {
-        // Per-form budget + wall-clock watchdog. The watchdog
-        // guarantees termination even when a code path doesn't
-        // check eval-ops (e.g. deep bytecode condition-case loops).
+    for (i, form) in forms.into_iter().enumerate() {
+        // Per-form budget + wall-clock deadline (no threads needed).
         interp.reset_eval_ops();
         interp.set_eval_ops_limit(5_000_000);
-        let limit_arc = std::sync::Arc::clone(&interp.state.eval_ops_limit);
-        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-        let watchdog = std::thread::spawn(move || {
-            if done_rx
-                .recv_timeout(std::time::Duration::from_secs(5))
-                .is_err()
-            {
-                limit_arc.store(1, std::sync::atomic::Ordering::SeqCst);
-            }
-        });
+        interp.set_deadline(std::time::Instant::now() + std::time::Duration::from_secs(5));
+        let t = std::time::Instant::now();
         if interp.eval(form).is_ok() {
             ok += 1;
         }
-        let _ = done_tx.send(());
-        let _ = watchdog.join();
     }
     interp.set_eval_ops_limit(0);
+    interp.clear_deadline();
     Some((ok, total))
 }
 
@@ -6576,33 +6565,13 @@ fn run_rele_ert_tests_detailed_inner(
         interp.reset_eval_ops();
         interp.set_eval_ops_limit(5_000_000);
 
-        // Arm the watchdog. `timed_out` is the source of truth for
-        // reclassification; the mpsc channel only serves to wake the
-        // watchdog early when the test finishes before the deadline.
-        let (watchdog_handle, timed_out, done_tx) = if per_test_ms > 0 {
-            let timed_out = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let timed_out_w = std::sync::Arc::clone(&timed_out);
-            let limit = std::sync::Arc::clone(&interp.state.eval_ops_limit);
-            let (tx, rx) = std::sync::mpsc::channel::<()>();
-            let timeout = std::time::Duration::from_millis(per_test_ms);
-            let h = std::thread::spawn(move || {
-                if rx.recv_timeout(timeout).is_err() {
-                    // Deadline elapsed without a "done" message.
-                    timed_out_w.store(true, Ordering::Relaxed);
-                    limit.store(1, Ordering::Relaxed);
-                }
-            });
-            (Some(h), Some(timed_out), Some(tx))
-        } else {
-            (None, None, None)
-        };
+        // Wall-clock deadline (no watchdog thread needed).
+        if per_test_ms > 0 {
+            interp.set_deadline(
+                std::time::Instant::now() + std::time::Duration::from_millis(per_test_ms),
+            );
+        }
 
-        // R23: publish the currently-running ert-test object so
-        // `(ert-running-test)` returns a non-nil value while BODY
-        // runs. erc-scenarios-common--make-bindings chains
-        // `(ert-test-tags (ert-running-test))` — without this, the
-        // accessor chain would either void-function or (if ert.el
-        // loaded enough) signal `wrong-type-argument: (ert-test nil)`.
         crate::primitives::set_current_ert_test(test_struct.clone());
 
         let start = std::time::Instant::now();
@@ -6610,22 +6579,10 @@ fn run_rele_ert_tests_detailed_inner(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| interp.eval(call.clone())));
         let elapsed_ms = start.elapsed().as_millis();
 
-        // Clear the current-test slot — later tests shouldn't be
-        // able to pick up a stale struct.
         crate::primitives::set_current_ert_test(LispObject::nil());
+        interp.clear_deadline();
 
-        // Disarm the watchdog. Sending is best-effort: if the
-        // watchdog already timed out and exited, the send just fails
-        // and we'll see the `timed_out` flag below.
-        if let Some(tx) = done_tx {
-            let _ = tx.send(());
-        }
-        if let Some(h) = watchdog_handle {
-            let _ = h.join();
-        }
-        let was_timed_out = timed_out
-            .as_ref()
-            .is_some_and(|t| t.load(Ordering::Relaxed));
+        let was_timed_out = per_test_ms > 0 && elapsed_ms >= (per_test_ms as u128);
 
         let (result, detail) = match outcome {
             Ok(Ok(_)) => {
@@ -7088,7 +7045,7 @@ fn run_worker_pool(
                 );
                 let _ = writeln!(
                     jsonl,
-                    r#"{{"file":"{}","test":"<file>","result":"timeout","ms":30000,"detail":""}}"#,
+                    r#"{{"file":"{}","test":"<file>","result":"timeout","ms":120000,"detail":""}}"#,
                     rel,
                 );
                 files_timed_out += 1;
@@ -7247,7 +7204,7 @@ fn worker_manager(
         let mut summary: Option<FileSummary> = None;
         let mut done = false;
         let mut crashed = false;
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
