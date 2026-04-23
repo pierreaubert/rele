@@ -34,6 +34,10 @@ pub enum ElispError {
     Throw(Box<ThrowData>),
     /// Emacs-style error signal via (signal ERROR-SYMBOL DATA)
     Signal(Box<SignalData>),
+    /// Internal: tail-call trampoline. Carries the next expression to
+    /// evaluate. Only produced by `tail_call()`, only caught by `eval()`.
+    /// Never escapes to user-visible code.
+    TailEval(crate::value::Value),
 }
 
 pub type ElispResult<T> = Result<T, ElispError>;
@@ -42,6 +46,7 @@ impl ElispError {
     /// Convert a Rust-side error into an Emacs signal with proper error symbol.
     pub fn to_signal(&self) -> ElispError {
         match self {
+            ElispError::TailEval(_) => unreachable!("TailEval should never reach to_signal"),
             ElispError::Signal(..) | ElispError::Throw(..) => self.clone(),
             ElispError::VoidFunction(name) => ElispError::Signal(Box::new(SignalData {
                 symbol: LispObject::symbol("void-function"),
@@ -139,6 +144,7 @@ impl std::fmt::Display for ElispError {
                     signal_data.data.prin1_to_string()
                 )
             }
+            ElispError::TailEval(_) => write!(f, "<tail-call>"),
         }
     }
 }

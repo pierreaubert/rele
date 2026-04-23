@@ -141,6 +141,17 @@ fn main() {
         }
     };
 
+    // Run everything on a thread with a large stack to avoid
+    // stack overflow from deep macro expansion in .el files.
+    let handle = std::thread::Builder::new()
+        .stack_size(128 * 1024 * 1024)
+        .spawn(move || worker_main(cfg))
+        .expect("spawn worker thread");
+    handle.join().unwrap_or_else(|_| std::process::exit(1));
+}
+
+fn worker_main(cfg: Config) {
+
     // Make sure the stdlib `.el` files exist under /tmp/elisp-stdlib/
     // (ensure_stdlib_files gunzips them from the Emacs installation on
     // first call — cheap if they already exist).
@@ -151,15 +162,10 @@ fn main() {
 
     let interp = make_stdlib_interp();
     load_full_bootstrap(&interp);
-    // cl-macs.el loading still OOMs even with periodic GC and per-
-    // subprocess isolation — macro expansion in our interpreter
-    // allocates ~20 GB RSS before finishing. Tests that need
-    // `cl-loop` / `cl-flet` / `cl-destructuring-bind` rely on the
-    // tiny Rust-side shims in `load_full_bootstrap` (`cl-incf`,
-    // `cl-decf`, `gv-ref`) plus whatever native handlers the eval
-    // dispatch provides. Implementing a full native cl-macs subset
-    // is tracked as plan-B future work.
-    let _ = load_cl_lib; // keep the symbol live / referenced
+    // Load cl-lib chain: cl-macs, cl-extra, cl-seq, cl-print.
+    // With periodic GC in eval_load (Step 3 fix) and .el preference
+    // over .elc, this no longer OOMs or deadlocks.
+    load_cl_lib(&interp);
 
     // Signal readiness to the parent.
     eprintln!("__READY__");

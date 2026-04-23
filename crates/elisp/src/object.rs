@@ -140,6 +140,19 @@ impl PartialEq for HashKey {
 
 impl Eq for HashKey {}
 
+impl HashKey {
+    /// Convert back to a LispObject for iteration (e.g. `maphash`).
+    pub fn to_lisp_object(&self) -> LispObject {
+        match self {
+            HashKey::Symbol(id) => LispObject::Symbol(*id),
+            HashKey::Integer(n) => LispObject::Integer(*n),
+            HashKey::String(s) => LispObject::String(s.clone()),
+            HashKey::Printed(s) => LispObject::String(s.clone()),
+            HashKey::Identity(_) => LispObject::Nil,
+        }
+    }
+}
+
 impl LispHashTable {
     pub fn new(test: HashTableTest) -> Self {
         LispHashTable {

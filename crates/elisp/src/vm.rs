@@ -190,18 +190,17 @@ impl<'a> Vm<'a> {
         while self.pc < self.code.len() {
             let op = self.fetch_u8();
             self.dispatch(op)?;
-            // Check the eval-ops budget every 64 opcodes. With
-            // a 2M limit this allows ~128M opcodes before firing
-            // (~1s on modern hardware); with bootstrap's 5M limit,
-            // ~320M opcodes (~3s). Tight enough to catch runaway
-            // bytecode without measurably slowing normal execution.
+            // Check the eval-ops budget every 16 opcodes. With
+            // a 10M limit this allows ~160M opcodes before firing
+            // (~0.2s on modern hardware). Frequent enough to catch
+            // runaway bytecode loops before they deadlock or OOM.
             ops_since_check += 1;
-            if ops_since_check >= 64 {
+            if ops_since_check >= 16 {
                 ops_since_check = 0;
                 self.state.charge(1)?;
             }
         }
-        // Charge one op for the remaining tail that didn't reach 4096.
+        // Charge one op for the remaining tail that didn't reach 16.
         if ops_since_check > 0 {
             self.state.charge(1)?;
         }

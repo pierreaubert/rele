@@ -511,10 +511,14 @@ pub(super) fn eval_load(
     // 4th arg (nosuffix): when non-nil, don't add .el / .elc suffixes
     let nosuffix = args_obj.nth(3).map(|v| !v.is_nil()).unwrap_or(false);
 
+    // Prefer .el over .elc: the bytecode VM can deadlock on some .elc
+    // files (help-mode, ert) due to re-entrant lock issues. The tree-
+    // walking interpreter handles .el files reliably with proper
+    // eval-ops timeout. TCO keeps stack depth bounded for .el files.
     let suffixes: &[&str] = if nosuffix {
         &["", ".gz"]
     } else {
-        &[".elc", ".el", ".el.gz", ""]
+        &[".el", ".el.gz", ".elc", ""]
     };
 
     // Gather load-path directories

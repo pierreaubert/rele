@@ -68,6 +68,7 @@ pub(super) fn eval_condition_case(
 
     match eval(obj_to_value(bodyform), env, editor, macros, state) {
         Ok(value) => Ok(value),
+        Err(ElispError::TailEval(v)) => Err(ElispError::TailEval(v)),
         Err(ref err @ ElispError::Throw(..)) => Err(err.clone()),
         Err(ref err @ ElispError::StackOverflow) => Err(err.clone()),
         Err(ref err) if err.is_eval_ops_exceeded() => Err(err.clone()),
@@ -164,8 +165,10 @@ pub(super) fn eval_unwind_protect(
     let bodyform = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let cleanup_forms = args_obj.rest().unwrap_or(LispObject::nil());
 
+    // Must fully resolve any tail-call bouncing before running cleanup.
     let body_result = eval(obj_to_value(bodyform), env, editor, macros, state);
 
+    // Cleanup forms always run, even on error. Ignore their result.
     let _ = eval_progn(obj_to_value(cleanup_forms), env, editor, macros, state);
 
     body_result

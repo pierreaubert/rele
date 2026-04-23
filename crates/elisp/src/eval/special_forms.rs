@@ -27,9 +27,11 @@ pub(super) fn eval_if(
             .rest()
             .and_then(|r| r.rest())
             .unwrap_or(LispObject::nil());
-        eval_progn(obj_to_value(else_forms), env, editor, macros, state)
+        // Tail position: else branch
+        eval_progn_tco(obj_to_value(else_forms), env, editor, macros, state)
     } else {
-        eval(obj_to_value(then_branch), env, editor, macros, state)
+        // Tail position: then branch
+        super::tail_call(obj_to_value(then_branch))
     }
 }
 pub(super) fn eval_setq(
@@ -165,7 +167,7 @@ pub(super) fn expand_macro(
         temp_env.write().define(&name, value);
     }
 
-    let result = eval_progn(obj_to_value(body.clone()), &temp_env, editor, macros, state)?;
+    let result = eval_progn_no_tco(obj_to_value(body.clone()), &temp_env, editor, macros, state)?;
     Ok(value_to_obj(result))
 }
 
@@ -311,7 +313,7 @@ pub(super) fn eval_let(
         bindings_list = rest;
     }
 
-    let result = eval_progn(obj_to_value(body), &new_env, editor, macros, state);
+    let result = eval_progn_no_tco(obj_to_value(body), &new_env, editor, macros, state);
 
     unwind_specpdl(state, specpdl_depth);
 
@@ -323,6 +325,41 @@ pub(super) fn eval_progn(
     editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
     macros: &MacroTable,
     state: &InterpreterState,
+) -> ElispResult<Value> {
+    eval_progn_impl(body, env, editor, macros, state, false)
+}
+
+/// Like `eval_progn` but tail-calls the last form. Only safe to call
+/// when no scope cleanup (specpdl, env, temp buffer) is needed after.
+pub(super) fn eval_progn_tco(
+    body: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    eval_progn_impl(body, env, editor, macros, state, true)
+}
+
+/// Like `eval_progn` but never tail-calls. Used when the caller needs
+/// to run cleanup after the body (let, unwind-protect, catch, etc.).
+pub(super) fn eval_progn_no_tco(
+    body: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    eval_progn_impl(body, env, editor, macros, state, false)
+}
+
+fn eval_progn_impl(
+    body: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+    allow_tco: bool,
 ) -> ElispResult<Value> {
     let body_obj = value_to_obj(body);
     let mut result = Value::nil();
@@ -343,6 +380,11 @@ pub(super) fn eval_progn(
                         "eval operation limit exceeded".into(),
                     ));
                 }
+            }
+            if allow_tco && rest.is_nil() {
+                // Last form in tail position: bounce back to eval's
+                // loop instead of recursing.
+                return super::tail_call(obj_to_value(expr));
             }
             result = eval(obj_to_value(expr), env, editor, macros, state)?;
             current = Some(rest);
@@ -372,7 +414,8 @@ pub(super) fn eval_cond(
             let cond_val = eval(obj_to_value(cond_expr), env, editor, macros, state)?;
             if !cond_val.is_nil() {
                 if let Some(exprs) = then_exprs {
-                    return eval_progn(obj_to_value(exprs), env, editor, macros, state);
+                    // Tail position: matching clause body
+                    return eval_progn_tco(obj_to_value(exprs), env, editor, macros, state);
                 }
                 return Ok(cond_val);
             }
@@ -391,11 +434,8 @@ pub(super) fn eval_loop(
     state: &InterpreterState,
 ) -> ElispResult<Value> {
     loop {
-        // Charge an op per iteration so an unbounded `(loop ...)` can be
-        // killed by the eval-ops budget. Without this, a malformed body
-        // that signals nothing would hang forever.
         state.charge(1)?;
-        eval_progn(body, env, editor, macros, state)?;
+        eval_progn_no_tco(body, env, editor, macros, state)?;
     }
 }
 pub(super) fn eval_while(
@@ -415,7 +455,7 @@ pub(super) fn eval_while(
         if cond_val.is_nil() {
             return Ok(Value::nil());
         }
-        eval_progn(body_val, env, editor, macros, state)?;
+        eval_progn_no_tco(body_val, env, editor, macros, state)?;
     }
 }
 pub(super) fn eval_let_star(
@@ -467,7 +507,7 @@ pub(super) fn eval_let_star(
         bindings_list = rest;
     }
 
-    let result = eval_progn(obj_to_value(body), &new_env, editor, macros, state);
+    let result = eval_progn_no_tco(obj_to_value(body), &new_env, editor, macros, state);
 
     unwind_specpdl(state, specpdl_depth);
 
@@ -531,7 +571,7 @@ pub(super) fn eval_dlet(
         }
     }
 
-    let result = eval_progn(obj_to_value(body), env, editor, macros, state);
+    let result = eval_progn_no_tco(obj_to_value(body), env, editor, macros, state);
 
     // Restore in reverse order so shadowed re-bindings of the same symbol
     // within `pairs` are unwound correctly.
@@ -565,7 +605,8 @@ pub(super) fn eval_when(
     if cond_val.is_nil() {
         Ok(Value::nil())
     } else {
-        eval_progn(obj_to_value(body), env, editor, macros, state)
+        // Tail position
+        eval_progn_tco(obj_to_value(body), env, editor, macros, state)
     }
 }
 pub(super) fn eval_unless(
@@ -580,7 +621,8 @@ pub(super) fn eval_unless(
     let body = args_obj.rest().ok_or(ElispError::WrongNumberOfArguments)?;
     let cond_val = eval(obj_to_value(cond), env, editor, macros, state)?;
     if cond_val.is_nil() {
-        eval_progn(obj_to_value(body), env, editor, macros, state)
+        // Tail position
+        eval_progn_tco(obj_to_value(body), env, editor, macros, state)
     } else {
         Ok(Value::nil())
     }

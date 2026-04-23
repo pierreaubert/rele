@@ -357,11 +357,17 @@ pub fn prim_string_prefix_p(args: &LispObject) -> ElispResult<LispObject> {
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
 
-    if start < 0 || (start as usize) > s.len() {
+    let char_count = s.chars().count() as i64;
+    if start < 0 || start > char_count {
         return Err(ElispError::WrongTypeArgument("out of range".to_string()));
     }
 
-    let s_start = &s[start as usize..];
+    let byte_start: usize = s
+        .char_indices()
+        .nth(start as usize)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len());
+    let s_start = &s[byte_start..];
     Ok(LispObject::from(s_start.starts_with(&prefix)))
 }
 
@@ -460,12 +466,24 @@ pub fn prim_string_search(args: &LispObject) -> ElispResult<LispObject> {
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
 
-    if start < 0 || (start as usize) >= haystack.len() {
+    let char_count = haystack.chars().count() as i64;
+    if start < 0 || start >= char_count {
         return Ok(LispObject::nil());
     }
 
-    match haystack[start as usize..].find(&needle) {
-        Some(pos) => Ok(LispObject::integer((start + pos as i64))),
+    // Convert char-index start to byte offset for slicing.
+    let byte_start: usize = haystack
+        .char_indices()
+        .nth(start as usize)
+        .map(|(i, _)| i)
+        .unwrap_or(haystack.len());
+
+    match haystack[byte_start..].find(&needle) {
+        Some(byte_pos) => {
+            // Convert byte position back to char index.
+            let char_pos = haystack[byte_start..byte_start + byte_pos].chars().count() as i64;
+            Ok(LispObject::integer(start + char_pos))
+        }
         None => Ok(LispObject::nil()),
     }
 }

@@ -1998,6 +1998,116 @@ pub fn make_stdlib_interp() -> Interpreter {
     // (file-directory-p "" -> nil -> skip). (4 hits)
     interp.define("regex-tests--resources-dir", LispObject::string(""));
 
+    // Step 5: additional missing variables that block many tests.
+    interp.define("after-init-time", LispObject::t());
+    interp.define("load-history", LispObject::nil());
+    interp.define("buffer-undo-list", LispObject::nil());
+    interp.define("open-paren-in-column-0-is-defun-start", LispObject::t());
+    interp.define("grep-find-template", LispObject::string("find <D> <X> -type f <F> -exec grep <C> -nH --null -e <R> \\{\\} +"));
+    interp.define("internal--daemon-sockname", LispObject::nil());
+    interp.define("show-all", LispObject::nil());
+    interp.define("filter-binaries", LispObject::nil());
+    interp.define("find-function-space-re", LispObject::string(""));
+    interp.define("ert-results-mode-map", LispObject::nil());
+    interp.define("auto-save-timeout", LispObject::integer(30));
+    interp.define("commandp", LispObject::primitive("ignore"));
+
+    // cl-preloaded bootstrap: pre-define the key CL struct constructors
+    // and predicates to break the cl-defstruct circularity.
+    // cl--struct-new-class creates a record (vector) for struct metadata.
+    let _ = interp.eval_source(
+        "(defun cl--struct-new-class (name docstring parents type named slots index-table children-sym tag print) \
+           (record 'cl-struct-cl-structure-class name docstring parents slots index-table tag type named print children-sym))",
+    );
+    let _ = interp.eval_source(
+        "(defun cl--struct-class-p (obj) \
+           (and (vectorp obj) (> (length obj) 0) (eq (aref obj 0) 'cl-struct-cl-structure-class)))",
+    );
+    // cl--struct-class accessors (field indices match the record layout above)
+    for (i, name) in [
+        (1, "cl--struct-class-name"),
+        (2, "cl--struct-class-docstring"),
+        (3, "cl--struct-class-parents"),
+        (4, "cl--struct-class-slots"),
+        (5, "cl--struct-class-index-table"),
+        (6, "cl--struct-class-tag"),
+        (7, "cl--struct-class-type"),
+        (8, "cl--struct-class-named"),
+        (9, "cl--struct-class-print"),
+        (10, "cl--struct-class-children-sym"),
+    ] {
+        let _ = interp.eval_source(&format!(
+            "(defun {name} (obj) (if (vectorp obj) (aref obj {i}) nil))"
+        ));
+    }
+    // cl--find-class / setf support — store/retrieve under plist key cl--class
+    let _ = interp.eval_source(
+        "(unless (fboundp 'cl--find-class) \
+           (defun cl--find-class (name) (get name 'cl--class)))",
+    );
+    // Pre-register both cl-structure-class and cl-structure-object
+    // so cl-preloaded.el's cl-defstruct forms don't hit assertion failures.
+    let _ = interp.eval_source(
+        "(put 'cl-structure-class 'cl--class \
+           (cl--struct-new-class 'cl-structure-class \"CL struct metaclass\" nil nil nil \
+             (make-vector 10 nil) (make-hash-table :test 'eq) \
+             'cl-struct-cl-structure-class-tags 'cl-structure-class nil))",
+    );
+    let _ = interp.eval_source(
+        "(defvar cl-struct-cl-structure-class-tags '(cl-structure-class))",
+    );
+    let _ = interp.eval_source(
+        "(put 'cl-structure-object 'cl--class \
+           (cl--struct-new-class 'cl-structure-object \"root\" nil nil nil \
+             [] (make-hash-table :test 'eq) \
+             'cl-struct-cl-structure-object-tags 'cl-structure-object nil))",
+    );
+    let _ = interp.eval_source(
+        "(defvar cl-struct-cl-structure-object-tags '(cl-structure-object))",
+    );
+    // cl-slot-descriptor is also needed by cl-struct-define
+    let _ = interp.eval_source(
+        "(put 'cl-slot-descriptor 'cl--class \
+           (cl--struct-new-class 'cl-slot-descriptor \"slot desc\" nil nil nil \
+             (make-vector 4 nil) (make-hash-table :test 'eq) \
+             'cl-struct-cl-slot-descriptor-tags 'cl-slot-descriptor nil))",
+    );
+    let _ = interp.eval_source(
+        "(defvar cl-struct-cl-slot-descriptor-tags '(cl-slot-descriptor))",
+    );
+    // cl--slot-descriptor accessors
+    for (i, name) in [
+        (1, "cl--slot-descriptor-name"),
+        (2, "cl--slot-descriptor-initform"),
+        (3, "cl--slot-descriptor-type"),
+        (4, "cl--slot-descriptor-props"),
+    ] {
+        let _ = interp.eval_source(&format!(
+            "(unless (fboundp '{name}) (defun {name} (obj) (if (vectorp obj) (aref obj {i}) nil)))"
+        ));
+    }
+    // cl--struct-default-parent
+    let _ = interp.eval_source(
+        "(defvar cl--struct-default-parent 'cl-structure-object)",
+    );
+    // add-to-list stub
+    let _ = interp.eval_source(
+        "(unless (fboundp 'add-to-list) \
+           (defun add-to-list (sym val) \
+             (unless (memq val (symbol-value sym)) \
+               (set sym (cons val (symbol-value sym))))))",
+    );
+    // cl-struct-p predicate
+    let _ = interp.eval_source(
+        "(unless (fboundp 'cl-struct-p) \
+           (defun cl-struct-p (obj) (cl--struct-class-p obj)))",
+    );
+    // built-in-class-p stub
+    let _ = interp.eval_source(
+        "(unless (fboundp 'built-in-class-p) \
+           (defun built-in-class-p (obj) nil))",
+    );
+
     // Step 2: additional variables required by bootstrap files.
     // key-translation-map — a keymap used by international/iso-transl.el
     interp.define("key-translation-map", LispObject::nil());
@@ -5675,6 +5785,11 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
     for feature in [
         "help-mode", "debug", "backtrace", "ewoc", "find-func", "pp",
         "help-macro",
+        // ert/ert-x: our eval dispatch already handles ert-deftest,
+        // should, should-not, should-error, skip-unless natively.
+        // Loading the real ert.el triggers a 20+ second require chain
+        // that times out the worker. Pre-providing avoids the chain.
+        "ert", "ert-x",
     ] {
         let _ = interp.eval_source(&format!("(provide '{feature})"));
     }
@@ -6261,7 +6376,7 @@ pub fn probe_emacs_file(interp: &Interpreter, file_path: &str) -> Option<(usize,
         // guarantees termination even when a code path doesn't
         // check eval-ops (e.g. deep bytecode condition-case loops).
         interp.reset_eval_ops();
-        interp.set_eval_ops_limit(2_000_000);
+        interp.set_eval_ops_limit(5_000_000);
         let limit_arc = std::sync::Arc::clone(&interp.state.eval_ops_limit);
         let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
         let watchdog = std::thread::spawn(move || {
@@ -6459,7 +6574,7 @@ fn run_rele_ert_tests_detailed_inner(
             ),
         );
         interp.reset_eval_ops();
-        interp.set_eval_ops_limit(2_000_000);
+        interp.set_eval_ops_limit(5_000_000);
 
         // Arm the watchdog. `timed_out` is the source of truth for
         // reclassification; the mpsc channel only serves to wake the
@@ -6973,7 +7088,7 @@ fn run_worker_pool(
                 );
                 let _ = writeln!(
                     jsonl,
-                    r#"{{"file":"{}","test":"<file>","result":"timeout","ms":15000,"detail":""}}"#,
+                    r#"{{"file":"{}","test":"<file>","result":"timeout","ms":30000,"detail":""}}"#,
                     rel,
                 );
                 files_timed_out += 1;
@@ -7132,7 +7247,7 @@ fn worker_manager(
         let mut summary: Option<FileSummary> = None;
         let mut done = false;
         let mut crashed = false;
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {

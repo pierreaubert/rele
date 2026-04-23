@@ -967,6 +967,30 @@ fn eval_cl_defstruct(
         );
     }
 
+    // Register class metadata under plist key `cl--class` so
+    // `(cl--find-class 'NAME)` returns a struct-class object.
+    // This is what cl-preloaded.el's cl-struct-define does.
+    {
+        let class_obj_form = format!(
+            "(cl--struct-new-class '{name} nil nil nil nil \
+             (make-vector {nf} nil) (make-hash-table :test 'eq) \
+             'cl-struct-{name}-tags '{tag} nil)",
+            name = name,
+            nf = n_fields,
+            tag = tag_name,
+        );
+        if let Ok(forms) = crate::read_all(&class_obj_form) {
+            for form in forms {
+                if let Ok(class_val) = eval(obj_to_value(form), env, editor, macros, state) {
+                    let class_obj = value_to_obj(class_val);
+                    let id = crate::obarray::intern(&name);
+                    let key = crate::obarray::intern("cl--class");
+                    crate::obarray::put_plist(id, key, class_obj);
+                }
+            }
+        }
+    }
+
     // Constructor: make-NAME (default) and any `:constructor` overrides.
     // Positional args, pads missing with nil. We install the default
     // `make-NAME` even when an explicit `:constructor` is present —
@@ -1108,31 +1132,52 @@ fn check_type_with_eval(
     }
 }
 
+/// Tail-call trampoline: special error variant that carries the next
+/// expression to evaluate. `eval` catches this and loops instead of
+/// recursing. This keeps stack depth O(1) for chains of
+/// progn/if/let/cond/when/unless. Using `Err` is safe because `TailEval`
+/// is only produced by `tail_call()` and only caught by `eval()` — it
+/// never escapes to user-visible code.
 fn eval(
-    expr: Value,
+    mut expr: Value,
     env: &Arc<RwLock<Environment>>,
     editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
     macros: &MacroTable,
     state: &InterpreterState,
 ) -> ElispResult<Value> {
-    // Check operation limit (if set)
-    let limit = state
-        .eval_ops_limit
-        .load(std::sync::atomic::Ordering::Relaxed);
-    if limit > 0 {
-        let ops = state
-            .eval_ops
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if ops >= limit {
-            return Err(ElispError::EvalError(
-                "eval operation limit exceeded".into(),
-            ));
+    loop {
+        // Check operation limit (if set)
+        let limit = state
+            .eval_ops_limit
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if limit > 0 {
+            let ops = state
+                .eval_ops
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if ops >= limit {
+                return Err(ElispError::EvalError(
+                    "eval operation limit exceeded".into(),
+                ));
+            }
+        }
+        inc_eval_depth()?;
+        let result = eval_inner(expr, env, editor, macros, state);
+        dec_eval_depth();
+        match result {
+            Err(ElispError::TailEval(next)) => {
+                // Tail call: loop with the next expression.
+                expr = next;
+            }
+            other => return other,
         }
     }
-    inc_eval_depth()?;
-    let result = eval_inner(expr, env, editor, macros, state);
-    dec_eval_depth();
-    result
+}
+
+/// Signal a tail call: return the expression wrapped in `TailEval`.
+/// The caller (`eval`) will loop instead of recursing.
+#[inline]
+fn tail_call(expr: Value) -> ElispResult<Value> {
+    Err(ElispError::TailEval(expr))
 }
 
 fn eval_inner(
@@ -1222,7 +1267,7 @@ fn eval_inner(
                 "setq" => eval_setq(obj_to_value(cdr), env, editor, macros, state),
                 "defun" => eval_defun(obj_to_value(cdr), env, editor, macros, state),
                 "let" => eval_let(obj_to_value(cdr), env, editor, macros, state),
-                "progn" => eval_progn(obj_to_value(cdr), env, editor, macros, state),
+                "progn" => special_forms::eval_progn_tco(obj_to_value(cdr), env, editor, macros, state),
                 "lambda" => {
                     // Lexical closure capture: at source-level evaluation,
                     // a `(lambda ...)` form snapshots the surrounding
@@ -1763,6 +1808,136 @@ fn eval_inner(
                 "mapcar" => eval_mapcar(obj_to_value(cdr), env, editor, macros, state),
                 "mapc" => eval_mapc(obj_to_value(cdr), env, editor, macros, state),
                 "dolist" => eval_dolist(obj_to_value(cdr), env, editor, macros, state),
+                "maphash" => {
+                    // (maphash FUNCTION TABLE) — call FUNCTION with each key-value pair
+                    let func = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?);
+                    let table = value_to_obj(eval(
+                        obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?);
+                    if let LispObject::HashTable(ht) = &table {
+                        let pairs: Vec<_> = ht.lock().data.iter()
+                            .map(|(k, v)| (k.to_lisp_object(), v.clone()))
+                            .collect();
+                        for (key, val) in pairs {
+                            let call_args = LispObject::cons(key, LispObject::cons(val, LispObject::nil()));
+                            functions::call_function(
+                                obj_to_value(func.clone()),
+                                obj_to_value(call_args),
+                                env, editor, macros, state,
+                            )?;
+                        }
+                    }
+                    Ok(Value::nil())
+                }
+                "mapcan" => {
+                    // (mapcan FUNCTION SEQUENCE) — like mapcar but nconc the results
+                    let func_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let list_expr = cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+                    let func = value_to_obj(eval(obj_to_value(func_expr), env, editor, macros, state)?);
+                    let list = value_to_obj(eval(obj_to_value(list_expr), env, editor, macros, state)?);
+                    let mut results = Vec::new();
+                    let mut current = list;
+                    while let Some((car, rest)) = current.destructure_cons() {
+                        let call_args = LispObject::cons(car, LispObject::nil());
+                        let result = value_to_obj(functions::call_function(
+                            obj_to_value(func.clone()),
+                            obj_to_value(call_args),
+                            env, editor, macros, state,
+                        )?);
+                        // Flatten: append elements of the result list
+                        let mut r = result;
+                        while let Some((item, rest2)) = r.destructure_cons() {
+                            results.push(item);
+                            r = rest2;
+                        }
+                        current = rest;
+                    }
+                    let mut out = LispObject::nil();
+                    for r in results.into_iter().rev() {
+                        out = LispObject::cons(r, out);
+                    }
+                    Ok(obj_to_value(out))
+                }
+                "mapatoms" => {
+                    // (mapatoms FUNCTION &optional OBARRAY) — call FUNCTION on each interned symbol
+                    // We stub this as a no-op since our obarray isn't enumerable.
+                    let _func = eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?;
+                    Ok(Value::nil())
+                }
+                "call-interactively" => {
+                    // (call-interactively FUNCTION &optional RECORD-FLAG KEYS)
+                    // In non-interactive mode, just call the function with no args.
+                    let func = eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?;
+                    functions::call_function(func, obj_to_value(LispObject::nil()), env, editor, macros, state)
+                }
+                "handler-bind" | "handler-bind-1" => {
+                    // (handler-bind ((CONDITION HANDLER) ...) BODY...)
+                    // Like condition-case but handlers run without unwinding.
+                    // We simplify: just run BODY, ignore handlers.
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    eval_progn(obj_to_value(body), env, editor, macros, state)
+                }
+                "text-quoting-style" => {
+                    // Returns the current text quoting style symbol
+                    Ok(obj_to_value(LispObject::symbol("grave")))
+                }
+                "let-alist" => {
+                    // (let-alist ALIST BODY...) — bind each key as a variable
+                    let alist_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    let _alist = eval(obj_to_value(alist_expr), env, editor, macros, state)?;
+                    // Simplified: just eval body without bindings
+                    eval_progn(obj_to_value(body), env, editor, macros, state)
+                }
+                "inline-quote" | "inline-letevals" => {
+                    // Inline optimization macros — treat as identity/progn
+                    let body = cdr.rest().unwrap_or(cdr.clone());
+                    eval_progn(obj_to_value(body), env, editor, macros, state)
+                }
+                "get-buffer-process" => {
+                    // No processes in our runtime
+                    let _buf = eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?;
+                    Ok(Value::nil())
+                }
+                "barf-if-buffer-read-only" => {
+                    // Our buffers are never read-only
+                    Ok(Value::nil())
+                }
+                "bounds-of-thing-at-point" => {
+                    // (bounds-of-thing-at-point THING) — no thingatpt support
+                    let _thing = eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?;
+                    Ok(Value::nil())
+                }
+                "thing-at-point" => {
+                    let _thing = eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?;
+                    Ok(Value::nil())
+                }
+                "cursor-intangible-mode" | "cursor-sensor-mode"
+                | "font-lock-mode" | "transient-mark-mode"
+                | "indent-tabs-mode" | "auto-fill-mode"
+                | "overwrite-mode" | "abbrev-mode" => {
+                    // Minor mode toggles — no-op in our runtime
+                    Ok(Value::nil())
+                }
                 "declare" | "interactive" | "eval-after-load" | "make-help-screen"
                 | "declare-function"
                 // gv.el generalized-variable machinery — we don't need
@@ -4631,7 +4806,8 @@ use functions::{apply_lambda, eval_apply, eval_funcall, eval_funcall_form};
 use special_forms::{
     eval_and, eval_cond, eval_defalias, eval_defconst, eval_defmacro, eval_defun, eval_defvar,
     eval_dlet, eval_if, eval_let, eval_let_star, eval_loop, eval_macroexpand, eval_or, eval_prog1,
-    eval_prog2, eval_progn, eval_setq, eval_unless, eval_when, eval_while, expand_macro,
+    eval_prog2, eval_progn, eval_progn_no_tco, eval_setq, eval_unless, eval_when, eval_while,
+    expand_macro,
 };
 
 // Re-export pub(crate) functions that vm.rs needs
