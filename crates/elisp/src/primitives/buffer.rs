@@ -882,6 +882,9 @@ fn substring_chars(s: &str, a: usize, b: usize) -> String {
         .nth(hi.saturating_sub(1))
         .map(|(i, _)| i)
         .unwrap_or(s.len());
+    if start_byte > end_byte || end_byte > s.len() {
+        return String::new();
+    }
     s[start_byte..end_byte].to_string()
 }
 
@@ -1126,6 +1129,9 @@ pub fn prim_re_search_forward(args: &LispObject) -> ElispResult<LispObject> {
         let limit = bound.min(buf.point_max());
         let start_byte = buf.char_to_byte(point);
         let end_byte = buf.char_to_byte(limit);
+        if start_byte > end_byte {
+            return None;
+        }
         let haystack = &buf.text[start_byte..end_byte];
         let caps = re.captures(haystack);
         caps.map(|c| {
@@ -1199,6 +1205,9 @@ pub fn prim_re_search_backward(args: &LispObject) -> ElispResult<LispObject> {
         let hi = buf.point;
         let lo_b = buf.char_to_byte(lo);
         let hi_b = buf.char_to_byte(hi);
+        if lo_b > hi_b {
+            return None;
+        }
         let hay = &buf.text[lo_b..hi_b];
         // Find last match.
         re.captures_iter(hay).last().map(|c| {
