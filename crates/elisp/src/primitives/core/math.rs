@@ -420,35 +420,49 @@ pub fn prim_abs(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_max(args: &LispObject) -> ElispResult<LispObject> {
+    let mut all_int = true;
     let mut numbers: Vec<f64> = Vec::new();
     let mut current = args.clone();
     while let Some((arg, rest)) = current.destructure_cons() {
-        let n =
-            get_number(&arg).ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?;
-        numbers.push(n);
+        match &arg {
+            LispObject::Integer(n) => numbers.push(*n as f64),
+            LispObject::Float(f) => { numbers.push(*f); all_int = false; }
+            _ => return Err(ElispError::WrongTypeArgument("number".to_string())),
+        }
         current = rest;
     }
     if numbers.is_empty() {
         return Err(ElispError::WrongNumberOfArguments);
     }
     let result = numbers.into_iter().fold(f64::NEG_INFINITY, f64::max);
-    Ok(LispObject::float(result))
+    if all_int {
+        Ok(LispObject::integer(result as i64))
+    } else {
+        Ok(LispObject::float(result))
+    }
 }
 
 pub fn prim_min(args: &LispObject) -> ElispResult<LispObject> {
+    let mut all_int = true;
     let mut numbers: Vec<f64> = Vec::new();
     let mut current = args.clone();
     while let Some((arg, rest)) = current.destructure_cons() {
-        let n =
-            get_number(&arg).ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?;
-        numbers.push(n);
+        match &arg {
+            LispObject::Integer(n) => numbers.push(*n as f64),
+            LispObject::Float(f) => { numbers.push(*f); all_int = false; }
+            _ => return Err(ElispError::WrongTypeArgument("number".to_string())),
+        }
         current = rest;
     }
     if numbers.is_empty() {
         return Err(ElispError::WrongNumberOfArguments);
     }
     let result = numbers.into_iter().fold(f64::INFINITY, f64::min);
-    Ok(LispObject::float(result))
+    if all_int {
+        Ok(LispObject::integer(result as i64))
+    } else {
+        Ok(LispObject::float(result))
+    }
 }
 
 pub fn prim_floor(args: &LispObject) -> ElispResult<LispObject> {
