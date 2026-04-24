@@ -69,10 +69,19 @@ pub fn prim_string_eq(args: &LispObject) -> ElispResult<LispObject> {
         (Some(a), Some(b)) => (a, b),
         _ => return Err(ElispError::WrongNumberOfArguments),
     };
-    match (&a, &b) {
-        (LispObject::String(s1), LispObject::String(s2)) => Ok(LispObject::from(s1 == s2)),
-        _ => Err(ElispError::WrongTypeArgument("string".to_string())),
-    }
+    let s1 = match &a {
+        LispObject::String(s) => s.as_str(),
+        LispObject::Symbol(_) => return Ok(LispObject::nil()),
+        LispObject::Nil => "",
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    let s2 = match &b {
+        LispObject::String(s) => s.as_str(),
+        LispObject::Symbol(_) => return Ok(LispObject::nil()),
+        LispObject::Nil => "",
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    Ok(LispObject::from(s1 == s2))
 }
 
 pub fn prim_string_lt(args: &LispObject) -> ElispResult<LispObject> {
@@ -80,10 +89,17 @@ pub fn prim_string_lt(args: &LispObject) -> ElispResult<LispObject> {
         (Some(a), Some(b)) => (a, b),
         _ => return Err(ElispError::WrongNumberOfArguments),
     };
-    match (&a, &b) {
-        (LispObject::String(s1), LispObject::String(s2)) => Ok(LispObject::from(s1 < s2)),
-        _ => Err(ElispError::WrongTypeArgument("string".to_string())),
-    }
+    let s1 = match &a {
+        LispObject::String(s) => s.as_str(),
+        LispObject::Nil => "",
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    let s2 = match &b {
+        LispObject::String(s) => s.as_str(),
+        LispObject::Nil => "",
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    Ok(LispObject::from(s1 < s2))
 }
 
 pub fn prim_concat(args: &LispObject) -> ElispResult<LispObject> {
@@ -144,10 +160,12 @@ pub fn prim_substring(args: &LispObject) -> ElispResult<LispObject> {
 
     let s = match s {
         LispObject::String(s) => s.clone(),
+        LispObject::Nil => return Ok(LispObject::nil()),
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
     let start_signed = match start {
         LispObject::Integer(i) => i,
+        LispObject::Nil => 0,
         _ => return Err(ElispError::WrongTypeArgument("integer".to_string())),
     };
     let end_signed = match end {

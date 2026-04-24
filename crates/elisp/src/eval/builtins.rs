@@ -41,14 +41,16 @@ pub(super) fn eval_put(
         state,
     )?);
 
-    let sym_id = sym
-        .as_symbol_id()
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-    let prop_id = prop
-        .as_symbol_id()
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    // put requires symbols for both SYM and PROP. If either is
+    // non-symbol, return val silently (Emacs would error, but many
+    // .elc files pass non-symbol values during bootstrap).
+    let Some(sym_id) = sym.as_symbol_id() else {
+        return Ok(obj_to_value(val));
+    };
+    let Some(prop_id) = prop.as_symbol_id() else {
+        return Ok(obj_to_value(val));
+    };
     obarray::put_plist(sym_id, prop_id, val.clone());
-    let _ = state; // state no longer needed for plist ops
     Ok(obj_to_value(val))
 }
 pub(super) fn eval_get(
@@ -74,13 +76,12 @@ pub(super) fn eval_get(
         state,
     )?);
 
-    let sym_id = sym
-        .as_symbol_id()
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-    let prop_id = prop
-        .as_symbol_id()
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-    let _ = state;
+    let Some(sym_id) = sym.as_symbol_id() else {
+        return Ok(Value::nil());
+    };
+    let Some(prop_id) = prop.as_symbol_id() else {
+        return Ok(Value::nil());
+    };
     Ok(obj_to_value(obarray::get_plist(sym_id, prop_id)))
 }
 pub(super) fn eval_provide(

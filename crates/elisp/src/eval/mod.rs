@@ -1596,40 +1596,84 @@ fn eval_inner(
                 "defcustom" => eval_defvar(obj_to_value(cdr), env, editor, macros, state),
                 "defgroup" | "defface" => Ok(Value::nil()),
                 "define-minor-mode" => {
-                    // R11: define-minor-mode installs both a variable
-                    // (nil, as the mode's state) and a function (the
-                    // toggle command) in real Emacs. Our stub previously
-                    // only created the variable, leaving the function
-                    // cell empty. Because `get_function_id` falls back
-                    // to the variable binding — even a nil one — a later
-                    // `(the-mode)` call resolved the variable value nil
-                    // and tried to funcall it, signalling "void function:
-                    // nil". Install an `ignore`-backed function cell so
-                    // mode-entry calls from tests (e.g.
-                    // `(with-temp-buffer (emacs-lisp-mode) ...)`) return
-                    // nil instead of erroring. The variable binding is
-                    // kept for `(boundp 'the-mode)` semantics.
+                    // (define-minor-mode NAME DOC &rest BODY)
+                    // Install a toggle function that flips the mode variable.
                     let name = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     if let Some(n) = name.as_symbol() {
+                        // Build a toggle function
+                        let hook_name = format!("{n}-hook");
+                        let mode_fn = format!(
+                            "(lambda (&optional arg) \
+                               (setq {n} (if (and arg (not (eq arg 1))) nil t)) \
+                               (run-hooks '{hook_name}))"
+                        );
+                        if let Ok(func) = crate::read(&mode_fn) {
+                            let func_val = eval(obj_to_value(func), env, editor, macros, state)?;
+                            let id = crate::obarray::intern(&n);
+                            crate::obarray::set_function_cell(id, value_to_obj(func_val));
+                        }
                         env.write().define(&n, LispObject::nil());
-                        let id = crate::obarray::intern(&n);
-                        crate::obarray::set_function_cell(id, LispObject::primitive("ignore"));
+                        env.write().define(&hook_name, LispObject::nil());
                     }
                     Ok(obj_to_value(name))
                 }
                 "define-derived-mode" => {
-                    // R11: see define-minor-mode above. `define-derived-mode`
-                    // defines a major-mode function (e.g. `emacs-lisp-mode`,
-                    // `autoconf-mode`, `f90-mode`, `prog-mode`) that tests
-                    // routinely call. Without a function-cell stub, the
-                    // variable fallback returned nil and the call signalled
-                    // "void function: nil" — root cause of ~100+ ERT errors
-                    // across autoconf-tests, checkdoc-tests, f90-tests, etc.
+                    // (define-derived-mode NAME PARENT DOCSTRING &rest BODY)
+                    // Install a mode function that sets major-mode, mode-name,
+                    // calls kill-all-local-variables, and runs mode hooks.
                     let name = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let parent = cdr.nth(1).unwrap_or(LispObject::nil());
+                    let docstring = cdr.nth(2);
                     if let Some(n) = name.as_symbol() {
+                        // Extract mode-name from docstring or derive from symbol
+                        let mode_name_str = docstring
+                            .and_then(|d| d.as_string().map(|s| s.to_string()))
+                            .unwrap_or_else(|| {
+                                n.strip_suffix("-mode").unwrap_or(&n)
+                                    .replace('-', " ")
+                                    .split_whitespace()
+                                    .map(|w| {
+                                        let mut c = w.chars();
+                                        match c.next() {
+                                            None => String::new(),
+                                            Some(f) => f.to_uppercase().to_string() + c.as_str(),
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            });
+                        // Build the mode function as elisp
+                        let hook_name = format!("{n}-hook");
+                        let parent_call = if parent.is_nil() || parent.as_symbol().as_deref() == Some("fundamental-mode") {
+                            String::new()
+                        } else if let Some(ps) = parent.as_symbol() {
+                            format!("({ps})")
+                        } else {
+                            String::new()
+                        };
+                        let mode_fn = format!(
+                            "(lambda () \
+                               (kill-all-local-variables) \
+                               {parent_call} \
+                               (setq major-mode '{n}) \
+                               (setq mode-name \"{mode_name_str}\") \
+                               (run-mode-hooks '{hook_name}))"
+                        );
+                        if let Ok(func) = crate::read(&mode_fn) {
+                            let func_val = eval(obj_to_value(func), env, editor, macros, state)?;
+                            let id = crate::obarray::intern(&n);
+                            crate::obarray::set_function_cell(id, value_to_obj(func_val));
+                        }
+                        // Define the hook variable
+                        env.write().define(&hook_name, LispObject::nil());
+                        // Define the mode variable
                         env.write().define(&n, LispObject::nil());
-                        let id = crate::obarray::intern(&n);
-                        crate::obarray::set_function_cell(id, LispObject::primitive("ignore"));
+                        // Also set up the mode map variable
+                        let map_name = format!("{n}-map");
+                        let map_id = crate::obarray::intern(&map_name);
+                        if crate::obarray::get_value_cell(map_id).is_none() {
+                            crate::obarray::set_value_cell(map_id, LispObject::nil());
+                        }
                     }
                     Ok(obj_to_value(name))
                 }
