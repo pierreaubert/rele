@@ -426,7 +426,10 @@ pub fn prim_max(args: &LispObject) -> ElispResult<LispObject> {
     while let Some((arg, rest)) = current.destructure_cons() {
         match &arg {
             LispObject::Integer(n) => numbers.push(*n as f64),
-            LispObject::Float(f) => { numbers.push(*f); all_int = false; }
+            LispObject::Float(f) => {
+                numbers.push(*f);
+                all_int = false;
+            }
             _ => return Err(ElispError::WrongTypeArgument("number".to_string())),
         }
         current = rest;
@@ -449,7 +452,10 @@ pub fn prim_min(args: &LispObject) -> ElispResult<LispObject> {
     while let Some((arg, rest)) = current.destructure_cons() {
         match &arg {
             LispObject::Integer(n) => numbers.push(*n as f64),
-            LispObject::Float(f) => { numbers.push(*f); all_int = false; }
+            LispObject::Float(f) => {
+                numbers.push(*f);
+                all_int = false;
+            }
             _ => return Err(ElispError::WrongTypeArgument("number".to_string())),
         }
         current = rest;

@@ -1,5 +1,5 @@
-use crate::obarray::{self, SymbolId};
 use crate::eval::SyncRefCell;
+use crate::obarray::{self, SymbolId};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 

@@ -484,11 +484,13 @@ fn test_cl_typep_sequence_type() {
 #[test]
 fn test_cl_typep_vector_type() {
     // (cl-typep #(a b c) 'vector) should be true
-    let vec = LispObject::Vector(std::sync::Arc::new(rele_elisp::eval::SyncRefCell::new(vec![
-        LispObject::symbol("a"),
-        LispObject::symbol("b"),
-        LispObject::symbol("c"),
-    ])));
+    let vec = LispObject::Vector(std::sync::Arc::new(rele_elisp::eval::SyncRefCell::new(
+        vec![
+            LispObject::symbol("a"),
+            LispObject::symbol("b"),
+            LispObject::symbol("c"),
+        ],
+    )));
     let args = LispObject::cons(
         vec,
         LispObject::cons(LispObject::symbol("vector"), LispObject::nil()),

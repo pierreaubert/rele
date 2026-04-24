@@ -18,15 +18,15 @@
 //! - `[PAT...]`    — vector destructure
 //! - INTEGER / STRING — literal equality
 
+use super::SyncRefCell as RwLock;
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
-use super::SyncRefCell as RwLock;
 use std::sync::Arc;
 
-use super::{Environment, InterpreterState, MacroTable, eval, eval_progn};
 use super::functions::call_function;
+use super::{Environment, InterpreterState, MacroTable, eval, eval_progn};
 
 /// A successful pattern match produces a list of (name, value) bindings.
 type Bindings = Vec<(String, LispObject)>;
@@ -189,13 +189,8 @@ pub(super) fn pcase_match(
                     "let" => {
                         let inner_pat = cdr.first().unwrap_or(LispObject::nil());
                         let expr = cdr.nth(1).unwrap_or(LispObject::nil());
-                        let val = value_to_obj(eval(
-                            obj_to_value(expr),
-                            env,
-                            editor,
-                            macros,
-                            state,
-                        )?);
+                        let val =
+                            value_to_obj(eval(obj_to_value(expr), env, editor, macros, state)?);
                         return pcase_match(&inner_pat, &val, env, editor, macros, state);
                     }
 
@@ -310,7 +305,11 @@ fn match_pred(
         if car.as_symbol().as_deref() == Some("not") {
             let inner_fn = cdr.first().unwrap_or(LispObject::nil());
             let result = match_pred(&inner_fn, value, env, editor, macros, state)?;
-            return Ok(if result.is_some() { None } else { Some(Vec::new()) });
+            return Ok(if result.is_some() {
+                None
+            } else {
+                Some(Vec::new())
+            });
         }
     }
 
@@ -346,7 +345,10 @@ fn match_backquoted(
 
             // (\, SUB) — unquote: SUB is a pcase pattern
             if car.as_symbol().as_deref() == Some(",") {
-                let sub = pattern.rest().and_then(|r| r.first()).unwrap_or(LispObject::nil());
+                let sub = pattern
+                    .rest()
+                    .and_then(|r| r.first())
+                    .unwrap_or(LispObject::nil());
                 return pcase_match(&sub, value, env, editor, macros, state);
             }
 
@@ -450,7 +452,10 @@ fn cl_typep_check(value: &LispObject, type_name: &str) -> bool {
         "array" => matches!(value, LispObject::Vector(_)) || value.as_string().is_some(),
         "hash-table" => matches!(value, LispObject::HashTable(_)),
         "null" => value.is_nil(),
-        "boolean" => value.is_nil() || matches!(value, LispObject::Symbol(id) if crate::obarray::symbol_name(*id) == "t"),
+        "boolean" => {
+            value.is_nil()
+                || matches!(value, LispObject::Symbol(id) if crate::obarray::symbol_name(*id) == "t")
+        }
         "keyword" => {
             if let Some(s) = value.as_symbol() {
                 s.starts_with(':')

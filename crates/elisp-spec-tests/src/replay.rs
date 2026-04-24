@@ -101,15 +101,13 @@ impl JitState {
 
     /// Invariant: cache version ≤ def version when compiled.
     pub fn check_cache_version_leq_def_version(&self) -> bool {
-        self.has_compiled
-            .iter()
-            .all(|(f, &has)| {
-                if has {
-                    self.cache_version[f] <= self.def_version[f]
-                } else {
-                    true
-                }
-            })
+        self.has_compiled.iter().all(|(f, &has)| {
+            if has {
+                self.cache_version[f] <= self.def_version[f]
+            } else {
+                true
+            }
+        })
     }
 
     /// Invariant: cache is -1 iff hasCompiled is false.
@@ -121,15 +119,13 @@ impl JitState {
 
     /// Invariant: deopt only when hasCompiled and compiled code is stale.
     pub fn check_deopt_only_when_has_compiled(&self) -> bool {
-        self.tier
-            .iter()
-            .all(|(f, t)| {
-                if *t == Tier::Interp && self.has_compiled[f] {
-                    self.cache_version[f] != self.def_version[f]
-                } else {
-                    true
-                }
-            })
+        self.tier.iter().all(|(f, t)| {
+            if *t == Tier::Interp && self.has_compiled[f] {
+                self.cache_version[f] != self.def_version[f]
+            } else {
+                true
+            }
+        })
     }
 }
 
@@ -166,13 +162,19 @@ pub fn replay_trace(steps: &[TraceStep], threshold: i64) -> Option<(usize, Strin
             return Some((i, format!("noStaleKeepsRunning violated at step {i}")));
         }
         if !state.check_compiled_tier_requires_has_compiled() {
-            return Some((i, format!("compiledTierRequiresHasCompiled violated at step {i}")));
+            return Some((
+                i,
+                format!("compiledTierRequiresHasCompiled violated at step {i}"),
+            ));
         }
         if !state.check_cache_version_leq_def_version() {
             return Some((i, format!("cacheVersionLeqDefVersion violated at step {i}")));
         }
         if !state.check_deopt_preserves_compiled_code() {
-            return Some((i, format!("deoptPreservesCompiledCode violated at step {i}")));
+            return Some((
+                i,
+                format!("deoptPreservesCompiledCode violated at step {i}"),
+            ));
         }
         if !state.check_deopt_only_when_has_compiled() {
             return Some((i, format!("deoptOnlyWhenHasCompiled violated at step {i}")));

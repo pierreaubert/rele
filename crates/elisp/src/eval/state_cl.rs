@@ -6,11 +6,11 @@
 //! Dispatched from `call_stateful_primitive` when none of the earlier
 //! state-aware buckets match.
 
+use super::SyncRefCell as RwLock;
 use crate::EditorCallbacks;
 use crate::error::ElispResult;
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
-use super::SyncRefCell as RwLock;
 use std::sync::Arc;
 
 use super::functions::call_function;

@@ -874,6 +874,17 @@ fn eval_cl_defgeneric_or_method(
     };
     let mut rest = args_obj.rest().unwrap_or(LispObject::nil());
 
+    // `cl-generic.el` is self-hosting: while defining the `head` and `eql`
+    // specializer methods for `cl-generic-generalizers`, it calls
+    // `cl-generic-generalizers` to classify those very specializers. Keep the
+    // bootstrap primitive in the function cell instead of replacing it with a
+    // partial source-level method that only knows about `t`.
+    if is_method && name == "cl-generic-generalizers" {
+        let id = crate::obarray::intern(&name);
+        state.set_function_cell(id, LispObject::primitive("cl-generic-generalizers"));
+        return Ok(obj_to_value(LispObject::symbol(&name)));
+    }
+
     // Skip leading qualifiers (symbols or keywords) that come before the
     // arg list. `cl-defmethod` can have `:before`, `:after`, `:around`,
     // or a custom selector like `foo` — anything that isn't a cons is a
@@ -965,6 +976,7 @@ fn eval_cl_defstruct(
     let mut custom_constructors: Vec<(String, Option<LispObject>)> = Vec::new();
     let mut conc_name: Option<String> = None;
     let mut predicate_name: Option<Option<String>> = None;
+    let mut include_name: Option<String> = None;
     let name = match &name_spec {
         LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
         LispObject::Cons(_) => {
@@ -1006,6 +1018,11 @@ fn eval_cl_defstruct(
                                     );
                                 }
                             }
+                            ":include" => {
+                                if let Some((parent, _)) = opt_rest.destructure_cons() {
+                                    include_name = parent.as_symbol();
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -1026,8 +1043,11 @@ fn eval_cl_defstruct(
     }
 
     // Collect field names and default values (slot 0 is the type tag, fields start at index 1)
-    let mut field_names: Vec<String> = Vec::new();
-    let mut field_defaults: Vec<LispObject> = Vec::new();
+    let mut field_names: Vec<String> = include_name
+        .as_deref()
+        .map(|parent| cl_struct_inherited_field_names(state, parent))
+        .unwrap_or_default();
+    let mut field_defaults: Vec<LispObject> = vec![LispObject::nil(); field_names.len()];
     let mut cur = rest;
     while let Some((field_spec, next)) = cur.destructure_cons() {
         let (fname, fdefault) = match &field_spec {
@@ -1335,6 +1355,265 @@ fn eval_cl_defstruct(
     Ok(obj_to_value(LispObject::symbol(&name)))
 }
 
+fn cl_struct_inherited_field_names(state: &InterpreterState, parent: &str) -> Vec<String> {
+    let parent_id = crate::obarray::intern(parent);
+    let class_key = crate::obarray::intern("cl--class");
+    let class = state.get_plist(parent_id, class_key);
+    if let LispObject::Vector(class_vec) = class {
+        let slots = {
+            let guard = class_vec.lock();
+            guard.get(4).cloned()
+        };
+        if let Some(slots) = slots {
+            let names = cl_slot_descriptor_names(&slots);
+            if !names.is_empty() {
+                return names;
+            }
+        }
+    }
+
+    // Early bootstrap can ask for `(:include cl--class)` before the class
+    // metadata is rich enough to introspect. Keep this narrow: oclosure.el
+    // relies on these inherited slots to place its constructor arguments.
+    match parent {
+        "cl--class" => ["name", "docstring", "parents", "slots", "index-table"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn cl_slot_descriptor_names(slots: &LispObject) -> Vec<String> {
+    match slots {
+        LispObject::Vector(vec) => {
+            let guard = vec.lock();
+            guard.iter().filter_map(cl_slot_descriptor_name).collect()
+        }
+        LispObject::Nil => Vec::new(),
+        LispObject::Cons(_) => {
+            let mut names = Vec::new();
+            let mut cur = slots.clone();
+            while let Some((desc, rest)) = cur.destructure_cons() {
+                if let Some(name) = cl_slot_descriptor_name(&desc) {
+                    names.push(name);
+                }
+                cur = rest;
+            }
+            names
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn cl_slot_descriptor_name(desc: &LispObject) -> Option<String> {
+    match desc {
+        LispObject::Vector(vec) => {
+            let guard = vec.lock();
+            guard.get(1).and_then(LispObject::as_symbol)
+        }
+        LispObject::Cons(_) => desc.nth(1).and_then(|name| name.as_symbol()),
+        _ => None,
+    }
+}
+
+fn eval_oclosure_define(args: Value, state: &InterpreterState) -> ElispResult<Value> {
+    let args_obj = value_to_obj(args);
+    let name_spec = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let (name, parent_name, predicate_name) = parse_oclosure_name_spec(&name_spec)?;
+
+    let mut rest = args_obj.rest().unwrap_or_else(LispObject::nil);
+    let docstring = if let Some((first, tail)) = rest.destructure_cons() {
+        if first.as_string().is_some() {
+            rest = tail;
+            first
+        } else {
+            LispObject::nil()
+        }
+    } else {
+        LispObject::nil()
+    };
+
+    let parent_class = if let Some(parent) = &parent_name {
+        state.get_plist(
+            crate::obarray::intern(parent),
+            crate::obarray::intern("cl--class"),
+        )
+    } else {
+        LispObject::nil()
+    };
+
+    let mut slotdescs = class_slots_as_vec(&parent_class);
+    let mut cur = rest;
+    while let Some((slot_spec, next)) = cur.destructure_cons() {
+        if let Some(slot_name) = oclosure_slot_name(&slot_spec) {
+            slotdescs.push(make_cl_slot_descriptor(&slot_name));
+        }
+        cur = next;
+    }
+
+    let slots_obj = list_from_vec(slotdescs.clone());
+    let index_table = make_slot_index_table(&slotdescs);
+    let parents = if parent_class.is_nil() {
+        LispObject::nil()
+    } else {
+        LispObject::cons(parent_class.clone(), LispObject::nil())
+    };
+    let allparents = LispObject::cons(
+        LispObject::symbol(&name),
+        class_allparents(&parent_class)
+            .or_else(|| {
+                parent_name
+                    .as_ref()
+                    .map(|p| LispObject::cons(LispObject::symbol(p), LispObject::nil()))
+            })
+            .unwrap_or_else(LispObject::nil),
+    );
+
+    let class_obj = LispObject::Vector(Arc::new(SyncRefCell::new(vec![
+        LispObject::symbol("oclosure--class"),
+        LispObject::symbol(&name),
+        docstring,
+        parents,
+        slots_obj,
+        index_table,
+        allparents,
+    ])));
+    let name_id = crate::obarray::intern(&name);
+    state.put_plist(name_id, crate::obarray::intern("cl--class"), class_obj);
+
+    let pred = predicate_name.unwrap_or_else(|| format!("{name}--internal-p"));
+    state.set_function_cell(
+        crate::obarray::intern(&pred),
+        LispObject::primitive("ignore"),
+    );
+    state.put_plist(
+        name_id,
+        crate::obarray::intern("cl-deftype-satisfies"),
+        LispObject::symbol(&pred),
+    );
+
+    for desc in &slotdescs {
+        if let Some(slot_name) = cl_slot_descriptor_name(desc) {
+            let accessor = format!("{name}--{slot_name}");
+            if let Ok(lambda) = crate::read(&format!(
+                "(lambda (obj) (oclosure--slot-value obj '{slot_name}))"
+            )) {
+                state.set_function_cell(crate::obarray::intern(&accessor), lambda);
+            }
+        }
+    }
+
+    Ok(obj_to_value(LispObject::symbol(&name)))
+}
+
+fn parse_oclosure_name_spec(
+    spec: &LispObject,
+) -> ElispResult<(String, Option<String>, Option<String>)> {
+    match spec {
+        LispObject::Symbol(id) => Ok((
+            crate::obarray::symbol_name(*id),
+            Some("oclosure".into()),
+            None,
+        )),
+        LispObject::Cons(_) => {
+            let name = spec
+                .first()
+                .and_then(|n| n.as_symbol())
+                .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+            let mut parent = Some("oclosure".to_string());
+            let mut predicate = None;
+            let mut opts = spec.rest().unwrap_or_else(LispObject::nil);
+            while let Some((opt, next)) = opts.destructure_cons() {
+                if let Some((key, vals)) = opt.destructure_cons()
+                    && let Some(key_name) = key.as_symbol()
+                {
+                    match key_name.as_str() {
+                        ":parent" | ":include" => {
+                            parent = vals.first().and_then(|v| v.as_symbol());
+                        }
+                        ":predicate" => {
+                            predicate = vals.first().and_then(|v| v.as_symbol());
+                        }
+                        _ => {}
+                    }
+                }
+                opts = next;
+            }
+            Ok((name, parent, predicate))
+        }
+        _ => Err(ElispError::WrongTypeArgument("symbol-or-cons".to_string())),
+    }
+}
+
+fn oclosure_slot_name(spec: &LispObject) -> Option<String> {
+    match spec {
+        LispObject::Symbol(id) => Some(crate::obarray::symbol_name(*id)),
+        LispObject::Cons(_) => spec.first().and_then(|name| name.as_symbol()),
+        _ => None,
+    }
+}
+
+fn make_cl_slot_descriptor(name: &str) -> LispObject {
+    LispObject::Vector(Arc::new(SyncRefCell::new(vec![
+        LispObject::symbol("cl-slot-descriptor"),
+        LispObject::symbol(name),
+        LispObject::nil(),
+        LispObject::nil(),
+        LispObject::nil(),
+    ])))
+}
+
+fn class_slots_as_vec(class_obj: &LispObject) -> Vec<LispObject> {
+    let Some(slots) = class_slot_object(class_obj) else {
+        return Vec::new();
+    };
+    match slots {
+        LispObject::Vector(vec) => vec.lock().clone(),
+        LispObject::Cons(_) => {
+            let mut out = Vec::new();
+            let mut cur = slots;
+            while let Some((slot, rest)) = cur.destructure_cons() {
+                out.push(slot);
+                cur = rest;
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn class_slot_object(class_obj: &LispObject) -> Option<LispObject> {
+    match class_obj {
+        LispObject::Vector(vec) => vec.lock().get(4).cloned(),
+        _ => None,
+    }
+}
+
+fn class_allparents(class_obj: &LispObject) -> Option<LispObject> {
+    match class_obj {
+        LispObject::Vector(vec) => vec.lock().get(6).cloned(),
+        _ => None,
+    }
+}
+
+fn make_slot_index_table(slotdescs: &[LispObject]) -> LispObject {
+    let mut table = crate::object::LispHashTable::new(crate::object::HashTableTest::Eq);
+    for (idx, desc) in slotdescs.iter().enumerate() {
+        if let Some(name) = cl_slot_descriptor_name(desc) {
+            table.put(&LispObject::symbol(&name), LispObject::integer(idx as i64));
+        }
+    }
+    LispObject::HashTable(Arc::new(SyncRefCell::new(table)))
+}
+
+fn list_from_vec(items: Vec<LispObject>) -> LispObject {
+    items
+        .into_iter()
+        .rev()
+        .fold(LispObject::nil(), |acc, item| LispObject::cons(item, acc))
+}
+
 /// Type-check with eval access — used by `cl-check-type`. Delegates to
 /// `prim_cl_typep` for the pure cases, but handles `(satisfies PRED)`
 /// and combinators containing it by actually calling the predicate.
@@ -1465,6 +1744,31 @@ fn eval(
 #[inline]
 fn tail_call(expr: Value) -> ElispResult<Value> {
     Err(ElispError::TailEval(expr))
+}
+
+fn get_or_create_runtime_char_table(
+    state: &InterpreterState,
+    storage_symbol: &str,
+    purpose: &str,
+    with_upcase_slot: bool,
+) -> LispObject {
+    let id = crate::obarray::intern(storage_symbol);
+    if let Some(table) = state.get_value_cell(id) {
+        return table;
+    }
+
+    let table =
+        crate::primitives::core::make_char_table(LispObject::symbol(purpose), LispObject::nil());
+    if with_upcase_slot {
+        let up = crate::primitives::core::make_char_table(
+            LispObject::symbol(purpose),
+            LispObject::nil(),
+        );
+        let _ =
+            crate::primitives::core::char_table_set_extra_slot(&table, &LispObject::integer(0), up);
+    }
+    state.set_value_cell(id, table.clone());
+    table
 }
 
 fn eval_inner(
@@ -3864,7 +4168,7 @@ fn eval_inner(
                         LispObject::Vector(_)
                     ))))
                 }
-                "recordp" | "char-table-p" | "bool-vector-p" => {
+                "recordp" | "bool-vector-p" => {
                     let _arg = eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
@@ -3873,6 +4177,18 @@ fn eval_inner(
                         state,
                     )?;
                     Ok(Value::nil())
+                }
+                "char-table-p" => {
+                    let arg = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    Ok(obj_to_value(LispObject::from(
+                        crate::primitives::core::is_char_table(&arg),
+                    )))
                 }
                 "aref" => {
                     let array = value_to_obj(eval(
@@ -3889,17 +4205,10 @@ fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let i = idx.as_integer().unwrap_or(0) as usize;
-                    match &array {
-                        LispObject::Vector(v) => {
-                            let v = v.lock();
-                            Ok(obj_to_value(v.get(i).cloned().unwrap_or(LispObject::nil())))
-                        }
-                        LispObject::String(s) => Ok(obj_to_value(LispObject::integer(
-                            s.chars().nth(i).map(|c| c as i64).unwrap_or(0),
-                        ))),
-                        _ => Err(ElispError::WrongTypeArgument("array".to_string())),
-                    }
+                    let args = LispObject::cons(array, LispObject::cons(idx, LispObject::nil()));
+                    Ok(obj_to_value(crate::primitives::call_primitive(
+                        "aref", &args,
+                    )?))
                 }
                 "aset" => {
                     // Evaluate args and delegate to the real primitive
@@ -4983,88 +5292,138 @@ fn eval_inner(
                 "emacs-pid" => Ok(obj_to_value(LispObject::integer(std::process::id() as i64))),
                 // -- Char-table primitives (P4 i18n stubs) --
                 "make-char-table" => {
-                    // (make-char-table PURPOSE &optional INIT)
-                    // We don't implement char-tables, but return a
-                    // large vector so `aset`/`aref` operations don't
-                    // error — Emacs stdlib code uses char-tables
-                    // aggressively with aset on character codepoints.
-                    let mut cur = cdr.clone();
-                    let mut init = LispObject::nil();
-                    let mut idx = 0;
-                    while let Some((arg, rest)) = cur.destructure_cons() {
-                        let v = value_to_obj(eval(obj_to_value(arg), env, editor, macros, state)?);
-                        if idx == 1 {
-                            init = v;
-                        }
-                        idx += 1;
-                        cur = rest;
-                    }
-                    // 0x110000 is Unicode max + 1. That's too big for
-                    // a vector — use 0x10000 (BMP) which covers most
-                    // stdlib uses without blowing up memory.
-                    const CHAR_TABLE_SIZE: usize = 0x10000;
-                    let v: Vec<LispObject> = vec![init; CHAR_TABLE_SIZE];
-                    Ok(obj_to_value(LispObject::Vector(std::sync::Arc::new(
-                        crate::eval::SyncRefCell::new(v),
-                    ))))
+                    let purpose = match cdr.first() {
+                        Some(arg) => value_to_obj(eval(obj_to_value(arg), env, editor, macros, state)?),
+                        None => LispObject::nil(),
+                    };
+                    let init = match cdr.nth(1) {
+                        Some(arg) => value_to_obj(eval(obj_to_value(arg), env, editor, macros, state)?),
+                        None => LispObject::nil(),
+                    };
+                    Ok(obj_to_value(crate::primitives::core::make_char_table(
+                        purpose, init,
+                    )))
                 }
                 "set-char-table-range" => {
-                    // (set-char-table-range TABLE RANGE VALUE) → VALUE
-                    let mut vals = Vec::new();
-                    let mut cur = cdr.clone();
-                    while let Some((arg, rest)) = cur.destructure_cons() {
-                        vals.push(eval(obj_to_value(arg), env, editor, macros, state)?);
-                        cur = rest;
-                    }
-                    Ok(vals.into_iter().last().unwrap_or(Value::nil()))
-                }
-                "char-table-range" => {
-                    // (char-table-range TABLE CHAR) → nil
-                    let mut cur = cdr.clone();
-                    while let Some((arg, rest)) = cur.destructure_cons() {
-                        let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
-                        cur = rest;
-                    }
-                    Ok(Value::nil())
-                }
-                "set-char-table-parent" => {
-                    // (set-char-table-parent TABLE PARENT) → no-op
-                    let mut cur = cdr.clone();
-                    while let Some((arg, rest)) = cur.destructure_cons() {
-                        let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
-                        cur = rest;
-                    }
-                    Ok(Value::nil())
-                }
-                "char-table-parent" => {
-                    // (char-table-parent TABLE) → nil
-                    let _ = eval(
+                    let table = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
                         editor,
                         macros,
                         state,
-                    )?;
-                    Ok(Value::nil())
+                    )?);
+                    let range = value_to_obj(eval(
+                        obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let value = value_to_obj(eval(
+                        obj_to_value(cdr.nth(2).ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    Ok(obj_to_value(
+                        crate::primitives::core::char_table_set_range(&table, &range, value)?,
+                    ))
+                }
+                "char-table-range" => {
+                    let table = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let code = value_to_obj(eval(
+                        obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    Ok(obj_to_value(crate::primitives::core::char_table_range(
+                        &table, &code,
+                    )?))
+                }
+                "set-char-table-parent" => {
+                    let table = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let parent = value_to_obj(eval(
+                        obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    Ok(obj_to_value(
+                        crate::primitives::core::char_table_set_parent(&table, parent)?,
+                    ))
+                }
+                "char-table-parent" => {
+                    let table = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    Ok(obj_to_value(crate::primitives::core::char_table_parent(
+                        &table,
+                    )?))
                 }
                 "char-table-extra-slot" => {
-                    // (char-table-extra-slot TABLE N) → nil
-                    let mut cur = cdr.clone();
-                    while let Some((arg, rest)) = cur.destructure_cons() {
-                        let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
-                        cur = rest;
-                    }
-                    Ok(Value::nil())
+                    let table = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let slot = value_to_obj(eval(
+                        obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    Ok(obj_to_value(crate::primitives::core::char_table_extra_slot(
+                        &table, &slot,
+                    )?))
                 }
                 "set-char-table-extra-slot" => {
-                    // (set-char-table-extra-slot TABLE N VALUE) → VALUE
-                    let mut vals = Vec::new();
-                    let mut cur = cdr.clone();
-                    while let Some((arg, rest)) = cur.destructure_cons() {
-                        vals.push(eval(obj_to_value(arg), env, editor, macros, state)?);
-                        cur = rest;
-                    }
-                    Ok(vals.into_iter().last().unwrap_or(Value::nil()))
+                    let table = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let slot = value_to_obj(eval(
+                        obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let value = value_to_obj(eval(
+                        obj_to_value(cdr.nth(2).ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    Ok(obj_to_value(
+                        crate::primitives::core::char_table_set_extra_slot(&table, &slot, value)?,
+                    ))
                 }
                 "map-char-table" => {
                     // (map-char-table FUNCTION TABLE) → no-op
@@ -5075,19 +5434,48 @@ fn eval_inner(
                     }
                     Ok(Value::nil())
                 }
-                "standard-case-table" | "standard-syntax-table" | "syntax-table" => {
-                    // No args, return nil
-                    Ok(Value::nil())
-                }
-                "set-standard-case-table" | "set-syntax-table" => {
-                    // (set-standard-case-table TABLE) → no-op
-                    let _ = eval(
+                "standard-case-table" | "current-case-table" => Ok(obj_to_value(
+                    get_or_create_runtime_char_table(
+                        state,
+                        "rele--standard-case-table",
+                        "case-table",
+                        true,
+                    ),
+                )),
+                "standard-syntax-table" | "syntax-table" => Ok(obj_to_value(
+                    get_or_create_runtime_char_table(
+                        state,
+                        "rele--standard-syntax-table",
+                        "syntax-table",
+                        false,
+                    ),
+                )),
+                "standard-category-table" => Ok(obj_to_value(get_or_create_runtime_char_table(
+                    state,
+                    "rele--standard-category-table",
+                    "category-table",
+                    false,
+                ))),
+                "set-standard-case-table" => {
+                    let table = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
                         editor,
                         macros,
                         state,
-                    )?;
+                    )?);
+                    state.set_value_cell(crate::obarray::intern("rele--standard-case-table"), table);
+                    Ok(Value::nil())
+                }
+                "set-syntax-table" => {
+                    let table = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    state.set_value_cell(crate::obarray::intern("rele--standard-syntax-table"), table);
                     Ok(Value::nil())
                 }
                 "char-syntax" => {
@@ -5101,8 +5489,21 @@ fn eval_inner(
                     )?;
                     Ok(obj_to_value(LispObject::integer(32))) // ?\s = space
                 }
-                // oclosure-define: expensive macro from oclosure.el, no-op for us
-                "oclosure-define" => Ok(Value::nil()),
+                "oclosure-define" => eval_oclosure_define(obj_to_value(cdr), state),
+                "with-memoization" => {
+                    let place = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let cached = match eval(obj_to_value(place), env, editor, macros, state) {
+                        Ok(value) => value,
+                        Err(ElispError::VoidVariable(_)) => Value::nil(),
+                        Err(err) => return Err(err),
+                    };
+                    if !cached.is_nil() {
+                        Ok(cached)
+                    } else {
+                        let body = cdr.rest().unwrap_or(LispObject::nil());
+                        eval_progn(obj_to_value(body), env, editor, macros, state)
+                    }
+                }
                 // pcase-defmacro: just register as a no-op macro for now
                 "pcase-defmacro" => {
                     if let Some(name) = cdr.first() {

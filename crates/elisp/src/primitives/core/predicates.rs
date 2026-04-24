@@ -27,8 +27,10 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "obarrayp" => Some(prim_obarrayp(args)),
         "characterp" => Some(prim_characterp(args)),
         "arrayp" => Some(prim_arrayp(args)),
+        "char-table-p" => Some(prim_char_table_p(args)),
         "nlistp" => Some(prim_nlistp(args)),
         "byte-code-function-p" => Some(prim_byte_code_function_p(args)),
+        "closurep" => Some(prim_closurep(args)),
         "hash-table-p" => Some(prim_hash_table_p(args)),
         _ => None,
     }
@@ -159,7 +161,10 @@ pub fn prim_functionp(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::Cons(cell) => {
             let b = cell.lock();
             if let LispObject::Symbol(id) = &b.0 {
-                crate::obarray::symbol_name(*id) == "lambda"
+                matches!(
+                    crate::obarray::symbol_name(*id).as_str(),
+                    "lambda" | "closure"
+                )
             } else {
                 false
             }
@@ -217,9 +222,16 @@ pub fn prim_characterp(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_arrayp(args: &LispObject) -> ElispResult<LispObject> {
     let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    Ok(LispObject::from(matches!(
-        arg,
-        LispObject::Vector(_) | LispObject::String(_)
+    Ok(LispObject::from(
+        matches!(arg, LispObject::Vector(_) | LispObject::String(_))
+            || crate::primitives::core::is_char_table(&arg),
+    ))
+}
+
+pub fn prim_char_table_p(args: &LispObject) -> ElispResult<LispObject> {
+    let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    Ok(LispObject::from(crate::primitives::core::is_char_table(
+        &arg,
     )))
 }
 
@@ -231,6 +243,18 @@ pub fn prim_nlistp(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_byte_code_function_p(args: &LispObject) -> ElispResult<LispObject> {
     let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::from(matches!(arg, LispObject::BytecodeFn(_))))
+}
+
+pub fn prim_closurep(args: &LispObject) -> ElispResult<LispObject> {
+    let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let is_closure = match &arg {
+        LispObject::Cons(cell) => {
+            let b = cell.lock();
+            b.0.as_symbol().as_deref() == Some("closure")
+        }
+        _ => false,
+    };
+    Ok(LispObject::from(is_closure))
 }
 
 pub fn prim_hash_table_p(args: &LispObject) -> ElispResult<LispObject> {

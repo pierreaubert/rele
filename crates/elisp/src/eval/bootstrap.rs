@@ -1608,6 +1608,15 @@ pub const BOOTSTRAP_FILES: &[&str] = &[
     "emacs-lisp/cconv",
 ];
 
+pub fn bootstrap_eval_ops_limit(file: &str) -> u64 {
+    match file {
+        // These forms intentionally trigger deep require chains or expensive
+        // key parsing. Keep them capped so bootstrap tests stay bounded.
+        "emacs-lisp/cl-preloaded" | "emacs-lisp/oclosure" | "international/mule-cmds" => 500_000,
+        _ => 5_000_000,
+    }
+}
+
 pub fn ensure_stdlib_files() -> bool {
     ensure_stdlib_files_for(BOOTSTRAP_FILES)
 }
@@ -1692,12 +1701,7 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
             Ok(f) => f,
             Err(_) => continue,
         };
-        // Same per-form budget as the bootstrap test uses.
-        let skip_heavy = matches!(
-            *f,
-            "emacs-lisp/cl-preloaded" | "emacs-lisp/oclosure" | "international/mule-cmds"
-        );
-        interp.set_eval_ops_limit(if skip_heavy { 500_000 } else { 5_000_000 });
+        interp.set_eval_ops_limit(bootstrap_eval_ops_limit(f));
         for form in forms {
             interp.reset_eval_ops();
             let _ = interp.eval(form);

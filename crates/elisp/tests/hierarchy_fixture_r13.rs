@@ -207,6 +207,61 @@ fn cl_structure_object_tags_preserve_early_children() {
     );
 }
 
+/// `oclosure.el` defines `oclosure--class` with `(:include cl--class)` and
+/// an `&aux` constructor binding for `index-table`. Both inherited slots and
+/// aux defaults must be reflected in the generated constructor.
+#[test]
+fn cl_defstruct_include_constructor_aux_slots() {
+    let interp = make_interp();
+    eval(
+        &interp,
+        "(cl-defstruct (cl--class \
+                         (:constructor make-cl--class \
+                          (name docstring parents slots index-table))) \
+           name docstring parents slots index-table)",
+    );
+    eval(
+        &interp,
+        "(cl-defstruct (child-class \
+                         (:include cl--class) \
+                         (:constructor make-child-class \
+                          (name slots parents child-slot \
+                                &aux (index-table (vector slots parents))))) \
+           child-slot)",
+    );
+    eval(&interp, "(setq rele-child (make-child-class 'n 's 'p 'c))");
+    assert_eq!(
+        eval(&interp, "(child-class-name rele-child)")
+            .as_symbol()
+            .as_deref(),
+        Some("n")
+    );
+    assert_eq!(
+        eval(&interp, "(child-class-slots rele-child)")
+            .as_symbol()
+            .as_deref(),
+        Some("s")
+    );
+    assert_eq!(
+        eval(&interp, "(child-class-parents rele-child)")
+            .as_symbol()
+            .as_deref(),
+        Some("p")
+    );
+    assert_eq!(
+        eval(&interp, "(child-class-child-slot rele-child)")
+            .as_symbol()
+            .as_deref(),
+        Some("c")
+    );
+    assert_eq!(
+        eval(&interp, "(aref (child-class-index-table rele-child) 0)")
+            .as_symbol()
+            .as_deref(),
+        Some("s")
+    );
+}
+
 /// `cl--struct-register-child` uses `add-to-list` to mutate the parent's
 /// children tag variable. The primitive cannot be a no-op or
 /// `cl--class-p` never sees classes registered after the parent exists.
@@ -215,9 +270,15 @@ fn add_to_list_mutates_symbol_value_cell() {
     let interp = make_interp();
     eval(&interp, "(defvar rele-test-tags '(a))");
     let updated = eval(&interp, "(add-to-list 'rele-test-tags 'b)");
-    assert_eq!(updated.first().and_then(|v| v.as_symbol()).as_deref(), Some("b"));
+    assert_eq!(
+        updated.first().and_then(|v| v.as_symbol()).as_deref(),
+        Some("b")
+    );
     let value = eval(&interp, "rele-test-tags");
-    assert_eq!(value.first().and_then(|v| v.as_symbol()).as_deref(), Some("b"));
+    assert_eq!(
+        value.first().and_then(|v| v.as_symbol()).as_deref(),
+        Some("b")
+    );
     let again = eval(&interp, "(add-to-list 'rele-test-tags 'b)");
     assert_eq!(
         again
@@ -249,6 +310,17 @@ fn put_get_accept_self_evaluating_symbol_keys() {
 
     let fboundp_nil = eval(&interp, "(fboundp nil)");
     assert!(fboundp_nil.is_nil());
+}
+
+/// Source-level lambdas evaluate to lexical closure objects. `oclosure.el`
+/// asserts this with `closurep` while building prototype open closures.
+#[test]
+fn closurep_recognises_lexical_closure_objects() {
+    let interp = make_interp();
+    let closurep = eval(&interp, "(closurep (lambda (x) x))");
+    assert!(!closurep.is_nil());
+    let functionp = eval(&interp, "(functionp (lambda (x) x))");
+    assert!(!functionp.is_nil());
 }
 
 /// Byte-compiled `.elc` files build records with `(record 'NAME ...)`.

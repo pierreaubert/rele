@@ -823,9 +823,9 @@ mod tests {
             parent: None,
             slots: vec![],
         });
-        let fake = LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(vec![symbol(
-            "r10-plainreject",
-        )])));
+        let fake = LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(vec![
+            symbol("r10-plainreject"),
+        ])));
         let r = prim_eieio_object_p(&LispObject::cons(fake, LispObject::nil())).unwrap();
         assert!(matches!(r, LispObject::Nil));
     }

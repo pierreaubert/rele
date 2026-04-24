@@ -463,108 +463,61 @@ fn arb_cond() -> impl Strategy<Value = JsonVal> {
 
 /// (and E1 E2 E3) — short-circuit AND.
 fn arb_and() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(a, b, c)| {
-        JsonVal::list(vec![
-            JsonVal::sym("and"),
-            a,
-            b,
-            c,
-        ])
-    })
+    (arb_atom(), arb_atom(), arb_atom())
+        .prop_map(|(a, b, c)| JsonVal::list(vec![JsonVal::sym("and"), a, b, c]))
 }
 
 /// (or E1 E2 E3) — short-circuit OR.
 fn arb_or() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(a, b, c)| {
-        JsonVal::list(vec![
-            JsonVal::sym("or"),
-            a,
-            b,
-            c,
-        ])
-    })
+    (arb_atom(), arb_atom(), arb_atom())
+        .prop_map(|(a, b, c)| JsonVal::list(vec![JsonVal::sym("or"), a, b, c]))
 }
 
 /// (when COND BODY1 BODY2) — if COND is non-nil, evaluate body.
 fn arb_when() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(cond, b1, b2)| {
-        JsonVal::list(vec![
-            JsonVal::sym("when"),
-            cond,
-            b1,
-            b2,
-        ])
-    })
+    (arb_atom(), arb_atom(), arb_atom())
+        .prop_map(|(cond, b1, b2)| JsonVal::list(vec![JsonVal::sym("when"), cond, b1, b2]))
 }
 
 /// (unless COND BODY1 BODY2) — if COND is nil, evaluate body.
 fn arb_unless() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(cond, b1, b2)| {
-        JsonVal::list(vec![
-            JsonVal::sym("unless"),
-            cond,
-            b1,
-            b2,
-        ])
-    })
+    (arb_atom(), arb_atom(), arb_atom())
+        .prop_map(|(cond, b1, b2)| JsonVal::list(vec![JsonVal::sym("unless"), cond, b1, b2]))
 }
 
 /// (prog1 E1 E2 E3) — evaluate all, return first.
 fn arb_prog1() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(e1, e2, e3)| {
-        JsonVal::list(vec![
-            JsonVal::sym("prog1"),
-            e1,
-            e2,
-            e3,
-        ])
-    })
+    (arb_atom(), arb_atom(), arb_atom())
+        .prop_map(|(e1, e2, e3)| JsonVal::list(vec![JsonVal::sym("prog1"), e1, e2, e3]))
 }
 
 /// (prog2 E1 E2 E3) — evaluate all, return second.
 fn arb_prog2() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom(), arb_atom()).prop_map(|(e1, e2, e3)| {
-        JsonVal::list(vec![
-            JsonVal::sym("prog2"),
-            e1,
-            e2,
-            e3,
-        ])
-    })
+    (arb_atom(), arb_atom(), arb_atom())
+        .prop_map(|(e1, e2, e3)| JsonVal::list(vec![JsonVal::sym("prog2"), e1, e2, e3]))
 }
 
 /// (car (cons A B)) — first element of a cons cell.
 fn arb_car() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom()).prop_map(|(a, b)| {
-        JsonVal::list(vec![
-            JsonVal::sym("car"),
-            JsonVal::cons(a.clone(), b),
-        ])
-    })
+    (arb_atom(), arb_atom())
+        .prop_map(|(a, b)| JsonVal::list(vec![JsonVal::sym("car"), JsonVal::cons(a.clone(), b)]))
 }
 
 /// (cdr (cons A B)) — rest of a cons cell.
 fn arb_cdr() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom()).prop_map(|(a, b)| {
-        JsonVal::list(vec![
-            JsonVal::sym("cdr"),
-            JsonVal::cons(a, b.clone()),
-        ])
-    })
+    (arb_atom(), arb_atom())
+        .prop_map(|(a, b)| JsonVal::list(vec![JsonVal::sym("cdr"), JsonVal::cons(a, b.clone())]))
 }
 
 /// (cons A B) — construct a cons cell.
 fn arb_cons() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom()).prop_map(|(a, b)| {
-        JsonVal::cons(a, b)
-    })
+    (arb_atom(), arb_atom()).prop_map(|(a, b)| JsonVal::cons(a, b))
 }
 
 /// (list* A B C D) — dotted list: (A B C . D).
 fn arb_list_star() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom(), arb_atom(), arb_atom()).prop_map(|(a, b, c, d)| {
-        JsonVal::cons(a, JsonVal::cons(b, JsonVal::cons(c, d)))
-    })
+    (arb_atom(), arb_atom(), arb_atom(), arb_atom())
+        .prop_map(|(a, b, c, d)| JsonVal::cons(a, JsonVal::cons(b, JsonVal::cons(c, d))))
 }
 
 /// ((let ((x A)) (lambda (y) (op x y))) B) — lambda-from-let-escape.
@@ -595,31 +548,29 @@ fn arb_lambda_from_let_escape() -> impl Strategy<Value = JsonVal> {
 
 /// (condition-case BODY ((TAG) HANDLER...)) — catches throws with matching tag.
 fn arb_condition_case() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), "[a-z]+".prop_filter("non-empty identifier", |s| !s.is_empty()), arb_atom(), arb_atom())
+    (
+        arb_atom(),
+        "[a-z]+".prop_filter("non-empty identifier", |s| !s.is_empty()),
+        arb_atom(),
+        arb_atom(),
+    )
         .prop_map(|(body, tag, handler_a, handler_b)| {
             JsonVal::list(vec![
                 JsonVal::sym("condition-case"),
                 body,
-                JsonVal::list(vec![
-                    JsonVal::list(vec![
-                        JsonVal::sym(&tag),
-                        handler_a,
-                        handler_b,
-                    ]),
-                ]),
+                JsonVal::list(vec![JsonVal::list(vec![
+                    JsonVal::sym(&tag),
+                    handler_a,
+                    handler_b,
+                ])]),
             ])
         })
 }
 
 /// (save-excursion BODY...) — save and restore point/mark.
 fn arb_save_excursion() -> impl Strategy<Value = JsonVal> {
-    (arb_atom(), arb_atom()).prop_map(|(a, b)| {
-        JsonVal::list(vec![
-            JsonVal::sym("save-excursion"),
-            a,
-            b,
-        ])
-    })
+    (arb_atom(), arb_atom())
+        .prop_map(|(a, b)| JsonVal::list(vec![JsonVal::sym("save-excursion"), a, b]))
 }
 
 /// (defvar SYMBOL VALUE) — declare a dynamic variable.
@@ -649,12 +600,7 @@ fn arb_funcall() -> impl Strategy<Value = JsonVal> {
 
 /// (eval FORM) — evaluate a form at runtime.
 fn arb_eval() -> impl Strategy<Value = JsonVal> {
-    arb_arith().prop_map(|form| {
-        JsonVal::list(vec![
-            JsonVal::sym("eval"),
-            form,
-        ])
-    })
+    arb_arith().prop_map(|form| JsonVal::list(vec![JsonVal::sym("eval"), form]))
 }
 
 /// Combined strategy for the oracle subset.

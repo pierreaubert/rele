@@ -1,5 +1,5 @@
-use crate::error::ElispError;
 use super::SyncRefCell as RwLock;
+use crate::error::ElispError;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;

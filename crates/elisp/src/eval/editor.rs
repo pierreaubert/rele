@@ -1,10 +1,10 @@
 // Editor callbacks: buffer-string, insert, point, goto-char, find-file, etc.
 
+use super::SyncRefCell as RwLock;
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
-use super::SyncRefCell as RwLock;
 use std::sync::Arc;
 
 use super::{Environment, InterpreterState, MacroTable, eval, eval_progn};

@@ -1,5 +1,5 @@
-use crate::object::LispObject;
 use super::SyncRefCell;
+use crate::object::LispObject;
 use std::collections::HashMap;
 use std::sync::Arc;
 

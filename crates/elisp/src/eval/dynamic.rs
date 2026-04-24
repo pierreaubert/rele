@@ -1,8 +1,8 @@
 // Dynamic binding and special variable handling: unwind-specpdl, bind_param_dynamic.
 
+use super::SyncRefCell as RwLock;
 use crate::obarray;
 use crate::object::LispObject;
-use super::SyncRefCell as RwLock;
 use std::sync::Arc;
 
 use super::{Environment, InterpreterState};

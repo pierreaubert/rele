@@ -3654,17 +3654,7 @@ fn run_full_bootstrap_chain() {
         let total = forms.len();
         let mut ok = 0;
         let mut first_err: Option<String> = None;
-        // Set per-file eval operation budget (prevents runaway require chains)
-        // Skip files that trigger heavy require chains (they load cl-lib.el etc.)
-        // cl-preloaded / oclosure / mule-cmds each hit heavy require
-        // chains or deep macro expansions that burn eval ops. 500K is
-        // enough to validate early forms and cap overall test time;
-        // without this, bootstrap runs ~37s (all in mule-cmds form 151).
-        let skip_heavy = matches!(
-            *f,
-            "emacs-lisp/cl-preloaded" | "emacs-lisp/oclosure" | "international/mule-cmds"
-        );
-        interp.set_eval_ops_limit(if skip_heavy { 500_000 } else { 5_000_000 });
+        interp.set_eval_ops_limit(super::bootstrap::bootstrap_eval_ops_limit(f));
         for form in forms {
             // Reset per-form so one expensive form (e.g. key-parse in mule-cmds)
             // doesn't exhaust the budget for all subsequent forms.
@@ -4260,6 +4250,110 @@ fn test_cl_generic_define_method_installs_primary_function() {
                 LispObject::cons(
                     LispObject::symbol("primary"),
                     LispObject::cons(LispObject::integer(7), LispObject::nil()),
+                )
+            );
+        })
+        .unwrap();
+}
+
+#[test]
+fn test_cl_generic_generalizers_bootstrap_head_and_eql() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    interp
+        .eval_source(
+            "(progn
+               (cl-defmethod cl-generic-generalizers
+                 ((specializer (head eql)))
+                 'source-method)
+               (list
+                 (funcall 'cl-generic-generalizers '(head eql))
+                 (funcall 'cl-generic-generalizers '(eql quote))))",
+        )
+        .map(|value| {
+            assert_eq!(
+                value,
+                LispObject::cons(
+                    LispObject::cons(
+                        LispObject::symbol("cl--generic-head-generalizer"),
+                        LispObject::nil(),
+                    ),
+                    LispObject::cons(
+                        LispObject::cons(
+                            LispObject::symbol("cl--generic-eql-generalizer"),
+                            LispObject::nil(),
+                        ),
+                        LispObject::nil(),
+                    ),
+                )
+            );
+        })
+        .unwrap();
+}
+
+#[test]
+fn test_with_memoization_short_circuits_gv_expansion() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    interp
+        .eval_source(
+            "(progn
+               (setq cached-value 'already)
+               (list
+                 (with-memoization cached-value (error \"should not run\"))
+                 (with-memoization missing-cache 'computed)))",
+        )
+        .map(|value| {
+            assert_eq!(
+                value,
+                LispObject::cons(
+                    LispObject::symbol("already"),
+                    LispObject::cons(LispObject::symbol("computed"), LispObject::nil()),
+                )
+            );
+        })
+        .unwrap();
+}
+
+#[test]
+fn test_sparse_char_table_aref_aset_and_ranges() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    interp
+        .eval_source(
+            "(let ((tbl (make-char-table 'rele-test 'missing)))
+               (aset tbl #x1f642 'smile)
+               (set-char-table-range tbl '(#x20000 . #x20002) 'wide)
+               (set-char-table-extra-slot tbl 2 'extra)
+               (list
+                 (char-table-p tbl)
+                 (arrayp tbl)
+                 (aref tbl #x1f642)
+                 (char-table-range tbl #x20001)
+                 (aref tbl #x10ffff)
+                 (char-table-extra-slot tbl 2)))",
+        )
+        .map(|value| {
+            assert_eq!(
+                value,
+                LispObject::cons(
+                    LispObject::t(),
+                    LispObject::cons(
+                        LispObject::t(),
+                        LispObject::cons(
+                            LispObject::symbol("smile"),
+                            LispObject::cons(
+                                LispObject::symbol("wide"),
+                                LispObject::cons(
+                                    LispObject::symbol("missing"),
+                                    LispObject::cons(
+                                        LispObject::symbol("extra"),
+                                        LispObject::nil(),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
                 )
             );
         })

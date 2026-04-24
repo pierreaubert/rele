@@ -45,6 +45,7 @@ pub(crate) fn call_stateful_primitive(
         "function-get" => Some(stateful_function_get(args, state)),
         "def-edebug-elem-spec" => Some(stateful_def_edebug_elem_spec(args, state)),
         "defvar-1" => Some(stateful_defvar_1(args, env, state)),
+        "cl-generic-generalizers" => Some(stateful_cl_generic_generalizers(args, state)),
         "cl-generic-define" => Some(stateful_cl_generic_define(args)),
         "cl-generic-define-method" => Some(stateful_cl_generic_define_method(args, state)),
         "add-to-list" | "add-to-ordered-list" => Some(stateful_add_to_list(args, env, state)),
@@ -541,6 +542,54 @@ fn stateful_cl_generic_define(args: &LispObject) -> ElispResult<LispObject> {
         return Ok(LispObject::primitive("ignore"));
     }
     Ok(LispObject::primitive("ignore"))
+}
+
+/// Bootstrap implementation of `cl-generic-generalizers`.
+///
+/// `cl-generic.el` defines the real generic function in terms of methods
+/// that themselves ask `cl-generic-generalizers` about `(head ...)` and
+/// `(eql ...)` specializers. Until the full dispatcher exists, keep this
+/// narrow Rust-backed version available so those self-hosting definitions can
+/// load and build their metadata.
+fn stateful_cl_generic_generalizers(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let specializer = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let generalizer_name = cl_generic_generalizer_symbol(&specializer).unwrap_or_else(|| {
+        if specializer.is_nil() {
+            "cl--generic-t-generalizer"
+        } else {
+            "cl--generic-typeof-generalizer"
+        }
+    });
+
+    let generalizer_id = crate::obarray::intern(generalizer_name);
+    let generalizer = state
+        .get_value_cell(generalizer_id)
+        .unwrap_or_else(|| LispObject::symbol(generalizer_name));
+    Ok(LispObject::cons(generalizer, LispObject::nil()))
+}
+
+fn cl_generic_generalizer_symbol(specializer: &LispObject) -> Option<&'static str> {
+    if matches!(specializer, LispObject::T) {
+        return Some("cl--generic-t-generalizer");
+    }
+
+    let LispObject::Cons(_) = specializer else {
+        return None;
+    };
+    match specializer
+        .first()
+        .and_then(|head| head.as_symbol())
+        .as_deref()
+    {
+        Some("head") => Some("cl--generic-head-generalizer"),
+        Some("eql") => Some("cl--generic-eql-generalizer"),
+        Some("derived-mode") => Some("cl--generic-derived-generalizer"),
+        Some("oclosure") => Some("cl--generic-oclosure-generalizer"),
+        _ => None,
+    }
 }
 
 /// `(cl-generic-define-method NAME QUALIFIERS ARGS CALL-CON FUNCTION)`.
@@ -1070,6 +1119,7 @@ pub(super) fn apply_lambda(
     let mut args_list = value_to_obj(args);
     let mut optional = false;
     let mut rest = false;
+    let mut aux = false;
     // 0=positional/optional, 1=key
     let mut key_mode = false;
     let mut key_params: Vec<(String, LispObject)> = Vec::new();
@@ -1109,7 +1159,21 @@ pub(super) fn apply_lambda(
                     params_list = params_rest;
                     continue;
                 }
+                "&aux" => {
+                    aux = true;
+                    key_mode = false;
+                    rest = false;
+                    params_list = params_rest;
+                    continue;
+                }
                 _ => {}
+            }
+
+            if aux {
+                let value = LispObject::nil();
+                bind_param_dynamic(&name, value, &new_env, state);
+                params_list = params_rest;
+                continue;
             }
 
             if key_mode {
@@ -1138,6 +1202,15 @@ pub(super) fn apply_lambda(
             };
             bind_param_dynamic(&name, arg, &new_env, state);
             args_list = args_rest;
+        } else if aux {
+            if let Some((name_obj, init_rest)) = param.destructure_cons()
+                && let Some(name) = name_obj.as_symbol()
+            {
+                let init = init_rest.first().unwrap_or(LispObject::nil());
+                let value =
+                    value_to_obj(eval(obj_to_value(init), &new_env, editor, macros, state)?);
+                bind_param_dynamic(&name, value, &new_env, state);
+            }
         } else if key_mode {
             // &key with (name default) form
             let (name, default) = super::special_forms::extract_key_param(param);

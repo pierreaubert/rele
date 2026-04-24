@@ -1,10 +1,10 @@
 // Special form evaluation functions: if, setq, defun, let, progn, cond, etc.
 
+use super::SyncRefCell as RwLock;
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
-use super::SyncRefCell as RwLock;
 use std::sync::Arc;
 
 use super::dynamic::unwind_specpdl;
@@ -483,9 +483,7 @@ fn eval_progn_impl(
                 .eval_ops_limit
                 .load(std::sync::atomic::Ordering::Relaxed);
             if limit > 0 {
-                let ops = state
-                    .eval_ops
-                    .load(std::sync::atomic::Ordering::Relaxed);
+                let ops = state.eval_ops.load(std::sync::atomic::Ordering::Relaxed);
                 if ops >= limit {
                     return Err(ElispError::EvalError(
                         "eval operation limit exceeded".into(),
@@ -842,7 +840,6 @@ pub(super) fn eval_defvar(
 
     state.special_vars.write().insert(id);
 
-
     // defvar only initializes when the variable has no existing local
     // binding. We use get_id_local (env-only, no value-cell fallback)
     // because process-global value cells may hold a concurrent test's
@@ -873,7 +870,6 @@ pub(super) fn eval_defconst(
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
 
     state.special_vars.write().insert(id);
-
 
     if let Some(value_expr) = args_obj.nth(1) {
         let value = value_to_obj(eval(obj_to_value(value_expr), env, editor, macros, state)?);

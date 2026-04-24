@@ -22,6 +22,10 @@ mod vector;
 
 // Re-export public ERT API used by mod.rs and the eval crate
 pub use ert::{make_ert_test_obj, set_current_ert_test};
+pub(crate) use vector::{
+    char_table_extra_slot, char_table_parent, char_table_range, char_table_set_extra_slot,
+    char_table_set_parent, char_table_set_range, is_char_table, make_char_table,
+};
 
 pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     math::add_primitives(interp);
@@ -62,8 +66,10 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "obarrayp",
         "characterp",
         "arrayp",
+        "char-table-p",
         "nlistp",
         "byte-code-function-p",
+        "closurep",
         "hash-table-p",
     ] {
         interp.define(name, LispObject::primitive(name));
@@ -353,6 +359,10 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         LispObject::primitive("def-edebug-elem-spec"),
     );
     interp.define("defvar-1", LispObject::primitive("defvar-1"));
+    interp.define(
+        "cl-generic-generalizers",
+        LispObject::primitive("cl-generic-generalizers"),
+    );
     interp.define(
         "cl-generic-define",
         LispObject::primitive("cl-generic-define"),

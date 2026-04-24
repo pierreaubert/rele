@@ -1815,8 +1815,14 @@ pub fn prim_current_indentation(args: &LispObject) -> ElispResult<LispObject> {
         let mut col: i64 = 0;
         while pos < b.point_max() {
             match b.char_at(pos) {
-                Some(' ') => { col += 1; pos += 1; }
-                Some('\t') => { col = (col + 8) & !7; pos += 1; }
+                Some(' ') => {
+                    col += 1;
+                    pos += 1;
+                }
+                Some('\t') => {
+                    col = (col + 8) & !7;
+                    pos += 1;
+                }
                 _ => break,
             }
         }

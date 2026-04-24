@@ -44,10 +44,17 @@ fn main() {
     if !errors.is_empty() {
         eprintln!();
         eprintln!("=== Error classification ===");
-        let mut by_kind: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut by_kind: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for (_, e) in &errors {
             // Classify by first line / first 60 chars
-            let key = e.lines().next().unwrap_or(e).chars().take(60).collect::<String>();
+            let key = e
+                .lines()
+                .next()
+                .unwrap_or(e)
+                .chars()
+                .take(60)
+                .collect::<String>();
             *by_kind.entry(key).or_default() += 1;
         }
         let mut sorted: Vec<_> = by_kind.into_iter().collect();
@@ -71,7 +78,8 @@ fn walk_dir(dir: &Path, ok: &mut usize, fail: &mut usize, errors: &mut Vec<(Stri
         }
     };
 
-    let mut paths: Vec<std::path::PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    let mut paths: Vec<std::path::PathBuf> =
+        entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
     paths.sort();
 
     for path in paths {

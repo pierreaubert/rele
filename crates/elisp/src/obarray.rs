@@ -256,9 +256,7 @@ impl SymbolCells {
 
     /// Return `sym`'s current def_version (0 if never defined).
     pub fn def_version(&self, sym: SymbolId) -> u64 {
-        self.cells
-            .get(sym.0 as usize)
-            .map_or(0, |c| c.def_version)
+        self.cells.get(sym.0 as usize).map_or(0, |c| c.def_version)
     }
 
     /// Increment `sym`'s def_version counter.

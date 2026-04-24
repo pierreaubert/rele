@@ -1,10 +1,10 @@
 // Builtin functions: put, get, provide, featurep, require, mapcar, mapc, dolist, format.
 
+use super::SyncRefCell as RwLock;
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
-use super::SyncRefCell as RwLock;
 use std::sync::Arc;
 
 use super::functions::call_function;
@@ -613,8 +613,12 @@ pub(super) fn eval_load(
                 // lines of macro definitions).
                 if load_start.elapsed().as_secs() >= 30 {
                     let ops = state.eval_ops.load(std::sync::atomic::Ordering::Relaxed);
-                    let limit = state.eval_ops_limit.load(std::sync::atomic::Ordering::Relaxed);
-                    eprintln!("load {path}: wall-clock timeout at form {i}/{forms_count} (ops={ops}, limit={limit})");
+                    let limit = state
+                        .eval_ops_limit
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    eprintln!(
+                        "load {path}: wall-clock timeout at form {i}/{forms_count} (ops={ops}, limit={limit})"
+                    );
                     break;
                 }
                 // Periodic GC: the heap runs in Manual mode, so without

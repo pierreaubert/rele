@@ -70,13 +70,17 @@ Current high-value gap buckets:
 - [ ] `cl-struct-define` (partial: custom constructors, predicates, tags, and
       metadata slot records now work; `cl--class-p` inheritance remains)
 - [x] `cl-generic-define` / `cl-generic-define-method` bytecode entrypoints
-- [ ] Full `cl-generic` dispatch, including `(eql ...)` specializers
+- [x] `cl-generic` bootstrap generalizers, including `(head ...)` and
+      `(eql ...)` specializers
+- [ ] Full `cl-generic` method combination and dispatch fidelity
 - [x] `def-edebug-elem-spec`
 - [x] `defvar-1`
 - [x] `add-minor-mode`
 - [x] `make-composed-keymap`
 - [x] `easy-menu-do-define`
 - [x] `tool-bar-local-item`
+- [x] Sparse char-table storage for high-codepoint `aref` / `aset`, range
+      writes, parent links, and extra slots
 - [ ] Wrong-type regressions hit during `cl-*`, `oclosure`, and character data
 
 Exit condition:
@@ -143,10 +147,9 @@ These are the next tasks to pick up in order:
 9. [ ] Fix the highest-frequency bootstrap blockers before adding new stubs.
 
 Current short list from targeted runs:
-- `oclosure` still needs closure object arity/class registration work
-- full `cl-generic` source loading still lacks `(eql ...)` specializer dispatch
 - charset-heavy files still hit eval-op limits while building mapping tables
 - `isearch` still exposes keymap initialization and symbol-normalization gaps
+- reader-symbol edge cases still block a handful of Lisp-mode forms
 
 ## Notes
 
