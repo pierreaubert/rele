@@ -114,9 +114,7 @@ impl InterpreterState {
         if new_ops & 0x3FF == 0 {
             if let Some(dl) = self.deadline.get() {
                 if std::time::Instant::now() >= dl {
-                    return Err(ElispError::EvalError(
-                        "hard eval limit".into(),
-                    ));
+                    return Err(ElispError::EvalError("hard eval limit".into()));
                 }
             }
         }
@@ -285,7 +283,8 @@ impl InterpreterState {
         // itself — doing it under the lock would deadlock the
         // non-reentrant parking_lot::Mutex).
         let items: Vec<LispObject> = elements.into_iter().map(value_to_obj).collect();
-        let arc: crate::object::SharedVec = std::sync::Arc::new(crate::eval::SyncRefCell::new(items));
+        let arc: crate::object::SharedVec =
+            std::sync::Arc::new(crate::eval::SyncRefCell::new(items));
         self.heap.lock().vector_value(arc)
     }
 
@@ -592,7 +591,9 @@ impl Interpreter {
         #[cfg(feature = "jit")]
         {
             let sym = crate::obarray::intern(name);
-            let cell = self.state.get_function_cell(sym)
+            let cell = self
+                .state
+                .get_function_cell(sym)
                 .ok_or_else(|| crate::jit::JitError::UnknownFunction(name.to_string()))?;
             let crate::object::LispObject::BytecodeFn(ref bc) = cell else {
                 return Err(crate::jit::JitError::NotBytecode(name.to_string()));
@@ -961,8 +962,9 @@ fn eval_cl_defstruct(
     // — Emacs's `hierarchy.el` uses `(:constructor hierarchy--make)` and
     // `(:conc-name hierarchy--)` so the accessors are named `hierarchy--roots`
     // etc. rather than the default `hierarchy-roots`.
-    let mut custom_constructors: Vec<String> = Vec::new();
+    let mut custom_constructors: Vec<(String, Option<LispObject>)> = Vec::new();
     let mut conc_name: Option<String> = None;
+    let mut predicate_name: Option<Option<String>> = None;
     let name = match &name_spec {
         LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
         LispObject::Cons(_) => {
@@ -981,7 +983,9 @@ fn eval_cl_defstruct(
                             ":constructor" => {
                                 if let Some((cname, _)) = opt_rest.destructure_cons() {
                                     if let Some(cn) = cname.as_symbol() {
-                                        custom_constructors.push(cn);
+                                        if cn != "nil" {
+                                            custom_constructors.push((cn, opt_rest.nth(1)));
+                                        }
                                     }
                                 }
                             }
@@ -992,6 +996,14 @@ fn eval_cl_defstruct(
                                     } else if let Some(s) = cn.as_string() {
                                         conc_name = Some(s.to_string());
                                     }
+                                }
+                            }
+                            ":predicate" => {
+                                if let Some((pred, _)) = opt_rest.destructure_cons() {
+                                    predicate_name = Some(
+                                        pred.as_symbol()
+                                            .and_then(|s| if s == "nil" { None } else { Some(s) }),
+                                    );
                                 }
                             }
                             _ => {}
@@ -1071,10 +1083,28 @@ fn eval_cl_defstruct(
     // expect: `cl-struct-NAME-tags` is `(NAME)`.
     {
         let tags_var = format!("cl-struct-{}-tags", name);
-        state.global_env.write().set(
-            &tags_var,
-            LispObject::cons(LispObject::symbol(&name), LispObject::nil()),
-        );
+        let tags_sym = crate::obarray::intern(&tags_var);
+        let existing = state
+            .get_value_cell(tags_sym)
+            .or_else(|| state.global_env.read().get(&tags_var))
+            .unwrap_or(LispObject::nil());
+        let tag_sym = LispObject::symbol(&name);
+        let mut found = false;
+        let mut cur = existing.clone();
+        while let Some((head, tail)) = cur.destructure_cons() {
+            if head == tag_sym {
+                found = true;
+                break;
+            }
+            cur = tail;
+        }
+        let tags = if found {
+            existing
+        } else {
+            LispObject::cons(tag_sym, existing)
+        };
+        state.global_env.write().set(&tags_var, tags.clone());
+        state.set_value_cell(tags_sym, tags);
     }
 
     // Add this struct's tag to the root `cl-structure-object` tags list
@@ -1101,32 +1131,11 @@ fn eval_cl_defstruct(
         }
         if !found {
             let new_list = LispObject::cons(tag_sym, existing);
-            state.global_env.write().set(root_tags_var, new_list.clone());
+            state
+                .global_env
+                .write()
+                .set(root_tags_var, new_list.clone());
             state.set_value_cell(root_tags_sym, new_list);
-        }
-    }
-
-    // Register class metadata under plist key `cl--class` so
-    // `(cl--find-class 'NAME)` returns a struct-class object.
-    // This is what cl-preloaded.el's cl-struct-define does.
-    {
-        let class_obj_form = format!(
-            "(cl--struct-new-class '{name} nil nil nil nil \
-             (make-vector {nf} nil) (make-hash-table :test 'eq) \
-             'cl-struct-{name}-tags '{tag} nil)",
-            name = name,
-            nf = n_fields,
-            tag = tag_name,
-        );
-        if let Ok(forms) = crate::read_all(&class_obj_form) {
-            for form in forms {
-                if let Ok(class_val) = eval(obj_to_value(form), env, editor, macros, state) {
-                    let class_obj = value_to_obj(class_val);
-                    let id = crate::obarray::intern(&name);
-                    let key = crate::obarray::intern("cl--class");
-                    state.put_plist(id, key, class_obj);
-                }
-            }
         }
     }
 
@@ -1188,20 +1197,120 @@ fn eval_cl_defstruct(
         crate::obarray::intern(&format!("make-{}", name)),
         ctor_val.clone(),
     );
-    for cn in &custom_constructors {
-        state.set_function_cell(crate::obarray::intern(cn), ctor_val.clone());
+    for (cn, arglist) in &custom_constructors {
+        let custom_val = if let Some(arglist) = arglist {
+            let mut assignments = String::new();
+            let mut cur = arglist.clone();
+            while let Some((param, rest)) = cur.destructure_cons() {
+                if let Some(param_name) = param.as_symbol() {
+                    if !param_name.starts_with('&') {
+                        if let Some(field_idx) = field_names.iter().position(|f| f == &param_name) {
+                            assignments.push_str(&format!(
+                                "(aset vec {} {})",
+                                field_idx + 1,
+                                param_name
+                            ));
+                        }
+                    }
+                } else if let Some(param_name) = param.first().and_then(|obj| obj.as_symbol()) {
+                    if let Some(field_idx) = field_names.iter().position(|f| f == &param_name) {
+                        assignments.push_str(&format!(
+                            "(aset vec {} {})",
+                            field_idx + 1,
+                            param_name
+                        ));
+                    }
+                }
+                cur = rest;
+            }
+            let custom_ctor_body = format!(
+                "(lambda {arglist}\
+                 (let ((vec (make-vector {n} nil))\
+                       (defaults (list {defaults})))\
+                   (aset vec 0 '{tag})\
+                   (let ((d defaults) (j 1))\
+                     (while d\
+                       (aset vec j (car d))\
+                       (setq d (cdr d) j (+ j 1))))\
+                   {assignments}\
+                   vec))",
+                arglist = arglist.princ_to_string(),
+                n = n_fields + 1,
+                defaults = defaults_str,
+                tag = tag_name,
+                assignments = assignments,
+            );
+            let custom_ctor_expr = crate::read(&custom_ctor_body).map_err(|e| {
+                ElispError::EvalError(format!("cl-defstruct custom ctor parse: {e}"))
+            })?;
+            value_to_obj(eval(
+                obj_to_value(custom_ctor_expr),
+                env,
+                editor,
+                macros,
+                state,
+            )?)
+        } else {
+            ctor_val.clone()
+        };
+        state.set_function_cell(crate::obarray::intern(cn), custom_val);
     }
 
-    // Predicate: NAME-p — either a plain vector tagged NAME, or a cons
-    // whose tag matches (records are vectors in our runtime).
-    let pred_body = format!(
-        "(lambda (obj) (and (vectorp obj) (eq (aref obj 0) '{tag})))",
-        tag = tag_name,
-    );
-    let pred_expr = crate::read(&pred_body)
-        .map_err(|e| ElispError::EvalError(format!("cl-defstruct pred parse: {e}")))?;
-    let pred_val = value_to_obj(eval(obj_to_value(pred_expr), env, editor, macros, state)?);
-    state.set_function_cell(crate::obarray::intern(&format!("{}-p", name)), pred_val);
+    // Register class metadata under plist key `cl--class` so
+    // `(cl--find-class 'NAME)` returns a struct-class object.
+    // This is what cl-preloaded.el's cl-struct-define does.
+    //
+    // Important: this runs *after* installing custom constructors. When
+    // defining `cl-structure-class`, the custom `cl--struct-new-class`
+    // constructor must already be active so class records get the real
+    // `cl-structure-class` tag rather than the temporary bootstrap tag.
+    {
+        let slot_descs = if field_names.is_empty() {
+            "(make-vector 0 nil)".to_string()
+        } else {
+            format!(
+                "(vector {})",
+                field_names
+                    .iter()
+                    .map(|field| format!("(record 'cl-slot-descriptor '{field} nil nil nil)"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
+        let class_obj_form = format!(
+            "(cl--struct-new-class '{name} nil nil nil nil \
+             {slot_descs} (make-hash-table :test 'eq) \
+             'cl-struct-{name}-tags '{tag} nil)",
+            name = name,
+            slot_descs = slot_descs,
+            tag = tag_name,
+        );
+        if let Ok(forms) = crate::read_all(&class_obj_form) {
+            for form in forms {
+                if let Ok(class_val) = eval(obj_to_value(form), env, editor, macros, state) {
+                    let class_obj = value_to_obj(class_val);
+                    let id = crate::obarray::intern(&name);
+                    let key = crate::obarray::intern("cl--class");
+                    state.put_plist(id, key, class_obj);
+                }
+            }
+        }
+    }
+
+    // Predicate: NAME-p or `:predicate` override. Emacs predicates accept
+    // descendant tags via `cl-struct-NAME-tags`, not only NAME's own tag.
+    if let Some(pred_name) = predicate_name.unwrap_or_else(|| Some(format!("{}-p", name))) {
+        let pred_body = format!(
+            "(lambda (obj) \
+               (and (vectorp obj) (> (length obj) 0) \
+                    (if (memq (aref obj 0) cl-struct-{name}-tags) t nil)))",
+            name = name,
+        );
+        let pred_expr = crate::read(&pred_body)
+            .map_err(|e| ElispError::EvalError(format!("cl-defstruct pred parse: {e}")))?;
+        let pred_val = value_to_obj(eval(obj_to_value(pred_expr), env, editor, macros, state)?);
+        state.set_function_cell(crate::obarray::intern(&pred_name), pred_val);
+    }
 
     // Accessors: <conc-name>FIELD (default `NAME-`, overridden by
     // `:conc-name` — e.g. `hierarchy--` → `hierarchy--roots`).
@@ -1211,10 +1320,7 @@ fn eval_cl_defstruct(
         let expr = crate::read(&body)
             .map_err(|e| ElispError::EvalError(format!("cl-defstruct accessor parse: {e}")))?;
         let val = value_to_obj(eval(obj_to_value(expr), env, editor, macros, state)?);
-        state.set_function_cell(
-            crate::obarray::intern(&format!("{}{}", prefix, field)),
-            val,
-        );
+        state.set_function_cell(crate::obarray::intern(&format!("{}{}", prefix, field)), val);
     }
 
     // Copier: copy-NAME
@@ -1336,9 +1442,7 @@ fn eval(
             if ops & 0x3FF == 0 {
                 if let Some(dl) = state.deadline.get() {
                     if std::time::Instant::now() >= dl {
-                        return Err(ElispError::EvalError(
-                            "hard eval limit".into(),
-                        ));
+                        return Err(ElispError::EvalError("hard eval limit".into()));
                     }
                 }
             }
@@ -4341,10 +4445,11 @@ fn eval_inner(
                     let sym_id = sym
                         .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-                    // set writes the value cell (Emacs `set` sets the global
-                    // value). Environment is not touched so lexical shadows
-                    // don't interfere with global set.
+                    // `set` writes the symbol value. Mirror into the current
+                    // environment too, because bootstrap `defvar` bindings can
+                    // otherwise shadow later value-cell mutations.
                     state.set_value_cell(sym_id, val.clone());
+                    state.global_env.write().set_id(sym_id, val.clone());
                     Ok(obj_to_value(val))
                 }
                 "boundp" => {
@@ -4355,11 +4460,10 @@ fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let name = sym
-                        .as_symbol()
-                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    let name = symbol_name_including_constants(&sym)?;
                     Ok(obj_to_value(LispObject::from(
-                        env.read().get(&name).is_some(),
+                        matches!(sym, LispObject::Nil | LispObject::T)
+                            || env.read().get(&name).is_some(),
                     )))
                 }
                 "fboundp" => {
@@ -4370,9 +4474,10 @@ fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let name = sym
-                        .as_symbol()
-                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    if matches!(sym, LispObject::Nil | LispObject::T) {
+                        return Ok(Value::nil());
+                    }
+                    let name = symbol_name_including_constants(&sym)?;
                     // fboundp uses function-position lookup (env chain +
                     // function-cell fallback).
                     Ok(obj_to_value(LispObject::from(
@@ -4387,9 +4492,7 @@ fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let sym_id = sym
-                        .as_symbol_id()
-                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    let sym_id = symbol_id_including_constants(&sym)?;
                     Ok(obj_to_value(state.full_plist(sym_id)))
                 }
                 "string-match-p" | "string-match" => {
@@ -5400,7 +5503,9 @@ fn eval_backquote_form(
                     item, depth, env, editor, macros, state,
                 )?);
             }
-            return Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(out))));
+            return Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(
+                out,
+            ))));
         }
         return Ok(form);
     };
@@ -5527,10 +5632,7 @@ fn eval_backquote_form(
 /// `quote`, `function`, and binding forms (`let`, `let*`, `lambda`,
 /// `defun`, `cl-flet`, `cl-labels`) suppress substitution for names
 /// they bind.
-fn symbol_macrolet_walk(
-    form: LispObject,
-    subs: &[(String, LispObject)],
-) -> LispObject {
+fn symbol_macrolet_walk(form: LispObject, subs: &[(String, LispObject)]) -> LispObject {
     if subs.is_empty() {
         return form;
     }
@@ -5566,10 +5668,7 @@ fn symbol_macrolet_walk(
                         // Walk init-forms with original subs, body with shadowed subs
                         let new_bindings = walk_let_bindings(bindings, subs);
                         let new_body = symbol_macrolet_walk_list(body, &inner_subs);
-                        return LispObject::cons(
-                            car,
-                            LispObject::cons(new_bindings, new_body),
-                        );
+                        return LispObject::cons(car, LispObject::cons(new_bindings, new_body));
                     }
                     "lambda" | "defun" | "cl-defun" | "defsubst" => {
                         // (lambda (PARAMS...) BODY...) or (defun NAME (PARAMS...) BODY...)
@@ -5601,10 +5700,7 @@ fn symbol_macrolet_walk(
                         let bound = collect_param_names(&params);
                         let inner_subs = shadow_subs(subs, &bound);
                         let new_body = symbol_macrolet_walk_list(body, &inner_subs);
-                        return LispObject::cons(
-                            car,
-                            LispObject::cons(params, new_body),
-                        );
+                        return LispObject::cons(car, LispObject::cons(params, new_body));
                     }
                     _ => {}
                 }
@@ -5619,10 +5715,7 @@ fn symbol_macrolet_walk(
 }
 
 /// Walk let-bindings: substitute in init-forms but not in var names.
-fn walk_let_bindings(
-    bindings: LispObject,
-    subs: &[(String, LispObject)],
-) -> LispObject {
+fn walk_let_bindings(bindings: LispObject, subs: &[(String, LispObject)]) -> LispObject {
     match &bindings {
         LispObject::Cons(_) => {
             let car = bindings.first().unwrap_or(LispObject::nil());
@@ -5632,10 +5725,10 @@ fn walk_let_bindings(
                     // (VAR INIT) — walk INIT, keep VAR
                     let var = car.first().unwrap_or(LispObject::nil());
                     let init = car.nth(1).unwrap_or(LispObject::nil());
-                    LispObject::cons(var, LispObject::cons(
-                        symbol_macrolet_walk(init, subs),
-                        LispObject::nil(),
-                    ))
+                    LispObject::cons(
+                        var,
+                        LispObject::cons(symbol_macrolet_walk(init, subs), LispObject::nil()),
+                    )
                 }
                 _ => car, // bare symbol or nil — no init to walk
             };
@@ -5680,20 +5773,14 @@ fn collect_param_names(params: &LispObject) -> Vec<String> {
 }
 
 /// Return subs with any names in `shadow` removed.
-fn shadow_subs(
-    subs: &[(String, LispObject)],
-    shadow: &[String],
-) -> Vec<(String, LispObject)> {
+fn shadow_subs(subs: &[(String, LispObject)], shadow: &[String]) -> Vec<(String, LispObject)> {
     subs.iter()
         .filter(|(name, _)| !shadow.contains(name))
         .cloned()
         .collect()
 }
 
-fn symbol_macrolet_walk_list(
-    form: LispObject,
-    subs: &[(String, LispObject)],
-) -> LispObject {
+fn symbol_macrolet_walk_list(form: LispObject, subs: &[(String, LispObject)]) -> LispObject {
     if subs.is_empty() {
         return form;
     }
@@ -5708,6 +5795,21 @@ fn symbol_macrolet_walk_list(
         LispObject::Nil => LispObject::nil(),
         _ => symbol_macrolet_walk(form, subs),
     }
+}
+
+fn symbol_id_including_constants(obj: &LispObject) -> ElispResult<crate::obarray::SymbolId> {
+    match obj {
+        LispObject::Symbol(id) => Ok(*id),
+        LispObject::T => Ok(crate::obarray::intern("t")),
+        LispObject::Nil => Ok(crate::obarray::intern("nil")),
+        _ => Err(ElispError::WrongTypeArgument("symbol".to_string())),
+    }
+}
+
+fn symbol_name_including_constants(obj: &LispObject) -> ElispResult<String> {
+    Ok(crate::obarray::symbol_name(symbol_id_including_constants(
+        obj,
+    )?))
 }
 
 // Sub-modules for different evaluation contexts
@@ -5744,8 +5846,7 @@ use functions::{apply_lambda, eval_apply, eval_funcall, eval_funcall_form};
 use special_forms::{
     eval_and, eval_cond, eval_defalias, eval_defconst, eval_defmacro, eval_defun, eval_defvar,
     eval_dlet, eval_if, eval_let, eval_let_star, eval_loop, eval_macroexpand, eval_or, eval_prog1,
-    eval_prog2, eval_progn, eval_setq, eval_unless, eval_when, eval_while,
-    expand_macro,
+    eval_prog2, eval_progn, eval_setq, eval_unless, eval_when, eval_while, expand_macro,
 };
 
 // Re-export pub(crate) functions that vm.rs needs

@@ -115,6 +115,142 @@ fn cl_defstruct_constructor_and_conc_name_options() {
     assert!(t2.is_nil(), "hierarchy--roots on an empty struct is nil");
 }
 
+/// Custom constructor arglists use their declared positional order, not
+/// the raw struct field order. `cl-preloaded.el` relies on this for
+/// `cl--struct-new-class`, where `type` and `named` come before `slots`
+/// in the constructor but after them in the actual record layout.
+#[test]
+fn cl_defstruct_custom_constructor_uses_declared_arg_order() {
+    let interp = make_interp();
+    eval(
+        &interp,
+        "(cl-defstruct (mini-class \
+                         (:conc-name mini-class-) \
+                         (:constructor make-mini-class \
+                          (name docstring parents type named slots index-table \
+                                children-sym tag print))) \
+           name docstring parents slots index-table tag type named print children-sym)",
+    );
+    let type_value = eval(
+        &interp,
+        "(mini-class-type \
+          (make-mini-class 'n nil nil 'record t [slot] 'table 'children 'tag nil))",
+    );
+    assert_eq!(type_value.as_symbol().as_deref(), Some("record"));
+    let children_sym = eval(
+        &interp,
+        "(mini-class-children-sym \
+          (make-mini-class 'n nil nil 'record t [slot] 'table 'children 'tag nil))",
+    );
+    assert_eq!(children_sym.as_symbol().as_deref(), Some("children"));
+    let tag = eval(
+        &interp,
+        "(mini-class-tag \
+          (make-mini-class 'n nil nil 'record t [slot] 'table 'children 'tag nil))",
+    );
+    assert_eq!(tag.as_symbol().as_deref(), Some("tag"));
+}
+
+/// `(:predicate nil)` suppresses the default predicate. This matters for
+/// bootstrap structs that intentionally only expose internal predicates.
+#[test]
+fn cl_defstruct_predicate_nil_suppresses_default_predicate() {
+    let interp = make_interp();
+    eval(
+        &interp,
+        "(cl-defstruct (no-predicate (:predicate nil)) value)",
+    );
+    let fbound = eval(&interp, "(fboundp 'no-predicate-p)");
+    assert!(fbound.is_nil(), "(:predicate nil) must not install NAME-p");
+}
+
+/// `cl-preloaded.el` defines `cl-structure-class` before
+/// `cl-structure-object`, then expects the root predicate to recognise
+/// that earlier child. Re-defining the root tag variable must preserve
+/// pre-registered child tags.
+#[test]
+fn cl_structure_object_tags_preserve_early_children() {
+    let interp = make_interp();
+    eval(
+        &interp,
+        "(cl-defstruct (cl-structure-class \
+                         (:conc-name cl--struct-class-) \
+                         (:predicate cl--struct-class-p) \
+                         (:constructor nil) \
+                         (:constructor cl--struct-new-class \
+                          (name docstring parents type named slots index-table \
+                                children-sym tag print))) \
+           name docstring parents slots index-table tag type named print children-sym)",
+    );
+    eval(
+        &interp,
+        "(cl-defstruct (cl-structure-object \
+                         (:predicate cl-struct-p) \
+                         (:constructor nil)) \
+           marker)",
+    );
+    let root_tags = eval(&interp, "cl-struct-cl-structure-object-tags");
+    let first = root_tags.first().unwrap_or(LispObject::nil());
+    let second = root_tags
+        .rest()
+        .and_then(|tail| tail.first())
+        .unwrap_or(LispObject::nil());
+    assert_eq!(first.as_symbol().as_deref(), Some("cl-structure-object"));
+    assert_eq!(second.as_symbol().as_deref(), Some("cl-structure-class"));
+    let ok = eval(
+        &interp,
+        "(cl-struct-p (cl--find-class 'cl-structure-class))",
+    );
+    assert!(
+        !ok.is_nil(),
+        "root predicate must recognise early child tags"
+    );
+}
+
+/// `cl--struct-register-child` uses `add-to-list` to mutate the parent's
+/// children tag variable. The primitive cannot be a no-op or
+/// `cl--class-p` never sees classes registered after the parent exists.
+#[test]
+fn add_to_list_mutates_symbol_value_cell() {
+    let interp = make_interp();
+    eval(&interp, "(defvar rele-test-tags '(a))");
+    let updated = eval(&interp, "(add-to-list 'rele-test-tags 'b)");
+    assert_eq!(updated.first().and_then(|v| v.as_symbol()).as_deref(), Some("b"));
+    let value = eval(&interp, "rele-test-tags");
+    assert_eq!(value.first().and_then(|v| v.as_symbol()).as_deref(), Some("b"));
+    let again = eval(&interp, "(add-to-list 'rele-test-tags 'b)");
+    assert_eq!(
+        again
+            .rest()
+            .and_then(|tail| tail.first())
+            .and_then(|v| v.as_symbol())
+            .as_deref(),
+        Some("a")
+    );
+}
+
+/// `t` and `nil` are self-evaluating, but they are still symbols for
+/// property-list operations. `cl-preloaded.el` registers the built-in
+/// supertype with `(put 't 'cl--class ...)`.
+#[test]
+fn put_get_accept_self_evaluating_symbol_keys() {
+    let interp = make_interp();
+    let value = eval(
+        &interp,
+        "(progn (put 't 'rele-test-prop 42) (get 't 'rele-test-prop))",
+    );
+    assert_eq!(value.as_integer(), Some(42));
+
+    let nil_value = eval(
+        &interp,
+        "(progn (put nil 'rele-test-prop 7) (get nil 'rele-test-prop))",
+    );
+    assert_eq!(nil_value.as_integer(), Some(7));
+
+    let fboundp_nil = eval(&interp, "(fboundp nil)");
+    assert!(fboundp_nil.is_nil());
+}
+
 /// Byte-compiled `.elc` files build records with `(record 'NAME ...)`.
 /// After `cl-defstruct` registers the class, such records must be
 /// recognised by `NAME-p` (exactly the case that fails in the baseline

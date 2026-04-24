@@ -1,10 +1,10 @@
 // Function calling and application: funcall, apply, lambda application.
 
+use super::SyncRefCell as RwLock;
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
-use super::SyncRefCell as RwLock;
 use std::sync::Arc;
 
 use super::dynamic::{bind_param_dynamic, unwind_specpdl};
@@ -38,15 +38,25 @@ pub(crate) fn call_stateful_primitive(
         "apply" => Some(stateful_apply(args, env, editor, macros, state)),
         "put" => Some(stateful_put(args, state)),
         "get" => Some(stateful_get(args, state)),
-        "boundp" => Some(stateful_boundp(args, env)),
+        "provide" => Some(stateful_provide(args, state)),
+        "featurep" => Some(stateful_featurep(args, state)),
+        "require" => Some(stateful_require(args, env, editor, macros, state)),
+        "function-put" => Some(stateful_function_put(args, state)),
+        "function-get" => Some(stateful_function_get(args, state)),
+        "def-edebug-elem-spec" => Some(stateful_def_edebug_elem_spec(args, state)),
+        "defvar-1" => Some(stateful_defvar_1(args, env, state)),
+        "cl-generic-define" => Some(stateful_cl_generic_define(args)),
+        "cl-generic-define-method" => Some(stateful_cl_generic_define_method(args, state)),
+        "add-to-list" | "add-to-ordered-list" => Some(stateful_add_to_list(args, env, state)),
+        "boundp" => Some(stateful_boundp(args, env, state)),
         "fboundp" => Some(stateful_fboundp(args, env, macros)),
         "intern" => Some(stateful_intern(args)),
         "intern-soft" => Some(stateful_intern_soft(args, env, state)),
-        "set" => Some(stateful_set(args, state)),
-        "symbol-value" => Some(stateful_symbol_value(args, env)),
+        "set" => Some(stateful_set(args, env, state)),
+        "symbol-value" => Some(stateful_symbol_value(args, env, state)),
         "symbol-function" => Some(stateful_symbol_function(args, env, macros, state)),
-        "default-value" => Some(stateful_symbol_value(args, env)),
-        "default-boundp" => Some(stateful_boundp(args, env)),
+        "default-value" => Some(stateful_symbol_value(args, env, state)),
+        "default-boundp" => Some(stateful_boundp(args, env, state)),
         "set-default" => Some(stateful_set_default(args, env)),
         "makunbound" => Some(stateful_makunbound(args, state)),
         "fmakunbound" => Some(stateful_fmakunbound(args, state)),
@@ -188,12 +198,19 @@ fn stateful_format(
     Ok(value_to_obj(result))
 }
 
-fn stateful_boundp(args: &LispObject, env: &Arc<RwLock<Environment>>) -> ElispResult<LispObject> {
+fn stateful_boundp(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
     let sym = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let name = sym
-        .as_symbol()
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-    Ok(LispObject::from(env.read().get(&name).is_some()))
+    let sym_id = symbol_id_including_constants(&sym)?;
+    let name = crate::obarray::symbol_name(sym_id);
+    Ok(LispObject::from(
+        matches!(sym, LispObject::Nil | LispObject::T)
+            || state.get_value_cell(sym_id).is_some()
+            || env.read().get(&name).is_some(),
+    ))
 }
 
 fn stateful_fboundp(
@@ -202,9 +219,10 @@ fn stateful_fboundp(
     macros: &MacroTable,
 ) -> ElispResult<LispObject> {
     let sym = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let name = sym
-        .as_symbol()
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    if matches!(sym, LispObject::Nil | LispObject::T) {
+        return Ok(LispObject::nil());
+    }
+    let name = symbol_name_including_constants(&sym)?;
     let found = env.read().get_function(&name).is_some() || macros.read().contains_key(&name);
     Ok(LispObject::from(found))
 }
@@ -260,13 +278,18 @@ fn stateful_intern_soft(
     Ok(LispObject::nil())
 }
 
-fn stateful_set(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
+fn stateful_set(
+    args: &LispObject,
+    _env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
     let sym = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let val = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     let sym_id = sym
         .as_symbol_id()
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
     state.set_value_cell(sym_id, val.clone());
+    state.global_env.write().set_id(sym_id, val.clone());
     Ok(val)
 }
 
@@ -286,12 +309,15 @@ fn stateful_set_default(
 fn stateful_symbol_value(
     args: &LispObject,
     env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
 ) -> ElispResult<LispObject> {
     let sym = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let name = sym
-        .as_symbol()
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-    Ok(env.read().get(&name).unwrap_or(LispObject::nil()))
+    let sym_id = symbol_id_including_constants(&sym)?;
+    let name = crate::obarray::symbol_name(sym_id);
+    Ok(state
+        .get_value_cell(sym_id)
+        .or_else(|| env.read().get(&name))
+        .unwrap_or(LispObject::nil()))
 }
 
 fn stateful_symbol_function(
@@ -301,9 +327,7 @@ fn stateful_symbol_function(
     _state: &InterpreterState,
 ) -> ElispResult<LispObject> {
     let sym = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let name = sym
-        .as_symbol()
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let name = symbol_name_including_constants(&sym)?;
     let func_val = env.read().get_function(&name);
     if let Some(val) = func_val {
         return Ok(val);
@@ -505,6 +529,45 @@ fn stateful_fset(args: &LispObject, state: &InterpreterState) -> ElispResult<Lis
     Ok(def)
 }
 
+/// `(cl-generic-define NAME ARGS OPTIONS)` from byte-compiled cl-generic.
+///
+/// Real Emacs returns a dispatcher closure here; the subsequent
+/// `cl-generic-define-method` calls attach primary/default methods. For
+/// bootstrap loading, an ignore-backed function keeps the generic callable
+/// until a primary method replaces it.
+fn stateful_cl_generic_define(args: &LispObject) -> ElispResult<LispObject> {
+    let name = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    if name.as_symbol().is_none() {
+        return Ok(LispObject::primitive("ignore"));
+    }
+    Ok(LispObject::primitive("ignore"))
+}
+
+/// `(cl-generic-define-method NAME QUALIFIERS ARGS CALL-CON FUNCTION)`.
+///
+/// This mirrors the source-level `cl-defmethod` approximation already in
+/// eval/mod.rs: primary methods become the callable function cell, while
+/// qualified and `(setf NAME)` methods are ignored until the runtime grows a
+/// real generic dispatcher.
+fn stateful_cl_generic_define_method(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let name = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let qualifiers = args.nth(1).unwrap_or(LispObject::nil());
+    let function = args.nth(4).ok_or(ElispError::WrongNumberOfArguments)?;
+
+    if !qualifiers.is_nil() {
+        return Ok(LispObject::nil());
+    }
+
+    let Some(sym_id) = name.as_symbol_id() else {
+        return Ok(LispObject::nil());
+    };
+    state.set_function_cell(sym_id, function.clone());
+    Ok(name.clone())
+}
+
 /// `(eval FORM)` — evaluate FORM. Args pre-evaluated means FORM is the
 /// ACTUAL form to evaluate (not wrapped in another eval).
 fn stateful_eval(
@@ -547,12 +610,8 @@ fn stateful_put(args: &LispObject, state: &InterpreterState) -> ElispResult<Lisp
     let sym = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let prop = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     let val = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
-    let sym_id = sym
-        .as_symbol_id()
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-    let prop_id = prop
-        .as_symbol_id()
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let sym_id = plist_symbol_id(&sym)?;
+    let prop_id = plist_symbol_id(&prop)?;
     state.put_plist(sym_id, prop_id, val.clone());
     Ok(val)
 }
@@ -562,13 +621,212 @@ fn stateful_put(args: &LispObject, state: &InterpreterState) -> ElispResult<Lisp
 fn stateful_get(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
     let sym = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let prop = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-    let sym_id = sym
-        .as_symbol_id()
+    let sym_id = plist_symbol_id(&sym)?;
+    let prop_id = plist_symbol_id(&prop)?;
+    Ok(state.get_plist(sym_id, prop_id))
+}
+
+fn plist_symbol_id(obj: &LispObject) -> ElispResult<crate::obarray::SymbolId> {
+    symbol_id_including_constants(obj)
+}
+
+fn symbol_id_including_constants(obj: &LispObject) -> ElispResult<crate::obarray::SymbolId> {
+    match obj {
+        LispObject::Symbol(id) => Ok(*id),
+        LispObject::T => Ok(crate::obarray::intern("t")),
+        LispObject::Nil => Ok(crate::obarray::intern("nil")),
+        _ => Err(ElispError::WrongTypeArgument("symbol".to_string())),
+    }
+}
+
+fn symbol_name_including_constants(obj: &LispObject) -> ElispResult<String> {
+    Ok(crate::obarray::symbol_name(symbol_id_including_constants(
+        obj,
+    )?))
+}
+
+fn stateful_provide(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
+    let feature = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let name = feature
+        .as_symbol()
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let mut features = state.features.write();
+    if !features.contains(&name) {
+        features.push(name);
+    }
+    Ok(feature)
+}
+
+fn stateful_featurep(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
+    let feature = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let name = feature
+        .as_symbol()
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    Ok(LispObject::from(state.features.read().contains(&name)))
+}
+
+fn stateful_require(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let feature = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let name = feature
+        .as_symbol()
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+
+    if state.features.read().contains(&name) {
+        return Ok(feature);
+    }
+
+    let file = args
+        .nth(1)
+        .and_then(|f| f.as_string().map(ToString::to_string))
+        .unwrap_or(name);
+    let load_args = LispObject::cons(
+        LispObject::string(&file),
+        LispObject::cons(LispObject::nil(), LispObject::nil()),
+    );
+    super::builtins::eval_load(obj_to_value(load_args), env, editor, macros, state)?;
+    Ok(feature)
+}
+
+/// `(function-put FUNCTION PROPERTY VALUE)` — Emacs currently stores
+/// function properties on the function symbol's plist, just like `put`.
+fn stateful_function_put(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
+    stateful_put(args, state)
+}
+
+/// `(function-get FUNCTION PROPERTY &optional AUTOLOAD)` — like `get`,
+/// but if FUNCTION is a simple symbol alias, read the aliased symbol's
+/// plist. We ignore AUTOLOAD for now; `require`/autoload already has
+/// separate bootstrap plumbing in this interpreter.
+fn stateful_function_get(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
+    let function = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let prop = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let Some(mut sym_id) = function.as_symbol_id() else {
+        return Ok(LispObject::nil());
+    };
     let prop_id = prop
         .as_symbol_id()
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+
+    for _ in 0..32 {
+        match state.get_function_cell(sym_id) {
+            Some(LispObject::Symbol(target)) => sym_id = target,
+            _ => break,
+        }
+    }
+
     Ok(state.get_plist(sym_id, prop_id))
+}
+
+/// `(def-edebug-elem-spec NAME SPEC)` records an Edebug shorthand spec.
+/// We do not instrument code, but stdlib loaders expect the metadata to
+/// exist on NAME's plist.
+fn stateful_def_edebug_elem_spec(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let name = args
+        .first()
+        .and_then(|a| a.as_symbol_id())
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let spec = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let key = crate::obarray::intern("edebug-elem-spec");
+    state.put_plist(name, key, spec.clone());
+    Ok(spec)
+}
+
+/// `(defvar-1 SYMBOL INITVALUE DOCSTRING)` is emitted by bytecomp for
+/// top-level defvars. Keep the interpreter-visible binding in sync with
+/// the per-interpreter value cell and record the docstring when present.
+fn stateful_defvar_1(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let sym = args
+        .first()
+        .and_then(|a| a.as_symbol_id())
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    state.special_vars.write().insert(sym);
+
+    if env.read().get_id_local(sym).is_none() && state.get_value_cell(sym).is_none() {
+        let init = args.nth(1).unwrap_or_else(LispObject::nil);
+        env.write().define_id(sym, init.clone());
+        state.set_value_cell(sym, init);
+    }
+
+    if let Some(doc) = args.nth(2) {
+        let key = crate::obarray::intern("variable-documentation");
+        state.put_plist(sym, key, doc);
+    }
+
+    Ok(LispObject::Symbol(sym))
+}
+
+/// `(add-to-list SYMBOL ELEMENT &optional APPEND COMPARE-FN)`.
+///
+/// This is stateful because SYMBOL names the variable to mutate. The
+/// implementation intentionally ignores custom COMPARE-FN for now, but uses
+/// structural equality instead of pointer identity so bootstrap tag lists and
+/// ordinary symbol/string lists behave predictably.
+fn stateful_add_to_list(
+    args: &LispObject,
+    _env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let sym = args
+        .first()
+        .and_then(|a| a.as_symbol_id())
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let val = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let append = args.nth(2).unwrap_or_else(LispObject::nil);
+    let name = crate::obarray::symbol_name(sym);
+    let existing = state
+        .get_value_cell(sym)
+        .or_else(|| state.global_env.read().get(&name))
+        .unwrap_or_else(LispObject::nil);
+
+    let mut cur = existing.clone();
+    while let Some((head, tail)) = cur.destructure_cons() {
+        if head == val {
+            return Ok(existing);
+        }
+        cur = tail;
+    }
+
+    let updated = if append.is_nil() {
+        LispObject::cons(val, existing)
+    } else {
+        append_lisp_list(existing, val)
+    };
+    state.set_value_cell(sym, updated.clone());
+    state.global_env.write().set_id(sym, updated.clone());
+    Ok(updated)
+}
+
+fn append_lisp_list(list: LispObject, val: LispObject) -> LispObject {
+    if list.is_nil() {
+        return LispObject::cons(val, LispObject::nil());
+    }
+
+    let mut items = Vec::new();
+    let mut cur = list;
+    while let Some((head, tail)) = cur.destructure_cons() {
+        items.push(head);
+        cur = tail;
+    }
+    items.push(val);
+
+    let mut out = LispObject::nil();
+    for item in items.into_iter().rev() {
+        out = LispObject::cons(item, out);
+    }
+    out
 }
 
 /// `(apply FUNC &rest ARGS)` — last ARG is a list; splice its contents
@@ -927,8 +1185,14 @@ pub(super) fn apply_lambda(
                         LispObject::nil()
                     } else {
                         value_to_obj(
-                            eval(obj_to_value(default.clone()), &new_env, editor, macros, state)
-                                .unwrap_or(obj_to_value(default.clone())),
+                            eval(
+                                obj_to_value(default.clone()),
+                                &new_env,
+                                editor,
+                                macros,
+                                state,
+                            )
+                            .unwrap_or(obj_to_value(default.clone())),
                         )
                     }
                 }
@@ -967,8 +1231,7 @@ fn call_function_inner(
     editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
     macros: &MacroTable,
     state: &InterpreterState,
-    #[allow(unused_variables)]
-    caller_sym: Option<crate::obarray::SymbolId>,
+    #[allow(unused_variables)] caller_sym: Option<crate::obarray::SymbolId>,
 ) -> ElispResult<Value> {
     let func_obj = value_to_obj(func);
     match func_obj {
@@ -1110,9 +1373,7 @@ fn call_function_inner(
 
             #[cfg(feature = "jit")]
             {
-                let version = caller_sym
-                    .map(|s| state.def_version(s))
-                    .unwrap_or(0);
+                let version = caller_sym.map(|s| state.def_version(s)).unwrap_or(0);
                 let mut jit = state.jit.write();
                 if should_jit && !jit.is_compiled(func_id) {
                     jit.compile_with_version(func_id, bc, version);
@@ -1151,7 +1412,13 @@ fn call_function_inner(
             let resolved = env.read().get_function(&name);
             if let Some(val) = resolved {
                 return call_function_inner(
-                    obj_to_value(val), args, env, editor, macros, state, Some(id),
+                    obj_to_value(val),
+                    args,
+                    env,
+                    editor,
+                    macros,
+                    state,
+                    Some(id),
                 );
             }
             // Check autoloads — load the file and retry
@@ -1166,7 +1433,13 @@ fn call_function_inner(
                 let resolved2 = env.read().get_function(&name);
                 if let Some(val) = resolved2 {
                     return call_function_inner(
-                        obj_to_value(val), args, env, editor, macros, state, Some(id),
+                        obj_to_value(val),
+                        args,
+                        env,
+                        editor,
+                        macros,
+                        state,
+                        Some(id),
                     );
                 }
             }
@@ -2377,9 +2650,7 @@ fn stateful_indirect_function(
 ) -> ElispResult<LispObject> {
     let obj = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     match &obj {
-        LispObject::Symbol(id) => {
-            Ok(state.get_function_cell(*id).unwrap_or_else(LispObject::nil))
-        }
+        LispObject::Symbol(id) => Ok(state.get_function_cell(*id).unwrap_or_else(LispObject::nil)),
         _ => Ok(obj),
     }
 }
@@ -2406,10 +2677,7 @@ fn stateful_buffer_local_value(
     Ok(state.get_value_cell(sym).unwrap_or_else(LispObject::nil))
 }
 
-fn stateful_ert_get_test(
-    args: &LispObject,
-    state: &InterpreterState,
-) -> ElispResult<LispObject> {
+fn stateful_ert_get_test(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
     let sym = match args.first().and_then(|a| a.as_symbol_id()) {
         Some(s) => s,
         None => return Ok(LispObject::nil()),

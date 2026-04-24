@@ -8,7 +8,7 @@
 //!   require_audit
 
 use rele_elisp::eval::bootstrap::{
-    ensure_stdlib_files, load_full_bootstrap, emacs_lisp_dir,
+    emacs_lisp_dir, ensure_stdlib_files, ensure_stdlib_files_for_dir, load_full_bootstrap,
 };
 
 fn main() {
@@ -30,7 +30,7 @@ fn run() {
         std::process::exit(2);
     };
 
-    // Ensure secondary lib files exist on disk
+    // Ensure secondary lib files exist on disk.
     let extra_libs = [
         "emacs-lisp/cl-lib",
         "emacs-lisp/cl-macs",
@@ -45,28 +45,9 @@ fn run() {
         "emacs-lisp/gv",
         "emacs-lisp/map",
     ];
-    for f in &extra_libs {
-        let dest = format!("{}/{f}.el", rele_elisp::eval::bootstrap::STDLIB_DIR);
-        if std::path::Path::new(&dest).exists() {
-            continue;
-        }
-        if let Some(parent) = std::path::Path::new(&dest).parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let plain = format!("{emacs_dir}/{f}.el");
-        let gz = format!("{emacs_dir}/{f}.el.gz");
-        if std::path::Path::new(&plain).exists() {
-            let _ = std::fs::copy(&plain, &dest);
-        } else if std::path::Path::new(&gz).exists() {
-            if let Ok(out) = std::process::Command::new("gunzip")
-                .args(["-c", &gz])
-                .output()
-            {
-                if out.status.success() {
-                    let _ = std::fs::write(&dest, out.stdout);
-                }
-            }
-        }
+    if !ensure_stdlib_files_for_dir(emacs_dir, &extra_libs) {
+        eprintln!("Cannot stage secondary Emacs Lisp libraries.");
+        std::process::exit(2);
     }
 
     // Create interpreter and run full bootstrap
@@ -79,7 +60,12 @@ fn run() {
     // deadlocks in the bytecode VM during require chains. These are not
     // needed for the test suite.
     for feature in [
-        "help-mode", "debug", "backtrace", "ewoc", "find-func", "pp",
+        "help-mode",
+        "debug",
+        "backtrace",
+        "ewoc",
+        "find-func",
+        "pp",
         "help-macro",
     ] {
         let _ = interp.eval_source(&format!("(provide '{feature})"));
@@ -198,12 +184,17 @@ fn run() {
     // Also check if features were provided
     println!();
     println!("=== Feature check ===");
-    for feature in ["cl-lib", "cl-macs", "cl-extra", "cl-seq", "subr-x", "pcase", "ert"] {
+    for feature in [
+        "cl-lib", "cl-macs", "cl-extra", "cl-seq", "subr-x", "pcase", "ert",
+    ] {
         let check = format!("(featurep '{feature})");
         match interp.eval_source(&check) {
             Ok(v) => {
                 let provided = !matches!(v, rele_elisp::LispObject::Nil);
-                println!("  {feature}: {}", if provided { "PROVIDED" } else { "missing" });
+                println!(
+                    "  {feature}: {}",
+                    if provided { "PROVIDED" } else { "missing" }
+                );
             }
             Err(_) => println!("  {feature}: ERROR"),
         }
@@ -211,11 +202,9 @@ fn run() {
 }
 
 fn read_file(path: &str) -> Option<String> {
-    std::fs::read_to_string(path)
-        .ok()
-        .or_else(|| {
-            std::fs::read(path)
-                .ok()
-                .map(|bytes| bytes.iter().map(|&b| char::from(b)).collect())
-        })
+    std::fs::read_to_string(path).ok().or_else(|| {
+        std::fs::read(path)
+            .ok()
+            .map(|bytes| bytes.iter().map(|&b| char::from(b)).collect())
+    })
 }

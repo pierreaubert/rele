@@ -8,6 +8,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "make-keymap" => Some(prim_make_keymap(args)),
         "keymapp" => Some(prim_keymapp(args)),
         "define-key" => Some(prim_define_key(args)),
+        "make-composed-keymap" => Some(prim_make_composed_keymap(args)),
         "type-of" => Some(prim_type_of(args)),
         _ => None,
     }
@@ -15,12 +16,14 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 
 pub fn prim_make_sparse_keymap(args: &LispObject) -> ElispResult<LispObject> {
     let _ = args;
-    Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec![
-        LispObject::symbol("keymap"),
-        LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec![]))),
-        LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec![]))),
-        LispObject::cons(LispObject::nil(), LispObject::nil()),
-    ]))))
+    Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(
+        vec![
+            LispObject::symbol("keymap"),
+            LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec![]))),
+            LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec![]))),
+            LispObject::cons(LispObject::nil(), LispObject::nil()),
+        ],
+    ))))
 }
 
 pub fn prim_make_keymap(args: &LispObject) -> ElispResult<LispObject> {
@@ -44,6 +47,34 @@ pub fn prim_define_key(args: &LispObject) -> ElispResult<LispObject> {
     let def = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
     let _ = (map, key, def);
     Ok(LispObject::nil())
+}
+
+pub fn prim_make_composed_keymap(args: &LispObject) -> ElispResult<LispObject> {
+    let maps = args.first().unwrap_or_else(LispObject::nil);
+    let parent = args.nth(1).unwrap_or_else(LispObject::nil);
+    let mut entries = Vec::new();
+
+    if !maps.is_nil() {
+        if prim_keymapp(&LispObject::cons(maps.clone(), LispObject::nil()))? == LispObject::t() {
+            entries.push(maps);
+        } else {
+            let mut cur = maps;
+            while let Some((car, cdr)) = cur.destructure_cons() {
+                entries.push(car);
+                cur = cdr;
+            }
+        }
+    }
+
+    if !parent.is_nil() {
+        entries.push(parent);
+    }
+
+    let mut result = LispObject::nil();
+    for entry in entries.into_iter().rev() {
+        result = LispObject::cons(entry, result);
+    }
+    Ok(LispObject::cons(LispObject::symbol("keymap"), result))
 }
 
 pub fn prim_type_of(args: &LispObject) -> ElispResult<LispObject> {

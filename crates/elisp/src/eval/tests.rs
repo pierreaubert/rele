@@ -37,12 +37,10 @@
 // `eval::tests` keep working. New code should import from
 // `eval::bootstrap` directly.
 pub use super::bootstrap::{
-    make_stdlib_interp, ensure_stdlib_files, load_full_bootstrap,
-    load_cl_lib, emacs_lisp_dir, emacs_source_root,
-    probe_emacs_file, read_emacs_source, load_prerequisites,
-    load_file_progress, run_rele_ert_tests, run_rele_ert_tests_detailed,
-    run_rele_ert_tests_detailed_with_timeout,
-    ErtRunStats, ErtTestResult, BOOTSTRAP_FILES, STDLIB_DIR,
+    BOOTSTRAP_FILES, ErtRunStats, ErtTestResult, STDLIB_DIR, emacs_lisp_dir, emacs_source_root,
+    ensure_stdlib_files, load_cl_lib, load_file_progress, load_full_bootstrap, load_prerequisites,
+    make_stdlib_interp, probe_emacs_file, read_emacs_source, run_rele_ert_tests,
+    run_rele_ert_tests_detailed, run_rele_ert_tests_detailed_with_timeout,
 };
 
 #[allow(unused_imports)]
@@ -555,9 +553,7 @@ fn test_symbol_cells_per_interpreter() {
         .eval(read("(defun isolation-probe () 42)").unwrap())
         .unwrap();
     assert_eq!(
-        interp1
-            .eval(read("(isolation-probe)").unwrap())
-            .unwrap(),
+        interp1.eval(read("(isolation-probe)").unwrap()).unwrap(),
         LispObject::integer(42),
     );
     assert!(
@@ -570,9 +566,7 @@ fn test_symbol_cells_per_interpreter() {
         .eval(read("(setq isolation-var 99)").unwrap())
         .unwrap();
     assert_eq!(
-        interp1
-            .eval(read("isolation-var").unwrap())
-            .unwrap(),
+        interp1.eval(read("isolation-var").unwrap()).unwrap(),
         LispObject::integer(99),
     );
     assert!(
@@ -860,7 +854,6 @@ fn test_unwind_protect_on_throw() {
 
 // --- Phase 3: stdlib loading tests ---
 
-
 #[test]
 fn test_load_debug_early_el() {
     let source = match std::fs::read_to_string(&format!("{STDLIB_DIR}/emacs-lisp/debug-early.el")) {
@@ -1076,7 +1069,9 @@ fn test_jit_compile_bytecode_succeeds() {
         interactive: None,
     };
     let sym = crate::obarray::intern("rele-jit-compile-bc-test");
-    interp.state.set_function_cell(sym, LispObject::BytecodeFn(bc));
+    interp
+        .state
+        .set_function_cell(sym, LispObject::BytecodeFn(bc));
 
     // Eager compile must succeed and bump compiled_count.
     interp
@@ -1336,10 +1331,9 @@ fn test_batched_defun_stubs_resolve_round4() {
         ("(symbol-plist 'x)", "nil"),
         ("(mapatoms #'ignore)", "nil"),
         ("(unintern 'foo)", "nil"),
-        // add-to-list is stubbed as a nil-returning no-op; mutation
-        // through a var cell requires the stateful dispatch, which
-        // is a future batch.
-        ("(add-to-list 'tl4 'a)", "nil"),
+        // add-to-list mutates through the symbol value cell; cl-preloaded's
+        // struct bootstrap relies on this for child-tag propagation.
+        ("(add-to-list 'tl4 'a)", "(a)"),
         // Buffer / window
         // `(buffer-list)` resolves via the buffer subsystem, not the
         // nil-stub in primitives.rs — the scratch buffer is always
@@ -4150,6 +4144,126 @@ fn test_plist_put_replaces_in_place() {
             .unwrap(),
         LispObject::integer(2)
     );
+}
+
+#[test]
+fn test_function_put_get_and_alias_lookup() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    interp
+        .eval_source(
+            "(progn
+               (defun function-prop-target () nil)
+               (defalias 'function-prop-alias #'function-prop-target)
+               (function-put 'function-prop-target 'prop 'value)
+               (list
+                 (function-get 'function-prop-target 'prop)
+                 (function-get 'function-prop-alias 'prop)))",
+        )
+        .map(|value| {
+            assert_eq!(
+                value,
+                LispObject::cons(
+                    LispObject::symbol("value"),
+                    LispObject::cons(LispObject::symbol("value"), LispObject::nil()),
+                )
+            );
+        })
+        .unwrap();
+}
+
+#[test]
+fn test_function_get_non_symbol_returns_nil() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(
+        interp
+            .eval_source("(function-get '(lambda (x) x) 'gv-expander)")
+            .unwrap(),
+        LispObject::nil()
+    );
+}
+
+#[test]
+fn test_bootstrap_metadata_primitives() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    interp
+        .eval_source(
+            "(progn
+               (def-edebug-elem-spec 'bootstrap-edebug '(sexp))
+               (defvar-1 'bootstrap-defvar 10 \"doc\")
+               (list
+                 (get 'bootstrap-edebug 'edebug-elem-spec)
+                 bootstrap-defvar
+                 (get 'bootstrap-defvar 'variable-documentation)))",
+        )
+        .map(|value| {
+            assert_eq!(
+                value,
+                LispObject::cons(
+                    LispObject::cons(LispObject::symbol("sexp"), LispObject::nil()),
+                    LispObject::cons(
+                        LispObject::integer(10),
+                        LispObject::cons(LispObject::string("doc"), LispObject::nil()),
+                    ),
+                )
+            );
+        })
+        .unwrap();
+}
+
+#[test]
+fn test_feature_primitives_work_through_function_cells() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    interp
+        .eval_source(
+            "(progn
+               (funcall 'provide 'function-cell-feature)
+               (list
+                 (funcall 'featurep 'function-cell-feature)
+                 (funcall 'require 'function-cell-feature)))",
+        )
+        .map(|value| {
+            assert_eq!(
+                value,
+                LispObject::cons(
+                    LispObject::t(),
+                    LispObject::cons(
+                        LispObject::symbol("function-cell-feature"),
+                        LispObject::nil(),
+                    ),
+                )
+            );
+        })
+        .unwrap();
+}
+
+#[test]
+fn test_cl_generic_define_method_installs_primary_function() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    interp
+        .eval_source(
+            "(progn
+               (defalias 'bootstrap-generic
+                 (cl-generic-define 'bootstrap-generic '(x) nil))
+               (cl-generic-define-method
+                 'bootstrap-generic nil '(x) nil
+                 (lambda (x) (list 'primary x)))
+               (bootstrap-generic 7))",
+        )
+        .map(|value| {
+            assert_eq!(
+                value,
+                LispObject::cons(
+                    LispObject::symbol("primary"),
+                    LispObject::cons(LispObject::integer(7), LispObject::nil()),
+                )
+            );
+        })
+        .unwrap();
 }
 
 // -- Phase 1b: Environment keyed by SymbolId + function/value cells --

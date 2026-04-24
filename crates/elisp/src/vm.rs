@@ -6,9 +6,9 @@
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::eval::InterpreterState;
+use crate::eval::SyncRefCell as RwLock;
 use crate::object::{BytecodeFunction, LispObject};
 use crate::value::{Value, obj_to_value, value_to_obj};
-use crate::eval::SyncRefCell as RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -2423,7 +2423,7 @@ mod elc_tests {
 
     #[test]
     fn test_parse_subr_elc() {
-        let Some(lisp_dir) = crate::eval::tests::emacs_lisp_dir() else {
+        let Some(lisp_dir) = crate::eval::bootstrap::emacs_lisp_dir() else {
             return;
         };
         let path = format!("{lisp_dir}/subr.elc");
@@ -2454,7 +2454,7 @@ mod elc_tests {
 
     #[test]
     fn test_parse_cl_macs_elc() {
-        let Some(lisp_dir) = crate::eval::tests::emacs_lisp_dir() else {
+        let Some(lisp_dir) = crate::eval::bootstrap::emacs_lisp_dir() else {
             return;
         };
         let path = format!("{lisp_dir}/emacs-lisp/cl-macs.elc");

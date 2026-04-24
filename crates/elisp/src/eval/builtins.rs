@@ -43,10 +43,10 @@ pub(super) fn eval_put(
     // put requires symbols for both SYM and PROP. If either is
     // non-symbol, return val silently (Emacs would error, but many
     // .elc files pass non-symbol values during bootstrap).
-    let Some(sym_id) = sym.as_symbol_id() else {
+    let Some(sym_id) = plist_symbol_id(&sym) else {
         return Ok(obj_to_value(val));
     };
-    let Some(prop_id) = prop.as_symbol_id() else {
+    let Some(prop_id) = plist_symbol_id(&prop) else {
         return Ok(obj_to_value(val));
     };
     state.put_plist(sym_id, prop_id, val.clone());
@@ -75,13 +75,22 @@ pub(super) fn eval_get(
         state,
     )?);
 
-    let Some(sym_id) = sym.as_symbol_id() else {
+    let Some(sym_id) = plist_symbol_id(&sym) else {
         return Ok(Value::nil());
     };
-    let Some(prop_id) = prop.as_symbol_id() else {
+    let Some(prop_id) = plist_symbol_id(&prop) else {
         return Ok(Value::nil());
     };
     Ok(obj_to_value(state.get_plist(sym_id, prop_id)))
+}
+
+fn plist_symbol_id(obj: &LispObject) -> Option<crate::obarray::SymbolId> {
+    match obj {
+        LispObject::Symbol(id) => Some(*id),
+        LispObject::T => Some(crate::obarray::intern("t")),
+        LispObject::Nil => Some(crate::obarray::intern("nil")),
+        _ => None,
+    }
 }
 pub(super) fn eval_provide(
     args: Value,

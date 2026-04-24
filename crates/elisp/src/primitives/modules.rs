@@ -164,7 +164,7 @@ pub fn register(interp: &mut Interpreter) {
 ;; erc-d scenario server but accessed at load time. Pre-registering it
 ;; as nil lets the enclosing test reach its real assertions. All other
 ;; top-hit erc-* / erc-d-* variables are already defined in
-;; `eval::tests::load_full_bootstrap` — see R5 / R7 commit messages.
+;; `eval::bootstrap::load_full_bootstrap` — see R5 / R7 commit messages.
 (defvar dumb-server-var nil)                          ;; 20 hits
 (defvar cl--random-state (vector 'cl--random-state-tag 0 1 2)) ;; cl-random state
 ;; R6: eshell primitive stubs from ERT baseline

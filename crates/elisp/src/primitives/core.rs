@@ -153,6 +153,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "make-keymap",
         "keymapp",
         "define-key",
+        "make-composed-keymap",
         "type-of",
     ] {
         interp.define(name, LispObject::primitive(name));
@@ -342,6 +343,24 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     interp.define("apply", LispObject::primitive("apply"));
     interp.define("put", LispObject::primitive("put"));
     interp.define("get", LispObject::primitive("get"));
+    interp.define("provide", LispObject::primitive("provide"));
+    interp.define("featurep", LispObject::primitive("featurep"));
+    interp.define("require", LispObject::primitive("require"));
+    interp.define("function-put", LispObject::primitive("function-put"));
+    interp.define("function-get", LispObject::primitive("function-get"));
+    interp.define(
+        "def-edebug-elem-spec",
+        LispObject::primitive("def-edebug-elem-spec"),
+    );
+    interp.define("defvar-1", LispObject::primitive("defvar-1"));
+    interp.define(
+        "cl-generic-define",
+        LispObject::primitive("cl-generic-define"),
+    );
+    interp.define(
+        "cl-generic-define-method",
+        LispObject::primitive("cl-generic-define-method"),
+    );
 
     // Batch register: all headless-safe stubs that are only
     // dispatched through the stubs module. This covers hundreds
@@ -842,6 +861,10 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "abbrev-table-put",
         "copy-abbrev-table",
         "define-abbrev",
+        "add-minor-mode",
+        "easy-menu-do-define",
+        "tool-bar-local-item",
+        "tool-bar-local-item-from-menu",
         "number-sequence",
         "set-visited-file-name",
         "clear-visited-file-modtime",

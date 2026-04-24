@@ -23,6 +23,60 @@ use crate::reader::read;
 /// gitignored).
 pub const STDLIB_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tmp/elisp-stdlib");
 
+/// Decompress/copy the requested Emacs Lisp files into [`STDLIB_DIR`].
+///
+/// Each entry is relative to the Emacs `lisp/` directory and omits the
+/// `.el` suffix, for example `emacs-lisp/cl-lib`. Existing staged files are
+/// left untouched, so this is cheap to call from tests and audit binaries.
+pub fn ensure_stdlib_files_for_dir(emacs_lisp_dir: &str, files: &[&str]) -> bool {
+    for f in files {
+        if !stage_stdlib_file(emacs_lisp_dir, f) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Like [`ensure_stdlib_files_for_dir`], but discovers the Emacs lisp
+/// directory from `EMACS_LISP_DIR` or common install locations.
+pub fn ensure_stdlib_files_for(files: &[&str]) -> bool {
+    let Some(emacs_lisp_dir) = emacs_lisp_dir() else {
+        return false;
+    };
+    ensure_stdlib_files_for_dir(emacs_lisp_dir, files)
+}
+
+fn stage_stdlib_file(emacs_lisp_dir: &str, file: &str) -> bool {
+    let dest = format!("{STDLIB_DIR}/{file}.el");
+    if std::path::Path::new(&dest).exists() {
+        return true;
+    }
+    if let Some(parent) = std::path::Path::new(&dest).parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return false;
+        }
+    }
+
+    let plain = format!("{emacs_lisp_dir}/{file}.el");
+    let gz = format!("{emacs_lisp_dir}/{file}.el.gz");
+    if std::path::Path::new(&plain).exists() {
+        return std::fs::copy(&plain, &dest).is_ok();
+    }
+    if std::path::Path::new(&gz).exists() {
+        // Shelling out keeps the crate dependency-free. This path is used by
+        // tests/audits, never the editor UI thread.
+        if let Ok(out) = std::process::Command::new("gunzip")
+            .args(["-c", &gz])
+            .output()
+        {
+            return out.status.success() && std::fs::write(&dest, out.stdout).is_ok();
+        }
+    }
+    // Some Emacs installs omit optional files from a given version/platform;
+    // callers already skip files that were not staged.
+    true
+}
+
 pub fn make_stdlib_interp() -> Interpreter {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
@@ -120,9 +174,9 @@ pub fn make_stdlib_interp() -> Interpreter {
     // a vector as the char-table so `(set-char-table-range (nth 1 global-map) ...)`
     // in mule-conf.el doesn't error.
     {
-        let char_table = LispObject::Vector(std::sync::Arc::new(
-            crate::eval::SyncRefCell::new(vec![LispObject::nil(); 0x10000]),
-        ));
+        let char_table = LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(
+            vec![LispObject::nil(); 0x10000],
+        )));
         let global_map = LispObject::cons(
             LispObject::symbol("keymap"),
             LispObject::cons(char_table, LispObject::nil()),
@@ -246,7 +300,9 @@ pub fn make_stdlib_interp() -> Interpreter {
     // Phase 7d — variables referenced by various stdlib files.
     interp.define(
         "function-key-map",
-        LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(Vec::new()))),
+        LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(
+            Vec::new(),
+        ))),
     );
     interp.define(
         "exec-path",
@@ -744,7 +800,10 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("treesit-ready-p", LispObject::primitive("ignore"));
     interp.define("treesit-parser-create", LispObject::primitive("ignore"));
     interp.define("indent-line-to", LispObject::primitive("ignore"));
-    interp.define("current-indentation", LispObject::primitive("current-indentation"));
+    interp.define(
+        "current-indentation",
+        LispObject::primitive("current-indentation"),
+    );
     interp.define("indent-to", LispObject::primitive("ignore"));
 
     // Phase 5 stubs — display, timer, font-lock, syntax, mouse, isearch
@@ -1222,15 +1281,42 @@ pub fn make_stdlib_interp() -> Interpreter {
     // to install. These are simple functions that set major-mode and
     // run the mode hook — enough for tests to proceed.
     for mode_name in [
-        "ruby-mode", "cperl-mode", "f90-mode", "sgml-mode",
-        "shell-script-mode", "asm-mode", "bat-mode", "shell-mode",
-        "mhtml-mode", "conf-colon-mode", "diff-mode", "c-mode",
-        "c++-mode", "java-mode", "objc-mode", "idl-mode", "pike-mode",
-        "awk-mode", "autoconf-mode", "scheme-mode", "pascal-mode",
-        "sh-mode", "perl-mode", "makefile-mode", "tcl-mode",
-        "ada-mode", "sql-mode", "latex-mode", "octave-mode",
-        "fortran-mode", "nxml-mode", "css-mode", "js-mode",
-        "typescript-mode", "python-mode", "elixir-ts-mode",
+        "ruby-mode",
+        "cperl-mode",
+        "f90-mode",
+        "sgml-mode",
+        "shell-script-mode",
+        "asm-mode",
+        "bat-mode",
+        "shell-mode",
+        "mhtml-mode",
+        "conf-colon-mode",
+        "diff-mode",
+        "c-mode",
+        "c++-mode",
+        "java-mode",
+        "objc-mode",
+        "idl-mode",
+        "pike-mode",
+        "awk-mode",
+        "autoconf-mode",
+        "scheme-mode",
+        "pascal-mode",
+        "sh-mode",
+        "perl-mode",
+        "makefile-mode",
+        "tcl-mode",
+        "ada-mode",
+        "sql-mode",
+        "latex-mode",
+        "octave-mode",
+        "fortran-mode",
+        "nxml-mode",
+        "css-mode",
+        "js-mode",
+        "typescript-mode",
+        "python-mode",
+        "elixir-ts-mode",
     ] {
         let hook_name = format!("{mode_name}-hook");
         let mode_fn = format!(
@@ -1258,7 +1344,10 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("load-history", LispObject::nil());
     interp.define("buffer-undo-list", LispObject::nil());
     interp.define("open-paren-in-column-0-is-defun-start", LispObject::t());
-    interp.define("grep-find-template", LispObject::string("find <D> <X> -type f <F> -exec grep <C> -nH --null -e <R> \\{\\} +"));
+    interp.define(
+        "grep-find-template",
+        LispObject::string("find <D> <X> -type f <F> -exec grep <C> -nH --null -e <R> \\{\\} +"),
+    );
     interp.define("internal--daemon-sockname", LispObject::nil());
     interp.define("show-all", LispObject::nil());
     interp.define("filter-binaries", LispObject::nil());
@@ -1308,18 +1397,15 @@ pub fn make_stdlib_interp() -> Interpreter {
              (make-vector 10 nil) (make-hash-table :test 'eq) \
              'cl-struct-cl-structure-class-tags 'cl-structure-class nil))",
     );
-    let _ = interp.eval_source(
-        "(defvar cl-struct-cl-structure-class-tags '(cl-structure-class))",
-    );
+    let _ = interp.eval_source("(defvar cl-struct-cl-structure-class-tags '(cl-structure-class))");
     let _ = interp.eval_source(
         "(put 'cl-structure-object 'cl--class \
            (cl--struct-new-class 'cl-structure-object \"root\" nil nil nil \
              [] (make-hash-table :test 'eq) \
              'cl-struct-cl-structure-object-tags 'cl-structure-object nil))",
     );
-    let _ = interp.eval_source(
-        "(defvar cl-struct-cl-structure-object-tags '(cl-structure-object))",
-    );
+    let _ =
+        interp.eval_source("(defvar cl-struct-cl-structure-object-tags '(cl-structure-object))");
     // cl-slot-descriptor is also needed by cl-struct-define
     let _ = interp.eval_source(
         "(put 'cl-slot-descriptor 'cl--class \
@@ -1327,9 +1413,7 @@ pub fn make_stdlib_interp() -> Interpreter {
              (make-vector 4 nil) (make-hash-table :test 'eq) \
              'cl-struct-cl-slot-descriptor-tags 'cl-slot-descriptor nil))",
     );
-    let _ = interp.eval_source(
-        "(defvar cl-struct-cl-slot-descriptor-tags '(cl-slot-descriptor))",
-    );
+    let _ = interp.eval_source("(defvar cl-struct-cl-slot-descriptor-tags '(cl-slot-descriptor))");
     // cl--slot-descriptor accessors
     for (i, name) in [
         (1, "cl--slot-descriptor-name"),
@@ -1342,9 +1426,7 @@ pub fn make_stdlib_interp() -> Interpreter {
         ));
     }
     // cl--struct-default-parent
-    let _ = interp.eval_source(
-        "(defvar cl--struct-default-parent 'cl-structure-object)",
-    );
+    let _ = interp.eval_source("(defvar cl--struct-default-parent 'cl-structure-object)");
     // add-to-list stub
     let _ = interp.eval_source(
         "(unless (fboundp 'add-to-list) \
@@ -1526,42 +1608,8 @@ pub const BOOTSTRAP_FILES: &[&str] = &[
     "emacs-lisp/cconv",
 ];
 
-
 pub fn ensure_stdlib_files() -> bool {
-    let Some(emacs_lisp_dir) = emacs_lisp_dir() else {
-        return false;
-    };
-
-    let files = BOOTSTRAP_FILES;
-
-    for f in files {
-        let dest = format!("{STDLIB_DIR}/{f}.el");
-        if std::path::Path::new(&dest).exists() {
-            continue;
-        }
-        if let Some(parent) = std::path::Path::new(&dest).parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let plain = format!("{}/{}.el", emacs_lisp_dir, f);
-        let gz = format!("{}/{}.el.gz", emacs_lisp_dir, f);
-        if std::path::Path::new(&plain).exists() {
-            let _ = std::fs::copy(&plain, &dest);
-        } else if std::path::Path::new(&gz).exists() {
-            // Prefer a pure-Rust gunzip if `flate2` is available; fall
-            // back to the system `gunzip` binary. Shelling out is the
-            // only portable choice without an extra dependency, so it
-            // stays as the fallback.
-            let output = std::process::Command::new("gunzip")
-                .args(["-c", &gz])
-                .output();
-            if let Ok(out) = output {
-                if out.status.success() {
-                    let _ = std::fs::write(&dest, &out.stdout);
-                }
-            }
-        }
-    }
-    true
+    ensure_stdlib_files_for(BOOTSTRAP_FILES)
 }
 
 pub fn load_prerequisites(interp: &Interpreter) {
@@ -1581,7 +1629,10 @@ pub fn load_prerequisites(interp: &Interpreter) {
 
 /// Run a stdlib loading test: parse all forms, eval each, count successes.
 /// If the reader fails to parse the source, returns the reader error.
-pub fn load_file_progress(interp: &Interpreter, source: &str) -> (usize, usize, Vec<(usize, String)>) {
+pub fn load_file_progress(
+    interp: &Interpreter,
+    source: &str,
+) -> (usize, usize, Vec<(usize, String)>) {
     let forms = match crate::read_all(source) {
         Ok(f) => f,
         Err(e) => {
@@ -1610,13 +1661,19 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
     // deadlocks in the bytecode VM during nested require chains.
     // These libraries are not needed for the test suite.
     for feature in [
-        "help-mode", "debug", "backtrace", "ewoc", "find-func", "pp",
+        "help-mode",
+        "debug",
+        "backtrace",
+        "ewoc",
+        "find-func",
+        "pp",
         "help-macro",
         // ert/ert-x: our eval dispatch already handles ert-deftest,
         // should, should-not, should-error, skip-unless natively.
         // Loading the real ert.el triggers a 20+ second require chain
         // that times out the worker. Pre-providing avoids the chain.
-        "ert", "ert-x",
+        "ert",
+        "ert-x",
     ] {
         let _ = interp.eval_source(&format!("(provide '{feature})"));
     }
@@ -1714,36 +1771,17 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
 }
 
 pub fn load_cl_lib(interp: &Interpreter) {
-    let Some(emacs_dir) = emacs_lisp_dir() else {
-        return;
-    };
-    for f in [
+    let files = [
         "emacs-lisp/cl-macs",
         "emacs-lisp/cl-extra",
         "emacs-lisp/cl-seq",
         "emacs-lisp/cl-print",
-    ] {
+    ];
+    if !ensure_stdlib_files_for(&files) {
+        return;
+    }
+    for f in files {
         let dest = format!("{STDLIB_DIR}/{f}.el");
-        if !std::path::Path::new(&dest).exists() {
-            if let Some(parent) = std::path::Path::new(&dest).parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let plain = format!("{emacs_dir}/{f}.el");
-            let gz = format!("{emacs_dir}/{f}.el.gz");
-            if std::path::Path::new(&plain).exists() {
-                let _ = std::fs::copy(&plain, &dest);
-            } else if std::path::Path::new(&gz).exists() {
-                if let Ok(out) = std::process::Command::new("gunzip")
-                    .args(["-c", &gz])
-                    .output()
-                {
-                    if out.status.success() {
-                        let _ = std::fs::write(&dest, out.stdout);
-                    }
-                }
-            }
-        }
-
         // Load the file form-by-form with periodic GC — cl-macs.el
         // is ~3500 lines and macro expansion blows the heap without
         // forced collection.
@@ -2158,4 +2196,3 @@ pub fn run_rele_ert_tests(interp: &Interpreter) -> ErtRunStats {
     }
     stats
 }
-

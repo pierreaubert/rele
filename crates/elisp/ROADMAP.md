@@ -1,10 +1,12 @@
-# rele-elisp Roadmap
+# Rust Emacs Roadmap: `rele-elisp`
 
-This file tracks the execution plan for making `rele-elisp` viable as an
-Emacs core in two stages:
+This file tracks the execution plan for building the Emacs Lisp core of our
+Rust Emacs clone. The editor can only feel Emacs-like once this crate can load
+and run real Emacs Lisp reliably, so the roadmap is intentionally staged:
 
-1. Interpreter correctness and bootstrap breadth first.
-2. JIT speedups only after the interpreter path is stable.
+1. Make the interpreter correct, isolated, and useful with real stdlib code.
+2. Build enough editor-facing primitives for packages and commands to run.
+3. Add JIT speedups only after the interpreter path is stable.
 
 ## Success Criteria
 
@@ -15,6 +17,7 @@ Interpreter-ready means:
 - Bootstrap helpers can reliably load the core stdlib stack:
   `subr`, `cl-lib`, `macroexp`, `pcase`, `ert`
 - ERT smoke tests are deterministic and isolated across interpreter instances
+- Core command/package patterns work through the `EditorCallbacks` boundary
 
 JIT-ready means:
 - Tiered execution preserves interpreter semantics on redefinition, deopt,
@@ -46,9 +49,9 @@ Exit condition:
 
 ## Milestone 3: Bootstrap as Runtime Capability
 
-- [ ] Keep bootstrap helpers in reusable runtime code, not test-only code.
-- [ ] Move stdlib staging to repo `tmp/` to match repo policy.
-- [ ] Expose a clear bootstrap API used by tests, audit tools, and future app
+- [x] Keep bootstrap helpers in reusable runtime code, not test-only code.
+- [x] Move stdlib staging to repo `tmp/` to match repo policy.
+- [x] Expose a clear bootstrap API used by tests, audit tools, and future app
       integration.
 - [ ] Add a small “bootstrap health” suite that exercises the core load chain.
 
@@ -61,15 +64,19 @@ Prioritize missing semantics that unlock real Emacs libraries instead of adding
 more one-off stubs.
 
 Current high-value gap buckets:
-- [ ] `function-put`
-- [ ] `require` / feature loading behavior
+- [x] `function-put` / `function-get`
+- [x] `require` / `provide` / `featurep` through function-cell dispatch
 - [ ] `after-load-alist`
-- [ ] `cl-struct-define`
-- [ ] `cl-generic-define` and related generic-function plumbing
-- [ ] `def-edebug-elem-spec`
-- [ ] `add-minor-mode`
-- [ ] `make-composed-keymap`
-- [ ] `easy-menu-do-define`
+- [ ] `cl-struct-define` (partial: custom constructors, predicates, tags, and
+      metadata slot records now work; `cl--class-p` inheritance remains)
+- [x] `cl-generic-define` / `cl-generic-define-method` bytecode entrypoints
+- [ ] Full `cl-generic` dispatch, including `(eql ...)` specializers
+- [x] `def-edebug-elem-spec`
+- [x] `defvar-1`
+- [x] `add-minor-mode`
+- [x] `make-composed-keymap`
+- [x] `easy-menu-do-define`
+- [x] `tool-bar-local-item`
 - [ ] Wrong-type regressions hit during `cl-*`, `oclosure`, and character data
 
 Exit condition:
@@ -116,23 +123,30 @@ Exit condition:
 
 These are the next tasks to pick up in order:
 
-1. Get the targeted interpreter tests stable:
+1. [x] Get the targeted interpreter tests stable:
    `test_cl_files_load_progress`, `test_emacs_ert_can_run_a_test`,
    `test_ert_run_per_test_timeout`.
-2. Reduce remaining ERT leakage by replacing test-local cleanup with
+2. [x] Implement `function-put` / `function-get` as interpreter-local function
+   property primitives.
+3. [x] Route `provide`, `featurep`, and `require` through function-cell
+   dispatch so bytecode can call them.
+4. [x] Add load-time metadata/helper primitives:
+   `def-edebug-elem-spec`, `defvar-1`, `add-minor-mode`,
+   `make-composed-keymap`, `easy-menu-do-define`, and tool-bar helpers.
+5. [ ] Reduce remaining ERT leakage by replacing test-local cleanup with
    interpreter/runtime isolation.
-3. Move bootstrap staging off `/tmp/elisp-stdlib` into repo `tmp/`.
-4. Turn the current bootstrap failures into a short tracked matrix:
+6. [x] Move bootstrap staging off `/tmp/elisp-stdlib` into repo `tmp/`.
+7. [x] Turn the current bootstrap failures into a short tracked matrix:
    file, failing form, error class, missing primitive/special-form/semantic.
-5. Fix the highest-frequency bootstrap blockers before adding new stubs.
+8. [x] Finish the `cl-preloaded` circular bootstrap: it now loads `94/94`
+   forms, including the built-in `t` type registration path.
+9. [ ] Fix the highest-frequency bootstrap blockers before adding new stubs.
 
 Current short list from targeted runs:
-- `function-put` appears repeatedly in `cl-lib`, `cl-macs`, `gv`, and `seq`
-- `require` still breaks parts of `gv`
-- `def-edebug-elem-spec` still blocks parts of `gv`
-- `cl-generic-define` / `cl-generic-define-method` still block `seq`
-- `add-minor-mode`, `make-composed-keymap`, and `easy-menu-do-define`
-  still appear during heavier stdlib loads
+- `oclosure` still needs closure object arity/class registration work
+- full `cl-generic` source loading still lacks `(eql ...)` specializer dispatch
+- charset-heavy files still hit eval-op limits while building mapping tables
+- `isearch` still exposes keymap initialization and symbol-normalization gaps
 
 ## Notes
 

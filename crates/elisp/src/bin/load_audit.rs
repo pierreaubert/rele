@@ -1,19 +1,18 @@
 //! Audit the bootstrap loading chain.
 //!
-//! Loads the bootstrap files in order (the same list as BOOTSTRAP_FILES
-//! in eval/tests.rs), reporting per-file and per-form success rates.
+//! Loads the bootstrap files in order, reporting per-file and per-form
+//! success rates.
 //!
 //! Usage:
 //!   load_audit [--emacs-lisp-dir DIR]
 //!
 //! Falls back to the same probing logic as the test harness.
 
-
 fn main() {
     let emacs_dir = std::env::args()
         .skip_while(|a| a != "--emacs-lisp-dir")
         .nth(1)
-        .or_else(find_emacs_lisp_dir);
+        .or_else(|| rele_elisp::eval::bootstrap::emacs_lisp_dir().map(ToString::to_string));
 
     let Some(emacs_dir) = emacs_dir else {
         eprintln!("Cannot find Emacs lisp dir. Set --emacs-lisp-dir or EMACS_LISP_DIR env.");
@@ -23,54 +22,38 @@ fn main() {
     eprintln!("Using Emacs lisp dir: {emacs_dir}");
 
     let stdlib_dir = rele_elisp::eval::bootstrap::STDLIB_DIR;
-    let _ = std::fs::create_dir_all(stdlib_dir);
-
     let bootstrap_files = rele_elisp::eval::bootstrap::BOOTSTRAP_FILES;
 
     // Ensure bootstrap files + commonly-required libraries exist
     let extra_libs = [
-        "emacs-lisp/cl-lib", "emacs-lisp/cl-macs", "emacs-lisp/cl-extra",
-        "emacs-lisp/cl-seq", "emacs-lisp/cl-print",
-        "emacs-lisp/subr-x", "emacs-lisp/pcase", "emacs-lisp/rx",
-        "emacs-lisp/help-macro", "emacs-lisp/icons",
-        "textmodes/text-mode", "emacs-lisp/rect",
-        "international/cp51932", "international/eucjp-ms",
+        "emacs-lisp/cl-lib",
+        "emacs-lisp/cl-macs",
+        "emacs-lisp/cl-extra",
+        "emacs-lisp/cl-seq",
+        "emacs-lisp/cl-print",
+        "emacs-lisp/subr-x",
+        "emacs-lisp/pcase",
+        "emacs-lisp/rx",
+        "emacs-lisp/help-macro",
+        "emacs-lisp/icons",
+        "textmodes/text-mode",
+        "emacs-lisp/rect",
+        "international/cp51932",
+        "international/eucjp-ms",
         "international/charscript",
     ];
-    let all_files: Vec<&str> = bootstrap_files.iter().copied()
+    let all_files: Vec<&str> = bootstrap_files
+        .iter()
+        .copied()
         .chain(extra_libs.iter().copied())
         .collect();
-    for f in &all_files {
-        let dest = format!("{stdlib_dir}/{f}.el");
-        if std::path::Path::new(&dest).exists() {
-            continue;
-        }
-        if let Some(parent) = std::path::Path::new(&dest).parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let plain = format!("{emacs_dir}/{f}.el");
-        let gz = format!("{emacs_dir}/{f}.el.gz");
-        if std::path::Path::new(&plain).exists() {
-            let _ = std::fs::copy(&plain, &dest);
-        } else if std::path::Path::new(&gz).exists() {
-            if let Ok(out) = std::process::Command::new("gunzip")
-                .args(["-c", &gz])
-                .output()
-            {
-                if out.status.success() {
-                    let _ = std::fs::write(&dest, out.stdout);
-                }
-            }
-        }
+    if !rele_elisp::eval::bootstrap::ensure_stdlib_files_for_dir(&emacs_dir, &all_files) {
+        eprintln!("Failed to stage one or more Emacs Lisp files into {stdlib_dir}");
+        std::process::exit(2);
     }
 
     // Create interpreter with the same setup as the test harness
     let interp = rele_elisp::eval::bootstrap::make_stdlib_interp();
-
-    // make_stdlib_interp already sets up load-path from emacs_lisp_dir(),
-    // so we DON'T override it here — just ensure it also includes our
-    // /tmp/elisp-stdlib dirs at the front.
-    // (make_stdlib_interp already does this when emacs_lisp_dir() is available)
 
     let mut total_ok: usize = 0;
     let mut total_forms: usize = 0;
@@ -149,65 +132,20 @@ fn main() {
     eprintln!("=== Bootstrap Load Audit ===");
     eprintln!("  Files OK:   {file_ok}");
     eprintln!("  Files PART: {file_fail}");
-    eprintln!("  Forms OK:   {total_ok}/{total_forms} ({:.1}%)",
-        if total_forms > 0 { total_ok as f64 / total_forms as f64 * 100.0 } else { 0.0 });
+    eprintln!(
+        "  Forms OK:   {total_ok}/{total_forms} ({:.1}%)",
+        if total_forms > 0 {
+            total_ok as f64 / total_forms as f64 * 100.0
+        } else {
+            0.0
+        }
+    );
 }
 
 fn read_file(path: &str) -> Option<String> {
-    std::fs::read_to_string(path)
-        .ok()
-        .or_else(|| {
-            std::fs::read(path).ok().map(|bytes| {
-                bytes.iter().map(|&b| char::from(b)).collect()
-            })
-        })
-}
-
-fn find_emacs_lisp_dir() -> Option<String> {
-    if let Ok(v) = std::env::var("EMACS_LISP_DIR") {
-        return Some(v);
-    }
-    // Homebrew on macOS
-    for pattern in [
-        "/opt/homebrew/share/emacs/*/lisp",
-        "/usr/local/share/emacs/*/lisp",
-        "/usr/share/emacs/*/lisp",
-    ] {
-        if let Ok(mut entries) = glob_simple(pattern) {
-            entries.sort();
-            if let Some(last) = entries.pop() {
-                return Some(last);
-            }
-        }
-    }
-    // Direct source tree
-    let src = "/Volumes/home_ext1/Src/emacs/lisp";
-    if std::path::Path::new(src).is_dir() {
-        return Some(src.to_string());
-    }
-    None
-}
-
-fn glob_simple(pattern: &str) -> Result<Vec<String>, ()> {
-    // Very simple glob: split on * and list directories
-    let parts: Vec<&str> = pattern.split('*').collect();
-    if parts.len() != 2 {
-        return Err(());
-    }
-    let prefix = parts[0];
-    let suffix = parts[1];
-    let parent = std::path::Path::new(prefix);
-    if !parent.is_dir() {
-        return Err(());
-    }
-    let mut results = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(parent) {
-        for entry in entries.flatten() {
-            let full = format!("{}{}", entry.path().display(), suffix);
-            if std::path::Path::new(&full).is_dir() {
-                results.push(full);
-            }
-        }
-    }
-    Ok(results)
+    std::fs::read_to_string(path).ok().or_else(|| {
+        std::fs::read(path)
+            .ok()
+            .map(|bytes| bytes.iter().map(|&b| char::from(b)).collect())
+    })
 }

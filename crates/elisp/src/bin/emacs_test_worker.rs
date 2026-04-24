@@ -126,8 +126,14 @@ fn process_file<W: Write>(
             writeln!(
                 out,
                 "__SUMMARY__ {} {} {} {} {} {} {} {}",
-                stats.passed, stats.failed, stats.errored, stats.skipped,
-                stats.panicked, stats.timed_out, loaded, total,
+                stats.passed,
+                stats.failed,
+                stats.errored,
+                stats.skipped,
+                stats.panicked,
+                stats.timed_out,
+                loaded,
+                total,
             )?;
         }
         Err(_) => {
@@ -166,8 +172,7 @@ fn main() {
 }
 
 fn worker_main(cfg: Config) {
-
-    // Make sure the stdlib `.el` files exist under /tmp/elisp-stdlib/
+    // Make sure the stdlib `.el` files exist under bootstrap::STDLIB_DIR
     // (ensure_stdlib_files gunzips them from the Emacs installation on
     // first call — cheap if they already exist).
     if !ensure_stdlib_files() {

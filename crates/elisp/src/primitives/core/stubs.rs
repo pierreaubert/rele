@@ -50,6 +50,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "get-load-suffixes" => Ok(LispObject::nil()),
         "get-truename-buffer" => Ok(LispObject::nil()),
         "backtrace-frame--internal" => Ok(LispObject::nil()),
+        "add-minor-mode" => Ok(LispObject::nil()),
 
         "make-category-table" | "category-table" => Ok(LispObject::nil()),
         "make-network-process" => Err(ElispError::EvalError(
@@ -71,6 +72,9 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "insert-buffer-substring"
         | "insert-buffer-substring-no-properties" => Ok(LispObject::nil()),
         "window-system" | "redisplay" | "force-mode-line-update" => Ok(LispObject::nil()),
+        "easy-menu-do-define" | "tool-bar-local-item" | "tool-bar-local-item-from-menu" => {
+            Ok(LispObject::nil())
+        }
         "frame-visible-p" | "frame-live-p" | "frame-parameters" => Ok(LispObject::nil()),
         "window-live-p" | "minibufferp" | "minibuffer-window" | "minibuffer-depth"
         | "recursion-depth" => Ok(LispObject::nil()),
@@ -682,14 +686,14 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 
         // Numeric argument helpers
         "prefix-numeric-value" => Ok(LispObject::integer(
-            args.first()
-                .and_then(|a| a.as_integer())
-                .unwrap_or(1),
+            args.first().and_then(|a| a.as_integer()).unwrap_or(1),
         )),
 
         // File system stubs
         "file-name-all-completions" | "file-name-completion" => Ok(LispObject::nil()),
-        "delete-directory-internal" | "delete-file-internal" | "access-file"
+        "delete-directory-internal"
+        | "delete-file-internal"
+        | "access-file"
         | "add-name-to-file" => Ok(LispObject::nil()),
         "default-file-modes" => Ok(LispObject::integer(0o644)),
         "file-acl" | "file-selinux-context" | "set-file-acl" => Ok(LispObject::nil()),
@@ -755,9 +759,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "find-charset-string" | "find-charset-region" => Ok(LispObject::nil()),
 
         // Table/syntax copies
-        "copy-syntax-table" | "copy-category-table" | "current-case-table" => {
-            Ok(LispObject::nil())
-        }
+        "copy-syntax-table" | "copy-category-table" | "current-case-table" => Ok(LispObject::nil()),
         "make-category-set" => Ok(LispObject::nil()),
         "copy-tramp-file-name" => Ok(args.first().unwrap_or(LispObject::nil())),
 
