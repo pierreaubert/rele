@@ -8,7 +8,7 @@
 //! Baseline source: /tmp/emacs-results-round2-baseline.jsonl
 //! Only items with >=5 hits in the target namespaces are covered.
 
-use rele_elisp::eval::tests::make_stdlib_interp;
+use rele_elisp::eval::bootstrap::make_stdlib_interp;
 use rele_elisp::{LispObject, read};
 
 /// Helper that reads + evaluates the given source using a stdlib

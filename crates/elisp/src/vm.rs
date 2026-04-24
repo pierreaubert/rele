@@ -622,7 +622,7 @@ impl<'a> Vm<'a> {
                 let prop = self.pop_obj()?;
                 let sym = self.pop_obj()?;
                 if let (Some(sym_id), Some(prop_id)) = (sym.as_symbol_id(), prop.as_symbol_id()) {
-                    self.push_obj(crate::obarray::get_plist(sym_id, prop_id));
+                    self.push_obj(self.state.get_plist(sym_id, prop_id));
                 } else {
                     self.push(Value::nil());
                 }
@@ -1807,7 +1807,12 @@ mod tests {
         // We need to extract the internals — use the public API instead
         // Actually, let's just test via the Interpreter
         drop(interp);
-        let env = Arc::new(RwLock::new(crate::eval::Environment::new()));
+        let symbol_cells = Arc::new(crate::eval::SyncRefCell::new(
+            crate::obarray::SymbolCells::new(),
+        ));
+        let env = Arc::new(RwLock::new(crate::eval::Environment::new(
+            symbol_cells.clone(),
+        )));
         let editor = Arc::new(RwLock::new(None));
         let macros = Arc::new(RwLock::new(HashMap::new()));
         let state = InterpreterState {
@@ -1818,6 +1823,7 @@ mod tests {
             special_vars: Arc::new(RwLock::new(std::collections::HashSet::new())),
             specpdl: Arc::new(RwLock::new(Vec::new())),
             global_env: env.clone(),
+            symbol_cells,
             // Phase 3: match `Interpreter::new`'s Manual mode so
             // bytecode tests don't hit mid-execution sweeps that would
             // collect Values off the VM stack.

@@ -3,8 +3,6 @@ use crate::object::LispObject;
 
 pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
     match name {
-        "ert-get-test" => Some(prim_ert_get_test(args)),
-        "ert-test-boundp" => Some(prim_ert_test_boundp(args)),
         "ert-running-test" => Some(prim_ert_running_test(args)),
         "ert-test-name" => Some(prim_ert_test_name(args)),
         "ert-test-tags" => Some(prim_ert_test_tags(args)),
@@ -97,33 +95,6 @@ fn unpack_rele_ert_test(
         .map(|(f, _)| f)
         .unwrap_or_else(LispObject::nil);
     Some((name, tags, doc, body, file))
-}
-
-fn prim_ert_get_test(args: &LispObject) -> ElispResult<LispObject> {
-    let sym = match args.first().and_then(|a| a.as_symbol_id()) {
-        Some(s) => s,
-        None => return Ok(LispObject::nil()),
-    };
-    let key = crate::obarray::intern("ert--test");
-    let v = crate::obarray::get_plist(sym, key);
-    if v.is_nil() {
-        Ok(LispObject::nil())
-    } else {
-        Ok(v)
-    }
-}
-
-fn prim_ert_test_boundp(args: &LispObject) -> ElispResult<LispObject> {
-    let sym = match args.first().and_then(|a| a.as_symbol_id()) {
-        Some(s) => s,
-        None => return Ok(LispObject::nil()),
-    };
-    let key = crate::obarray::intern("ert--test");
-    if crate::obarray::get_plist(sym, key).is_nil() {
-        Ok(LispObject::nil())
-    } else {
-        Ok(LispObject::t())
-    }
 }
 
 fn prim_ert_running_test(_args: &LispObject) -> ElispResult<LispObject> {

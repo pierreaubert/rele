@@ -40,10 +40,13 @@ pub use primitives::primitives_window;
 /// anything else (a lambda produced by `(defun ...)`, a bytecode
 /// closure, a macro) is user-authored.
 #[must_use]
-pub fn is_user_defined_elisp_function(name: &str) -> bool {
+pub fn is_user_defined_elisp_function(
+    name: &str,
+    state: &eval::InterpreterState,
+) -> bool {
     let sym = obarray::intern(name);
     matches!(
-        obarray::get_function_cell(sym),
+        state.get_function_cell(sym),
         Some(cell) if !matches!(cell, LispObject::Primitive(_))
     )
 }

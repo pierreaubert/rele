@@ -8,7 +8,6 @@
 //!
 //! Falls back to the same probing logic as the test harness.
 
-use rele_elisp::eval::Interpreter;
 
 fn main() {
     let emacs_dir = std::env::args()
@@ -23,11 +22,10 @@ fn main() {
 
     eprintln!("Using Emacs lisp dir: {emacs_dir}");
 
-    // Copy/decompress files to /tmp/elisp-stdlib/ (same convention as the harness)
-    let stdlib_dir = "/tmp/elisp-stdlib";
+    let stdlib_dir = rele_elisp::eval::bootstrap::STDLIB_DIR;
     let _ = std::fs::create_dir_all(stdlib_dir);
 
-    let bootstrap_files = rele_elisp::eval::tests::BOOTSTRAP_FILES;
+    let bootstrap_files = rele_elisp::eval::bootstrap::BOOTSTRAP_FILES;
 
     // Ensure bootstrap files + commonly-required libraries exist
     let extra_libs = [
@@ -67,7 +65,7 @@ fn main() {
     }
 
     // Create interpreter with the same setup as the test harness
-    let interp = rele_elisp::eval::tests::make_stdlib_interp();
+    let interp = rele_elisp::eval::bootstrap::make_stdlib_interp();
 
     // make_stdlib_interp already sets up load-path from emacs_lisp_dir(),
     // so we DON'T override it here — just ensure it also includes our

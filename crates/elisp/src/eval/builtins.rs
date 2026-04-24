@@ -2,7 +2,6 @@
 
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
-use crate::obarray;
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
 use super::SyncRefCell as RwLock;
@@ -50,7 +49,7 @@ pub(super) fn eval_put(
     let Some(prop_id) = prop.as_symbol_id() else {
         return Ok(obj_to_value(val));
     };
-    obarray::put_plist(sym_id, prop_id, val.clone());
+    state.put_plist(sym_id, prop_id, val.clone());
     Ok(obj_to_value(val))
 }
 pub(super) fn eval_get(
@@ -82,7 +81,7 @@ pub(super) fn eval_get(
     let Some(prop_id) = prop.as_symbol_id() else {
         return Ok(Value::nil());
     };
-    Ok(obj_to_value(obarray::get_plist(sym_id, prop_id)))
+    Ok(obj_to_value(state.get_plist(sym_id, prop_id)))
 }
 pub(super) fn eval_provide(
     args: Value,

@@ -6,9 +6,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "identity" => Some(prim_identity(args)),
         "ignore" => Some(prim_ignore(args)),
         "rele--rx-translate" => Some(prim_rele_rx_translate(args)),
-        "autoload-do-load" => Some(prim_autoload_do_load(args)),
         "autoload-compute-prefixes" => Some(Ok(LispObject::nil())),
-        "load-history-filename-element" => Some(prim_load_history_filename_element(args)),
         "format-message" => Some(super::string::prim_concat(args)),
         _ => None,
     }
@@ -118,49 +116,6 @@ fn rx_seq(list: &LispObject) -> String {
         cur = cdr;
     }
     out
-}
-
-fn prim_autoload_do_load(args: &LispObject) -> ElispResult<LispObject> {
-    let _ = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let funname = args.nth(1);
-    if let Some(sym_obj) = funname {
-        if let Some(sym_name) = sym_obj.as_symbol() {
-            if let Some(sym_id) = crate::obarray::GLOBAL_OBARRAY.read().find(&sym_name) {
-                if let Some(def) = crate::obarray::get_function_cell(sym_id) {
-                    let is_autoload_stub = def
-                        .first()
-                        .and_then(|head| head.as_symbol())
-                        .is_some_and(|s| s == "autoload");
-                    if !def.is_nil() && !is_autoload_stub {
-                        return Ok(def);
-                    }
-                }
-            }
-        }
-    }
-    Ok(LispObject::nil())
-}
-
-fn prim_load_history_filename_element(args: &LispObject) -> ElispResult<LispObject> {
-    let filename_arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let filename = match filename_arg.as_string() {
-        Some(s) => s.clone(),
-        None => return Ok(LispObject::nil()),
-    };
-    let load_history_id = crate::obarray::intern("load-history");
-    let load_history = crate::obarray::get_value_cell(load_history_id).unwrap_or(LispObject::nil());
-    let mut current = load_history;
-    while let Some((entry, rest)) = current.destructure_cons() {
-        if let Some((key, _)) = entry.destructure_cons() {
-            if let Some(key_str) = key.as_string() {
-                if *key_str == filename {
-                    return Ok(entry);
-                }
-            }
-        }
-        current = rest;
-    }
-    Ok(LispObject::nil())
 }
 
 fn rx_or(list: &LispObject) -> String {

@@ -1,26 +1,32 @@
-use crate::obarray::{self, SymbolId};
+use crate::obarray::{self, SymbolCells, SymbolId};
 use crate::object::LispObject;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+use super::SyncRefCell;
 
 #[derive(Debug, Clone)]
 pub struct Environment {
     bindings: HashMap<SymbolId, LispObject>,
     parent: Option<Arc<Environment>>,
+    symbol_cells: Arc<SyncRefCell<SymbolCells>>,
 }
 
 impl Environment {
-    pub fn new() -> Self {
+    pub fn new(symbol_cells: Arc<SyncRefCell<SymbolCells>>) -> Self {
         Environment {
             bindings: HashMap::new(),
             parent: None,
+            symbol_cells,
         }
     }
 
     pub fn with_parent(parent: Arc<Environment>) -> Self {
+        let symbol_cells = parent.symbol_cells.clone();
         Environment {
             bindings: HashMap::new(),
             parent: Some(parent),
+            symbol_cells,
         }
     }
 
@@ -38,7 +44,7 @@ impl Environment {
                 return Some(val);
             }
         }
-        obarray::get_value_cell(id)
+        self.symbol_cells.read().get_value_cell(id)
     }
 
     pub fn get_id_local(&self, id: SymbolId) -> Option<LispObject> {
@@ -73,7 +79,7 @@ impl Environment {
             }
             parent = p.parent.as_ref();
         }
-        if let Some(fn_cell) = obarray::get_function_cell(id) {
+        if let Some(fn_cell) = self.symbol_cells.read().get_function_cell(id) {
             return Some(fn_cell);
         }
         first_found

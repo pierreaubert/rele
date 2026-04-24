@@ -562,7 +562,10 @@ pub fn prim_getenv(args: &LispObject) -> ElispResult<LispObject> {
     }
 }
 
-pub fn prim_setenv(args: &LispObject) -> ElispResult<LispObject> {
+pub fn prim_setenv(
+    args: &LispObject,
+    state: &crate::eval::InterpreterState,
+) -> ElispResult<LispObject> {
     let name = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
     let value = str_arg(args, 1);
 
@@ -583,7 +586,7 @@ pub fn prim_setenv(args: &LispObject) -> ElispResult<LispObject> {
             };
         }
     }
-    update_process_environment(&name, value.as_deref());
+    update_process_environment(&name, value.as_deref(), state);
     match value {
         Some(v) => Ok(LispObject::string(&v)),
         None => Ok(LispObject::nil()),
@@ -596,9 +599,13 @@ pub fn prim_setenv(args: &LispObject) -> ElispResult<LispObject> {
 /// `getenv-internal` lookups ahead of the real OS env, so tests that
 /// `(setenv X v)` then `(member "X=v" process-environment)` must see
 /// the update.
-fn update_process_environment(name: &str, new_value: Option<&str>) {
+fn update_process_environment(
+    name: &str,
+    new_value: Option<&str>,
+    state: &crate::eval::InterpreterState,
+) {
     let sym = crate::obarray::intern("process-environment");
-    let current = crate::obarray::get_value_cell(sym).unwrap_or(LispObject::nil());
+    let current = state.get_value_cell(sym).unwrap_or(LispObject::nil());
 
     // Walk the list; keep entries whose prefix doesn't match `NAME=`.
     let prefix = format!("{name}=");
@@ -621,10 +628,13 @@ fn update_process_environment(name: &str, new_value: Option<&str>) {
     if let Some(v) = new_value {
         rebuilt = LispObject::cons(LispObject::string(&format!("{name}={v}")), rebuilt);
     }
-    crate::obarray::set_value_cell(sym, rebuilt);
+    state.set_value_cell(sym, rebuilt);
 }
 
-pub fn prim_getenv_internal(args: &LispObject) -> ElispResult<LispObject> {
+pub fn prim_getenv_internal(
+    args: &LispObject,
+    _state: &crate::eval::InterpreterState,
+) -> ElispResult<LispObject> {
     prim_getenv(args)
 }
 
@@ -787,7 +797,11 @@ pub fn prim_url_expand_file_name(args: &LispObject) -> ElispResult<LispObject> {
 
 // ---- Dispatch ---------------------------------------------------------
 
-pub fn call_file_primitive(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
+pub fn call_file_primitive(
+    name: &str,
+    args: &LispObject,
+    state: &crate::eval::InterpreterState,
+) -> Option<ElispResult<LispObject>> {
     Some(match name {
         "file-name-directory" => prim_file_name_directory(args),
         "file-name-nondirectory" => prim_file_name_nondirectory(args),
@@ -826,8 +840,8 @@ pub fn call_file_primitive(name: &str, args: &LispObject) -> Option<ElispResult<
         "write-region" => prim_write_region(args),
         "find-file-noselect" | "find-file" => prim_find_file_noselect(args),
         "getenv" => prim_getenv(args),
-        "setenv" => prim_setenv(args),
-        "getenv-internal" => prim_getenv_internal(args),
+        "setenv" => prim_setenv(args, state),
+        "getenv-internal" => prim_getenv_internal(args, state),
         "executable-find" => prim_executable_find(args),
         "locate-file" => prim_locate_file(args),
         "set-time-zone-rule" => prim_set_time_zone_rule(args),
@@ -898,11 +912,10 @@ pub const FILE_PRIMITIVE_NAMES: &[&str] = &[
 mod tests {
     use super::*;
 
-    /// The obarray cell for `process-environment` is process-global.
-    /// Parallel test runs that mutate it race on each other's writes,
-    /// so serialize with a plain Mutex. Every test that touches
-    /// `process-environment` directly must take this lock first.
-    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn make_test_state() -> crate::eval::InterpreterState {
+        let interp = crate::eval::Interpreter::new();
+        interp.state.clone()
+    }
 
     /// Regression: R2. `setenv` used to only touch `std::env`, leaving
     /// the `process-environment` lisp list untouched. Elisp code that
@@ -910,10 +923,10 @@ mod tests {
     /// prefers it over the OS env) would miss the update.
     #[test]
     fn setenv_updates_process_environment_list() {
-        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = make_test_state();
         // Seed the list with one unrelated entry.
         let sym = crate::obarray::intern("process-environment");
-        crate::obarray::set_value_cell(
+        state.set_value_cell(
             sym,
             LispObject::cons(LispObject::string("UNRELATED=1"), LispObject::nil()),
         );
@@ -923,10 +936,10 @@ mod tests {
             LispObject::string("R2_TEST_KEY"),
             LispObject::cons(LispObject::string("r2-test-value"), LispObject::nil()),
         );
-        prim_setenv(&args).expect("setenv ok");
+        prim_setenv(&args, &state).expect("setenv ok");
 
         // Walk process-environment; expect the new entry at the head.
-        let list = crate::obarray::get_value_cell(sym).unwrap();
+        let list = state.get_value_cell(sym).unwrap();
         let head = list
             .first()
             .and_then(|v| v.as_string().map(|s| s.to_string()));
@@ -944,8 +957,8 @@ mod tests {
             LispObject::string("R2_TEST_KEY"),
             LispObject::cons(LispObject::nil(), LispObject::nil()),
         );
-        prim_setenv(&remove_args).expect("setenv remove ok");
-        let list = crate::obarray::get_value_cell(sym).unwrap();
+        prim_setenv(&remove_args, &state).expect("setenv remove ok");
+        let list = state.get_value_cell(sym).unwrap();
         let head = list
             .first()
             .and_then(|v| v.as_string().map(|s| s.to_string()));
@@ -956,9 +969,9 @@ mod tests {
     /// REPLACE the existing entry, not duplicate.
     #[test]
     fn setenv_replaces_existing_entry() {
-        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = make_test_state();
         let sym = crate::obarray::intern("process-environment");
-        crate::obarray::set_value_cell(
+        state.set_value_cell(
             sym,
             LispObject::cons(
                 LispObject::string("R2_DUP=old"),
@@ -969,8 +982,8 @@ mod tests {
             LispObject::string("R2_DUP"),
             LispObject::cons(LispObject::string("new"), LispObject::nil()),
         );
-        prim_setenv(&args).unwrap();
-        let list = crate::obarray::get_value_cell(sym).unwrap();
+        prim_setenv(&args, &state).unwrap();
+        let list = state.get_value_cell(sym).unwrap();
         // Count how many entries start with "R2_DUP=".
         let mut count = 0;
         let mut cur = list.clone();

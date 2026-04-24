@@ -35,7 +35,7 @@
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use rele_elisp::eval::tests::{
+use rele_elisp::eval::bootstrap::{
     ensure_stdlib_files, load_cl_lib, load_full_bootstrap, make_stdlib_interp, probe_emacs_file,
     run_rele_ert_tests_detailed_with_timeout,
 };

@@ -66,7 +66,7 @@ pub(super) fn eval_defun(
     _env: &Arc<RwLock<Environment>>,
     _editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
     _macros: &MacroTable,
-    _state: &InterpreterState,
+    state: &InterpreterState,
 ) -> ElispResult<Value> {
     let args_obj = value_to_obj(args);
     let name_obj = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
@@ -80,7 +80,7 @@ pub(super) fn eval_defun(
         rest.rest().unwrap_or(LispObject::nil()),
     );
     // defun writes the function cell directly.
-    crate::obarray::set_function_cell(id, lambda);
+    state.set_function_cell(id, lambda);
     Ok(obj_to_value(LispObject::Symbol(id)))
 }
 pub(super) fn eval_defmacro(args: Value, macros: &MacroTable) -> ElispResult<Value> {
@@ -183,7 +183,11 @@ fn bind_macro_params(
     bindings: &mut Vec<(String, LispObject)>,
 ) -> ElispResult<()> {
     let mut arg_list = args;
-    let mut mode = 0u8; // 0=positional, 1=optional, 2=rest
+    // 0=positional, 1=optional, 2=rest, 3=key
+    let mut mode = 0u8;
+    // Collect &key param specs so we can scan the arg list after
+    // positional/optional params are consumed.
+    let mut key_params: Vec<(String, LispObject)> = Vec::new();
     let mut cur = Some(params);
     while let Some(curr) = cur {
         match curr.destructure_cons() {
@@ -200,6 +204,15 @@ fn bind_macro_params(
                         // Used heavily in `cl-defmacro` (e.g. ert-deftest).
                         "&rest" | "&body" => {
                             mode = 2;
+                            cur = Some(tail);
+                            continue;
+                        }
+                        "&key" => {
+                            mode = 3;
+                            cur = Some(tail);
+                            continue;
+                        }
+                        "&allow-other-keys" => {
                             cur = Some(tail);
                             continue;
                         }
@@ -235,12 +248,110 @@ fn bind_macro_params(
                         }
                         break;
                     }
+                    3 => {
+                        // &key slot: collect the param name and default value.
+                        // Formats:   foo          -> name="foo", default=nil
+                        //            (foo DEFAULT) -> name="foo", default=DEFAULT
+                        let (name, default) = extract_key_param(param);
+                        key_params.push((name, default));
+                        cur = Some(tail);
+                    }
                     _ => unreachable!(),
                 }
             }
         }
     }
+
+    // Process &key params: scan the remaining arg_list for :keyword value pairs.
+    if !key_params.is_empty() {
+        bind_keyword_args(&key_params, &arg_list, bindings);
+    }
+
     Ok(())
+}
+
+/// Extract the parameter name and default value from a `&key` spec.
+///
+/// Accepted shapes:
+///   `foo`              -> ("foo", nil)
+///   `(foo DEFAULT)`    -> ("foo", DEFAULT)
+///   `(foo)`            -> ("foo", nil)
+///   `((:keyword foo))` -> ("foo", nil)       (full form, rare)
+///   `((:keyword foo) DEFAULT)` -> ("foo", DEFAULT)
+pub(super) fn extract_key_param(param: LispObject) -> (String, LispObject) {
+    // Simple symbol
+    if let Some(s) = param.as_symbol() {
+        return (s, LispObject::nil());
+    }
+    // List: (NAME DEFAULT?) or ((:KEYWORD NAME) DEFAULT?)
+    if let Some((first, rest)) = param.destructure_cons() {
+        // Check for ((:keyword name) default?)
+        if let Some((inner_first, inner_rest)) = first.destructure_cons() {
+            // inner_first is the keyword, inner_rest has the actual name
+            let _keyword = inner_first; // e.g. :foo
+            let name = inner_rest
+                .first()
+                .and_then(|n| n.as_symbol())
+                .unwrap_or_default();
+            let default = rest.first().unwrap_or(LispObject::nil());
+            return (name, default);
+        }
+        // Simple form: (name default?)
+        let name = first.as_symbol().unwrap_or_default();
+        let default = rest.first().unwrap_or(LispObject::nil());
+        return (name, default);
+    }
+    (String::new(), LispObject::nil())
+}
+
+/// Walk the argument list looking for `:keyword value` pairs and bind
+/// the corresponding param names.  Unmatched keywords are ignored.
+fn bind_keyword_args(
+    key_params: &[(String, LispObject)],
+    arg_list: &LispObject,
+    bindings: &mut Vec<(String, LispObject)>,
+) {
+    // Build a quick lookup of which keywords we've found values for.
+    let mut found: Vec<Option<LispObject>> = vec![None; key_params.len()];
+
+    // Walk the arg list looking for :keyword value pairs.
+    let mut cursor = arg_list.clone();
+    while !cursor.is_nil() {
+        let key = match cursor.first() {
+            Some(k) => k,
+            None => break,
+        };
+        let rest = cursor.rest().unwrap_or(LispObject::nil());
+
+        if let Some(key_name) = key.as_symbol()
+            && key_name.starts_with(':')
+        {
+            // Strip the leading colon to match the param name.
+            let param_name = &key_name[1..];
+            for (i, (name, _)) in key_params.iter().enumerate() {
+                if name == param_name {
+                    let value = rest.first().unwrap_or(LispObject::nil());
+                    found[i] = Some(value);
+                    break;
+                }
+            }
+            // Skip past the value.
+            cursor = rest.rest().unwrap_or(LispObject::nil());
+            continue;
+        }
+
+        // Not a keyword — skip one element.
+        cursor = rest;
+    }
+
+    // Bind all key params: use found value or default.
+    for (i, (name, default)) in key_params.iter().enumerate() {
+        if name.is_empty() {
+            continue;
+        }
+        let value = found[i].clone().unwrap_or_else(|| default.clone());
+        bindings.push((name.clone(), value));
+    }
 }
 
 /// Bind a single positional/optional parameter slot — either a plain symbol
@@ -730,7 +841,7 @@ pub(super) fn eval_defvar(
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
 
     state.special_vars.write().insert(id);
-    crate::obarray::mark_special(id);
+
 
     // defvar only initializes when the variable has no existing local
     // binding. We use get_id_local (env-only, no value-cell fallback)
@@ -743,7 +854,7 @@ pub(super) fn eval_defvar(
             let value = value_to_obj(eval(obj_to_value(value_expr), env, editor, macros, state)?);
             env.write().define_id(id, value.clone());
             // Mirror to the value cell so fresh envs elsewhere can see it.
-            crate::obarray::set_value_cell(id, value);
+            state.set_value_cell(id, value);
         }
     }
     Ok(obj_to_value(LispObject::Symbol(id)))
@@ -762,12 +873,12 @@ pub(super) fn eval_defconst(
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
 
     state.special_vars.write().insert(id);
-    crate::obarray::mark_special(id);
+
 
     if let Some(value_expr) = args_obj.nth(1) {
         let value = value_to_obj(eval(obj_to_value(value_expr), env, editor, macros, state)?);
         env.write().define_id(id, value.clone());
-        crate::obarray::set_value_cell(id, value);
+        state.set_value_cell(id, value);
     }
     Ok(obj_to_value(LispObject::Symbol(id)))
 }
@@ -809,6 +920,6 @@ pub(super) fn eval_defalias(
 
     // defalias writes the function cell — value is a function definition.
     let id = crate::obarray::intern(&name);
-    crate::obarray::set_function_cell(id, value);
+    state.set_function_cell(id, value);
     Ok(obj_to_value(LispObject::Symbol(id)))
 }

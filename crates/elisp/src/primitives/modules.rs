@@ -166,6 +166,7 @@ pub fn register(interp: &mut Interpreter) {
 ;; top-hit erc-* / erc-d-* variables are already defined in
 ;; `eval::tests::load_full_bootstrap` — see R5 / R7 commit messages.
 (defvar dumb-server-var nil)                          ;; 20 hits
+(defvar cl--random-state (vector 'cl--random-state-tag 0 1 2)) ;; cl-random state
 ;; R6: eshell primitive stubs from ERT baseline
 ;; (/tmp/emacs-results-round2-baseline.jsonl — void-function counts)
 ;;

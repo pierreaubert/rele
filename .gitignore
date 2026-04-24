@@ -1,5 +1,6 @@
 # rust
 /target
+/tmp
 /target-static
 /coverage
 mutants.out

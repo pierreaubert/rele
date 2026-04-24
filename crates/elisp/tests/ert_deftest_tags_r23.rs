@@ -297,7 +297,7 @@ fn r23_ert_running_test_nil_outside_run() {
 /// closure captured by R19.
 #[test]
 fn r23_running_test_visible_inside_body() {
-    use rele_elisp::eval::tests::run_rele_ert_tests_detailed;
+    use rele_elisp::eval::bootstrap::run_rele_ert_tests_detailed;
 
     let interp = fresh_interp();
     interp
@@ -342,7 +342,7 @@ fn r23_running_test_visible_inside_body() {
 /// happen to introspect before their own body runs.
 #[test]
 fn r23_running_test_cleared_after_runner_finishes() {
-    use rele_elisp::eval::tests::run_rele_ert_tests_detailed;
+    use rele_elisp::eval::bootstrap::run_rele_ert_tests_detailed;
 
     let interp = fresh_interp();
     interp

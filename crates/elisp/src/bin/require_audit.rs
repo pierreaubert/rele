@@ -7,8 +7,7 @@
 //! Usage:
 //!   require_audit
 
-use rele_elisp::eval::Interpreter;
-use rele_elisp::eval::tests::{
+use rele_elisp::eval::bootstrap::{
     ensure_stdlib_files, load_full_bootstrap, emacs_lisp_dir,
 };
 
@@ -47,7 +46,7 @@ fn run() {
         "emacs-lisp/map",
     ];
     for f in &extra_libs {
-        let dest = format!("/tmp/elisp-stdlib/{f}.el");
+        let dest = format!("{}/{f}.el", rele_elisp::eval::bootstrap::STDLIB_DIR);
         if std::path::Path::new(&dest).exists() {
             continue;
         }
@@ -71,7 +70,7 @@ fn run() {
     }
 
     // Create interpreter and run full bootstrap
-    let interp = rele_elisp::eval::tests::make_stdlib_interp();
+    let interp = rele_elisp::eval::bootstrap::make_stdlib_interp();
     eprintln!("Running full bootstrap...");
     load_full_bootstrap(&interp);
     eprintln!("Bootstrap complete.");
@@ -105,7 +104,7 @@ fn run() {
     let mut file_fail: usize = 0;
 
     for lib in &libs_to_test {
-        let path = format!("/tmp/elisp-stdlib/{lib}.el");
+        let path = format!("{}/{lib}.el", rele_elisp::eval::bootstrap::STDLIB_DIR);
         let source = match read_file(&path) {
             Some(s) => s,
             None => {

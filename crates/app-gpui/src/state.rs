@@ -1327,7 +1327,7 @@ impl MdAppState {
         let interactive = match self.commands.get(name) {
             Some(c) => c.interactive.clone(),
             None => {
-                if rele_elisp::is_user_defined_elisp_function(name) {
+                if rele_elisp::is_user_defined_elisp_function(name, &self.elisp.state) {
                     self.run_command_direct(name, CommandArgs::default());
                 }
                 return;
@@ -1401,7 +1401,7 @@ impl MdAppState {
         // name — primitives like `forward-char` also have function
         // cells (populated by `add_primitives`) and those must run via
         // the Rust handler.
-        if rele_elisp::is_user_defined_elisp_function(name) {
+        if rele_elisp::is_user_defined_elisp_function(name, &self.elisp.state) {
             let call = rele_elisp::LispObject::cons(
                 rele_elisp::LispObject::symbol(name),
                 rele_elisp::LispObject::cons(

@@ -750,7 +750,7 @@ impl TuiAppState {
                 // both; we just gate the "No such command" message
                 // on the union of the two registries.
                 if self.commands.get(&text).is_some()
-                    || rele_elisp::is_user_defined_elisp_function(&text)
+                    || rele_elisp::is_user_defined_elisp_function(&text, &self.elisp.state)
                 {
                     self.run_command(&text, CommandArgs::default());
                 } else {
@@ -814,7 +814,7 @@ impl TuiAppState {
         // handler is the authoritative implementation. We only want to
         // route when the cell holds a user-defined lambda, bytecode,
         // or macro — i.e. anything that is *not* a bare primitive.
-        if rele_elisp::is_user_defined_elisp_function(name) {
+        if rele_elisp::is_user_defined_elisp_function(name, &self.elisp.state) {
             let call = rele_elisp::LispObject::cons(
                 rele_elisp::LispObject::symbol(name),
                 rele_elisp::LispObject::cons(

@@ -24,7 +24,7 @@
 //! first via the `is_callable_value` check in `get_function_id`.
 
 use rele_elisp::LispObject;
-use rele_elisp::eval::tests::make_stdlib_interp;
+use rele_elisp::eval::bootstrap::make_stdlib_interp;
 use rele_elisp::read;
 
 fn eval_str(src: &str) -> Result<LispObject, String> {
