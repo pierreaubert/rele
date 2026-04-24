@@ -678,6 +678,151 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
             66
         })),
 
+        // --- Phase-1 C-level primitive stubs ---
+
+        // Numeric argument helpers
+        "prefix-numeric-value" => Ok(LispObject::integer(
+            args.first()
+                .and_then(|a| a.as_integer())
+                .unwrap_or(1),
+        )),
+
+        // File system stubs
+        "file-name-all-completions" | "file-name-completion" => Ok(LispObject::nil()),
+        "delete-directory-internal" | "delete-file-internal" | "access-file"
+        | "add-name-to-file" => Ok(LispObject::nil()),
+        "default-file-modes" => Ok(LispObject::integer(0o644)),
+        "file-acl" | "file-selinux-context" | "set-file-acl" => Ok(LispObject::nil()),
+        "substitute-in-file-name" => Ok(args.first().unwrap_or(LispObject::nil())),
+        "unhandled-file-name-directory" => Ok(LispObject::nil()),
+
+        // Buffer/editing stubs
+        "self-insert-command" | "downcase-word" | "upcase-word" | "scroll-up" => {
+            Ok(LispObject::nil())
+        }
+        "insert-and-inherit" | "insert-byte" => Ok(LispObject::nil()),
+        "transpose-regions" | "upcase-initials-region" => Ok(LispObject::nil()),
+        "set-marker-insertion-type" => Ok(LispObject::nil()),
+        "internal--labeled-narrow-to-region" => Ok(LispObject::nil()),
+        "field-beginning" => Ok(LispObject::nil()),
+        "field-string-no-properties" => Ok(LispObject::string("")),
+        "minibuffer-prompt-end" => Ok(LispObject::integer(1)),
+        "gap-position" => Ok(LispObject::integer(1)),
+        "position-bytes" => Ok(args.first().unwrap_or(LispObject::nil())),
+        "total-line-spacing" => Ok(LispObject::integer(0)),
+        "next-single-char-property-change" => Ok(LispObject::nil()),
+        "recent-auto-save-p" => Ok(LispObject::nil()),
+        "decode-coding-region" | "encode-coding-region" => Ok(LispObject::nil()),
+
+        // Bool-vector operations
+        "bool-vector-count-population" | "bool-vector-count-consecutive" => {
+            Ok(LispObject::integer(0))
+        }
+        "bool-vector-not" | "bool-vector-union" => Ok(LispObject::nil()),
+
+        // Type predicates (Emacs 30+)
+        "bare-symbol-p" => {
+            let a = args.first().unwrap_or_else(LispObject::nil);
+            Ok(if a.as_symbol().is_some() {
+                LispObject::t()
+            } else {
+                LispObject::nil()
+            })
+        }
+        "closurep" | "error-type-p" | "module-function-p" => Ok(LispObject::nil()),
+
+        // Character utilities
+        "char-equal" => {
+            let a = args.first().and_then(|v| v.as_integer()).unwrap_or(0);
+            let b = args.nth(1).and_then(|v| v.as_integer()).unwrap_or(-1);
+            Ok(if a == b {
+                LispObject::t()
+            } else {
+                LispObject::nil()
+            })
+        }
+        "byte-to-string" => {
+            let byte = args.first().and_then(|v| v.as_integer()).unwrap_or(0);
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+            let ch = char::from(byte as u8);
+            Ok(LispObject::string(&ch.to_string()))
+        }
+        "char-resolve-modifiers" => Ok(args.first().unwrap_or(LispObject::nil())),
+        "char-table-subtype" => Ok(LispObject::nil()),
+        "charset-after" => Ok(LispObject::symbol("unicode")),
+        "split-char" => Ok(LispObject::nil()),
+        "get-unused-iso-final-char" => Ok(LispObject::nil()),
+        "find-charset-string" | "find-charset-region" => Ok(LispObject::nil()),
+
+        // Table/syntax copies
+        "copy-syntax-table" | "copy-category-table" | "current-case-table" => {
+            Ok(LispObject::nil())
+        }
+        "make-category-set" => Ok(LispObject::nil()),
+        "copy-tramp-file-name" => Ok(args.first().unwrap_or(LispObject::nil())),
+
+        // Time
+        "current-time-zone" => Ok(LispObject::cons(
+            LispObject::integer(0),
+            LispObject::cons(LispObject::string("UTC"), LispObject::nil()),
+        )),
+
+        // Higher-order / functional
+        "map-do" => Ok(LispObject::nil()),
+        "funcall-interactively" => Ok(LispObject::nil()),
+
+        // Introspection
+        "func-arity" => Ok(LispObject::cons(
+            LispObject::integer(0),
+            LispObject::symbol("many"),
+        )),
+        "keymap-prompt" => Ok(LispObject::nil()),
+
+        // Reading stubs
+        "read-passwd" => Ok(LispObject::string("")),
+        "read-kbd-macro" => Ok(LispObject::nil()),
+
+        // Encoding / charset
+        "unencodable-char-position" => Ok(LispObject::nil()),
+        "check-coding-systems-region" => Ok(LispObject::nil()),
+        "clear-charset-maps" | "declare-equiv-charset" => Ok(LispObject::nil()),
+
+        // Records / finalizers
+        "make-record" | "make-finalizer" => Ok(LispObject::nil()),
+        "make-ring" => Ok(LispObject::nil()),
+        "ring-convert-sequence-to-ring" => Ok(LispObject::nil()),
+
+        // Hash table literal (Emacs 30)
+        "hash-table-literal" => Ok(LispObject::nil()),
+        "hash-table-contains-p" => Ok(LispObject::nil()),
+
+        // Obarray
+        "obarray-clear" => Ok(LispObject::nil()),
+        "internal--obarray-buckets" => Ok(LispObject::nil()),
+
+        // Process-related
+        "set-process-plist" | "process-contact" | "kill-process" | "kill-emacs" => {
+            Ok(LispObject::nil())
+        }
+
+        // System info
+        "lossage-size" => Ok(LispObject::integer(300)),
+        "num-processors" => Ok(LispObject::integer(1)),
+        "network-interface-list" => Ok(LispObject::nil()),
+        "group-name" => Ok(LispObject::nil()),
+        "get-display-property" => Ok(LispObject::nil()),
+
+        // Display/formatting stubs
+        "format-mode-line" => Ok(LispObject::string("")),
+        "format-network-address" => Ok(LispObject::string("")),
+        "format-seconds" => Ok(LispObject::string("")),
+
+        // Misc C primitives
+        "set-charset-plist" => Ok(LispObject::nil()),
+        "iso-charset" => Ok(LispObject::nil()),
+        "set-auto-mode--find-matching-alist-entry" => Ok(LispObject::nil()),
+        "setopt" => Ok(LispObject::nil()),
+
         _ => return None,
     };
     Some(r)

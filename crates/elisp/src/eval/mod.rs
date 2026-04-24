@@ -1922,20 +1922,22 @@ fn eval_inner(
                     eval_progn(obj_to_value(body), env, editor, macros, state)
                 }
                 "ert-simulate-command" => {
-                    // (ert-simulate-command CMD) — just funcall the command.
+                    // (ert-simulate-command CMD) — evaluate CMD to
+                    // get a list (FUNC ARG...), then apply FUNC to
+                    // the remaining elements.
                     let cmd = eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env, editor, macros, state,
                     )?;
                     let cmd_obj = value_to_obj(cmd);
-                    let func = if let Some((car, _)) = cmd_obj.destructure_cons() {
-                        car
+                    let (func, args) = if let Some((car, cdr_cmd)) = cmd_obj.destructure_cons() {
+                        (car, cdr_cmd)
                     } else {
-                        cmd_obj
+                        (cmd_obj, LispObject::nil())
                     };
                     functions::call_function(
                         obj_to_value(func),
-                        obj_to_value(LispObject::nil()),
+                        obj_to_value(args),
                         env, editor, macros, state,
                     )
                 }
@@ -2001,6 +2003,280 @@ fn eval_inner(
                             LispObject::nil(),
                         ),
                     })))
+                }
+                "iter-lambda" => {
+                    // (iter-lambda ARGLIST BODY...) — create a generator function.
+                    // When called, evaluates BODY collecting iter-yield values,
+                    // returns an iterator object.
+                    let params = cdr.first().unwrap_or(LispObject::nil());
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    let captured = env.read().capture_as_alist();
+                    // Return a closure that, when funcall'd, creates the iterator.
+                    Ok(obj_to_value(LispObject::closure_expr(
+                        captured,
+                        params,
+                        // Wrap body: collect yields, build iterator
+                        LispObject::cons(
+                            LispObject::cons(
+                                LispObject::symbol("iter--make-iterator"),
+                                body.clone(),
+                            ),
+                            LispObject::nil(),
+                        ),
+                    )))
+                }
+                "iter-defun" => {
+                    // (iter-defun NAME ARGLIST BODY...)
+                    let name = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let name_sym = name.as_symbol()
+                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
+                    let arglist = cdr.nth(1).unwrap_or(LispObject::nil());
+                    let mut body = cdr.rest().and_then(|r| r.rest()).unwrap_or(LispObject::nil());
+                    // Skip docstring
+                    if let Some((first, tail)) = body.destructure_cons() {
+                        if first.as_string().is_some() && !tail.is_nil() {
+                            body = tail;
+                        }
+                    }
+                    let captured = env.read().capture_as_alist();
+                    let closure = LispObject::closure_expr(
+                        captured,
+                        arglist,
+                        LispObject::cons(
+                            LispObject::cons(
+                                LispObject::symbol("iter--make-iterator"),
+                                body,
+                            ),
+                            LispObject::nil(),
+                        ),
+                    );
+                    let id = crate::obarray::intern(&name_sym);
+                    crate::obarray::set_function_cell(id, closure);
+                    Ok(obj_to_value(LispObject::symbol(&name_sym)))
+                }
+                "iter--make-iterator" => {
+                    // Internal: evaluate body, collect iter-yield values.
+                    // Returns an iterator object (a closure over yields vector).
+                    let body = obj_to_value(cdr);
+                    // Collect yields by catching iter--yield signals
+                    let mut yields: Vec<LispObject> = Vec::new();
+                    let mut final_val = LispObject::nil();
+                    // Evaluate body form by form. Each iter-yield throws.
+                    let body_obj = value_to_obj(body);
+                    let mut cur = Some(body_obj);
+                    'outer: while let Some(c) = cur {
+                        if let Some((form, rest)) = c.destructure_cons() {
+                            match eval(obj_to_value(form), env, editor, macros, state) {
+                                Ok(v) => {
+                                    final_val = value_to_obj(v);
+                                }
+                                Err(ElispError::Throw(ref td)) if td.tag.as_symbol().as_deref() == Some("iter--yield") => {
+                                    yields.push(td.value.clone());
+                                }
+                                Err(e) => return Err(e),
+                            }
+                            cur = Some(rest);
+                        } else {
+                            break 'outer;
+                        }
+                    }
+                    // Build an iterator: a vector [index, final-value, y1, y2, ...]
+                    // The iterator function dispatches on :next / :close
+                    let mut items = vec![LispObject::integer(0), final_val];
+                    items.extend(yields);
+                    let vec = LispObject::Vector(std::sync::Arc::new(
+                        crate::eval::SyncRefCell::new(items),
+                    ));
+                    let iter_obj = LispObject::cons(LispObject::symbol("iter--state"), vec);
+                    Ok(obj_to_value(iter_obj))
+                }
+                "iter-yield" => {
+                    // (iter-yield VALUE) — suspend and yield VALUE.
+                    // Implemented as a throw to the iter--make-iterator catch.
+                    let val_expr = cdr.first().unwrap_or(LispObject::nil());
+                    let val = value_to_obj(eval(obj_to_value(val_expr), env, editor, macros, state)?);
+                    Err(ElispError::Throw(Box::new(crate::error::ThrowData {
+                        tag: LispObject::symbol("iter--yield"),
+                        value: val,
+                    })))
+                }
+                "iter-yield-from" => {
+                    // (iter-yield-from ITERATOR) — yield all values from sub-iterator
+                    let iter_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let iter = value_to_obj(eval(obj_to_value(iter_expr), env, editor, macros, state)?);
+                    // Iterate and re-yield each value
+                    if let Some((tag, vec)) = iter.destructure_cons() {
+                        if tag.as_symbol().as_deref() == Some("iter--state") {
+                            if let LispObject::Vector(v) = vec {
+                                let guard = v.lock();
+                                let idx = guard[0].as_integer().unwrap_or(0) as usize;
+                                for i in (idx + 2)..guard.len() {
+                                    // Throw each yield
+                                    return Err(ElispError::Throw(Box::new(crate::error::ThrowData {
+                                        tag: LispObject::symbol("iter--yield"),
+                                        value: guard[i].clone(),
+                                    })));
+                                }
+                                // Return the final value
+                                return Ok(obj_to_value(guard[1].clone()));
+                            }
+                        }
+                    }
+                    Ok(Value::nil())
+                }
+                "iter-next" => {
+                    // (iter-next ITERATOR &optional YIELD-RESULT)
+                    let iter_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let iter = value_to_obj(eval(obj_to_value(iter_expr), env, editor, macros, state)?);
+                    // Iterator is (iter--state . #[idx final y1 y2 ...])
+                    if let Some((tag, vec)) = iter.destructure_cons() {
+                        if tag.as_symbol().as_deref() == Some("iter--state") {
+                            if let LispObject::Vector(v) = vec {
+                                let mut guard = v.lock();
+                                let idx = guard[0].as_integer().unwrap_or(0) as usize;
+                                let n_yields = guard.len() - 2;
+                                if idx < n_yields {
+                                    let val = guard[idx + 2].clone();
+                                    guard[0] = LispObject::integer((idx + 1) as i64);
+                                    return Ok(obj_to_value(val));
+                                } else {
+                                    // End of sequence — signal iter-end-of-sequence
+                                    // Data is the final value directly (not wrapped in a list),
+                                    // so condition-case binds (iter-end-of-sequence . VALUE).
+                                    let final_val = guard[1].clone();
+                                    return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                                        symbol: LispObject::symbol("iter-end-of-sequence"),
+                                        data: final_val,
+                                    })));
+                                }
+                            }
+                        }
+                    }
+                    // Not a valid iterator — signal error
+                    Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                        symbol: LispObject::symbol("wrong-type-argument"),
+                        data: LispObject::cons(
+                            LispObject::string("iterator"),
+                            LispObject::nil(),
+                        ),
+                    })))
+                }
+                "iter-close" => {
+                    // (iter-close ITERATOR) — mark as exhausted
+                    let iter_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let iter = value_to_obj(eval(obj_to_value(iter_expr), env, editor, macros, state)?);
+                    if let Some((tag, vec)) = iter.destructure_cons() {
+                        if tag.as_symbol().as_deref() == Some("iter--state") {
+                            if let LispObject::Vector(v) = vec {
+                                let mut guard = v.lock();
+                                // Set index past all yields
+                                let n = guard.len();
+                                guard[0] = LispObject::integer(n as i64);
+                            }
+                        }
+                    }
+                    Ok(Value::nil())
+                }
+                "iter-do" => {
+                    // (iter-do (VAR ITERATOR [RESULT]) BODY...)
+                    let spec = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    let var = spec.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let var_name = var.as_symbol()
+                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
+                    let iter_expr = spec.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+                    let result_expr = spec.nth(2);
+                    let iter = value_to_obj(eval(obj_to_value(iter_expr), env, editor, macros, state)?);
+                    // Iterate
+                    if let Some((tag, vec)) = iter.destructure_cons() {
+                        if tag.as_symbol().as_deref() == Some("iter--state") {
+                            if let LispObject::Vector(v) = vec {
+                                let parent = Arc::new(env.read().clone());
+                                let loop_env = Arc::new(RwLock::new(Environment::with_parent(parent)));
+                                let guard = v.lock();
+                                for i in 2..guard.len() {
+                                    loop_env.write().set(&var_name, guard[i].clone());
+                                    let _ = eval_progn(obj_to_value(body.clone()), &loop_env, editor, macros, state);
+                                }
+                                drop(guard);
+                                if let Some(result) = result_expr {
+                                    return eval(obj_to_value(result), &loop_env, editor, macros, state);
+                                }
+                            }
+                        }
+                    }
+                    Ok(Value::nil())
+                }
+                "tempo-insert-template" => {
+                    // (tempo-insert-template TEMPLATE &optional ON-REGION)
+                    // Insert the template's elements into the buffer.
+                    let template_sym = eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?;
+                    let template_obj = value_to_obj(template_sym);
+                    // Get the template elements from the variable
+                    let elements = if let Some(name) = template_obj.as_symbol() {
+                        env.read().get(&name).unwrap_or(LispObject::nil())
+                    } else {
+                        LispObject::nil()
+                    };
+                    // Insert string elements
+                    let mut cur = elements;
+                    while let Some((elt, rest)) = cur.destructure_cons() {
+                        if let Some(s) = elt.as_string() {
+                            crate::buffer::with_current_mut(|b| {
+                                let pos = b.point;
+                                b.text.insert_str(
+                                    b.char_to_byte(pos),
+                                    &s,
+                                );
+                                b.point += s.chars().count();
+                            });
+                        }
+                        // Skip non-string elements (p, r, etc.)
+                        cur = rest;
+                    }
+                    Ok(Value::nil())
+                }
+                "tempo-complete-tag" => {
+                    // Stub — tag completion not needed for tests
+                    Ok(Value::nil())
+                }
+                "tempo-define-template" => {
+                    // (tempo-define-template NAME ELEMENTS &optional TAG DOC TAGLIST)
+                    // Creates tempo-template-NAME variable and function.
+                    let name_val = eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?;
+                    let elements = eval(
+                        obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+                        env, editor, macros, state,
+                    )?;
+                    let name_obj = value_to_obj(name_val);
+                    let name_str = name_obj.as_string()
+                        .ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+                    let var_name = format!("tempo-template-{name_str}");
+                    let elements_obj = value_to_obj(elements);
+                    // Store elements in the template variable
+                    let var_id = crate::obarray::intern(&var_name);
+                    crate::obarray::set_value_cell(var_id, elements_obj.clone());
+                    // Create an insert function that inserts string elements
+                    let insert_fn = format!(
+                        "(lambda (&optional arg) \
+                           (let ((elts {var_name})) \
+                             (while elts \
+                               (let ((e (car elts))) \
+                                 (when (stringp e) (insert e))) \
+                               (setq elts (cdr elts)))))"
+                    );
+                    if let Ok(func) = crate::read(&insert_fn) {
+                        if let Ok(func_val) = eval(obj_to_value(func), env, editor, macros, state) {
+                            crate::obarray::set_function_cell(var_id, value_to_obj(func_val));
+                        }
+                    }
+                    Ok(obj_to_value(LispObject::symbol(&var_name)))
                 }
                 "catch" => eval_catch(obj_to_value(cdr), env, editor, macros, state),
                 "throw" => eval_throw(obj_to_value(cdr), env, editor, macros, state),

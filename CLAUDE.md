@@ -132,6 +132,10 @@ Terminal UI client (in progress):
 - `gpui-md`: `pdf-export` (genpdf), `google-docs` (reqwest)
 - `gpui-elisp`: `jit` (Cranelift JIT compilation)
 
+## Temporary Files
+
+Use `tmp/` at the project root for scratch and temporary files — **never `/tmp`**.
+
 ## Testing Notes
 
 - Tests for `gpui-md` are in `crates/app-gpui/tests/` (integration-style, one file per area)
