@@ -55,6 +55,11 @@ name = "require_audit"
 path = "src/bin/require_audit.rs"
 required-features = []
 
+[[bin]]
+name = "jit_audit"
+path = "src/bin/jit_audit.rs"
+required-features = []
+
 # Microbenchmarks for hot eval paths. Run with
 # `cargo bench -p rele-elisp --bench eval_dispatch` (or value_fastpath).
 [[bench]]
@@ -63,4 +68,8 @@ harness = false
 
 [[bench]]
 name = "value_fastpath"
+harness = false
+
+[[bench]]
+name = "jit_hotpath"
 harness = false

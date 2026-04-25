@@ -7,10 +7,10 @@
 //! sentinel when the operand is not a fixnum.
 //!
 //! Supported opcodes:
-//!   stack-ref (0-5), eq, not, sub1, add1, eqlsign, gtr, lss, leq,
+//!   stack-ref (0-6), eq, not, sub1, add1, eqlsign, gtr, lss, leq,
 //!   geq, diff, negate, plus, max, min, mult, goto, goto-if-nil,
 //!   goto-if-not-nil, goto-if-nil-else-pop, goto-if-not-nil-else-pop,
-//!   return, discard, dup, constant[N-192]
+//!   return, discard, dup, constant2, constant[N-192]
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, types};
@@ -80,6 +80,11 @@ pub struct JitCompiler {
     /// `spec/quint/jit_runtime.qnt`: if the current version differs,
     /// the compiled code is stale and must be invalidated.
     compiled_versions: HashMap<usize, u64>,
+    /// Number of native-code entries invalidated because their source
+    /// function was redefined or their checked version went stale.
+    invalidation_count: u64,
+    /// Number of native calls that bailed out to the bytecode VM.
+    deopt_count: u64,
     /// Monotonic counter for assigning `CompiledFuncId`s.
     next_id: u32,
 }
@@ -109,6 +114,8 @@ impl JitCompiler {
             compiled: HashMap::new(),
             native_fns: HashMap::new(),
             compiled_versions: HashMap::new(),
+            invalidation_count: 0,
+            deopt_count: 0,
             next_id: 0,
         }
     }
@@ -126,6 +133,26 @@ impl JitCompiler {
     /// Get the compiled function ID for a bytecode function, if it exists.
     pub fn get_compiled(&self, func_id: usize) -> Option<CompiledFuncId> {
         self.compiled.get(&func_id).copied()
+    }
+
+    /// Number of live bytecode functions with native code entries.
+    pub fn compiled_count(&self) -> u64 {
+        self.compiled.len() as u64
+    }
+
+    /// Number of invalidations observed by this compiler.
+    pub fn invalidation_count(&self) -> u64 {
+        self.invalidation_count
+    }
+
+    /// Number of native executions that deoptimized back to the VM.
+    pub fn deopt_count(&self) -> u64 {
+        self.deopt_count
+    }
+
+    /// Record a native fast-path bailout handled by the caller.
+    pub fn record_deopt(&mut self) {
+        self.deopt_count += 1;
     }
 
     /// Compile a bytecode function to native code.
@@ -147,7 +174,10 @@ impl JitCompiler {
         version: u64,
     ) -> Option<CompiledFuncId> {
         if let Some(&id) = self.compiled.get(&func_id) {
-            return Some(id);
+            if self.compiled_versions.get(&func_id).copied() == Some(version) {
+                return Some(id);
+            }
+            self.invalidate(func_id);
         }
 
         let code_ptr = self.compile_inner(func_id, func)?;
@@ -232,10 +262,14 @@ impl JitCompiler {
     /// Called when a function is redefined at runtime so the stale
     /// native code is no longer used.
     pub fn invalidate(&mut self, func_id: usize) {
+        let had_entry = self.compiled.contains_key(&func_id);
         if let Some(id) = self.compiled.remove(&func_id) {
             self.native_fns.remove(&id);
         }
         self.compiled_versions.remove(&func_id);
+        if had_entry {
+            self.invalidation_count += 1;
+        }
     }
 
     /// Allocate the next `CompiledFuncId`.
@@ -267,7 +301,7 @@ impl JitCompiler {
         }
         sig.returns.push(AbiParam::new(types::I64));
 
-        let name = format!("elisp_jit_{}", func_id);
+        let name = format!("elisp_jit_{}_{}", func_id, self.next_id);
         let func_decl = self
             .module
             .declare_function(&name, Linkage::Local, &sig)
@@ -359,6 +393,21 @@ impl JitCompiler {
                     let n = op as usize;
                     if n >= stack.len() {
                         return None; // stack underflow at compile time
+                    }
+                    let idx = stack.len() - 1 - n;
+                    let val = stack[idx];
+                    stack.push(val);
+                }
+
+                // --- stack-ref1 (6): 8-bit stack depth operand ---
+                6 => {
+                    if pc >= bytecode.len() {
+                        return None;
+                    }
+                    let n = bytecode[pc] as usize;
+                    pc += 1;
+                    if n >= stack.len() {
+                        return None;
                     }
                     let idx = stack.len() - 1 - n;
                     let val = stack[idx];
@@ -510,6 +559,25 @@ impl JitCompiler {
                     let masked = Self::emit_mask_payload(&mut builder, prod);
                     let tagged = Self::emit_tag_fixnum(&mut builder, masked);
                     stack.push(tagged);
+                }
+
+                // --- constant2 (129): 16-bit constant index ---
+                129 => {
+                    if pc + 1 >= bytecode.len() {
+                        return None;
+                    }
+                    let lo = bytecode[pc] as u16;
+                    let hi = bytecode[pc + 1] as u16;
+                    pc += 2;
+                    let idx = (lo | (hi << 8)) as usize;
+                    if idx >= const_bits.len() {
+                        let nil = builder.ins().iconst(types::I64, NIL_BITS as i64);
+                        stack.push(nil);
+                    } else {
+                        let bits = const_bits[idx];
+                        let val = builder.ins().iconst(types::I64, bits);
+                        stack.push(val);
+                    }
                 }
 
                 // --- goto (130): unconditional jump ---
@@ -1018,6 +1086,32 @@ mod tests {
     }
 
     #[test]
+    fn test_jit_stack_ref1() {
+        let func = BytecodeFunction {
+            argdesc: 0x0101,
+            bytecode: vec![6, 0, 84, 135],
+            constants: vec![],
+            maxdepth: 2,
+            docstring: None,
+            interactive: None,
+        };
+
+        let mut jit = JitCompiler::new();
+        let id = jit.compile(15, &func).expect("stack-ref1 should compile");
+
+        let result = jit
+            .call(id, &[fixnum_i64(41)])
+            .expect("call should succeed");
+        match result {
+            NativeResult::Ok(bits) => {
+                let n = i64_to_fixnum(bits as i64).expect("result should be fixnum");
+                assert_eq!(n, 42);
+            }
+            NativeResult::Deoptimize => panic!("unexpected deopt"),
+        }
+    }
+
+    #[test]
     fn test_jit_multiply() {
         // Bytecode for (* a b):
         //   stack-ref 1
@@ -1160,6 +1254,32 @@ mod tests {
             NativeResult::Ok(bits) => {
                 let n = i64_to_fixnum(bits as i64).expect("result should be fixnum");
                 assert_eq!(n, 10, "5 + 5 should be 10");
+            }
+            NativeResult::Deoptimize => panic!("unexpected deopt"),
+        }
+    }
+
+    #[test]
+    fn test_jit_constant2() {
+        let mut constants = vec![LispObject::nil(); 70];
+        constants[68] = LispObject::Integer(1234);
+        let func = BytecodeFunction {
+            argdesc: 0x0000,
+            bytecode: vec![129, 68, 0, 135],
+            constants,
+            maxdepth: 1,
+            docstring: None,
+            interactive: None,
+        };
+
+        let mut jit = JitCompiler::new();
+        let id = jit.compile(14, &func).expect("constant2 should compile");
+
+        let result = jit.call(id, &[]).expect("call should succeed");
+        match result {
+            NativeResult::Ok(bits) => {
+                let n = i64_to_fixnum(bits as i64).expect("result should be fixnum");
+                assert_eq!(n, 1234);
             }
             NativeResult::Deoptimize => panic!("unexpected deopt"),
         }

@@ -16,6 +16,8 @@ Current status snapshot:
   `cargo check -p rele-elisp` and
   `cargo check -p rele-elisp --features jit`.
 - JIT build visibility is green: `cargo test -p rele-elisp --features jit --no-run`.
+- JIT runtime tests are green: `cargo test -p rele-elisp --features jit --lib`
+  (`504 passed`, `3 ignored`).
 - Loadup bootstrap is green: `106 / 106` files, `8039 / 8039` forms.
 - Secondary require audit is green: `891 / 891` forms across `cl-lib`,
   `cl-macs`, `cl-extra`, `cl-seq`, `cl-print`, `subr-x`, `pcase`, `gv`, and
@@ -23,6 +25,13 @@ Current status snapshot:
 - The pre-JIT baseline gate is scripted in
   `scripts/pre-jit-baseline.sh`: compile-only, default tests, JIT no-run,
   load audit, and require audit.
+- JIT coverage is now measurable against real Emacs `.elc` bytecode:
+  `cargo run -p rele-elisp --bin jit_audit` currently scans `638` bytecode
+  literals after bootstrap, with `24` fully JIT-supported and a ranked
+  unsupported-opcode histogram for the next expansion loop.
+- JIT hot-path benches include synthetic VM/JIT pairs and an optional real
+  `.elc` zero-arg bytecode sample:
+  `cargo bench -p rele-elisp --features jit --bench jit_hotpath`.
 
 Interpreter-ready means:
 - `cargo test -p rele-elisp`
@@ -155,26 +164,40 @@ Exit condition:
 
 ## Milestone 6: JIT Safety
 
-- [ ] Use version-checked compiled lookup on the hot path.
-- [ ] Track actual compiled entry count instead of inferred hotness.
-- [ ] Add tests for:
-  - [ ] redefinition invalidation
-  - [ ] deopt fallback
-  - [ ] eager compile vs hot compile parity
-  - [ ] tier transitions over the same function
+- [x] Use version-checked compiled lookup on the hot path.
+- [x] Track actual compiled entry count instead of inferred hotness.
+- [x] Track invalidation and deopt counters in `JitStats`.
+- [x] Use stable named-function JIT identities based on symbol IDs rather
+      than cloned bytecode object addresses.
+- [x] Add tests for:
+  - [x] redefinition invalidation
+  - [x] deopt fallback
+  - [x] eager compile vs hot compile parity
+  - [x] tier transitions over the same function
 
 Exit condition:
 - The JIT never keeps stale code running and always falls back safely.
 
 ## Milestone 7: JIT Coverage and Performance
 
-- [ ] Profile real bytecode workloads after bootstrap.
-- [ ] Expand opcode coverage based on measured hot functions.
-- [ ] Add before/after benches for each meaningful hot-path JIT expansion.
-- [ ] Keep fallback exact for unsupported cases.
+- [x] Add a measured JIT/VM bytecode hot-path benchmark:
+      `cargo bench -p rele-elisp --features jit --bench jit_hotpath`.
+- [x] Keep fallback exact for unsupported cases and type-guard deopts.
+- [x] Profile real bytecode workloads after bootstrap with `jit_audit`, including
+      installed function cells plus bytecode literals parsed from real Emacs
+      `.elc` files.
+- [x] Expand opcode coverage based on measured hot functions:
+      `stack-ref1` was the top unsupported opcode in the real `.elc` histogram,
+      and `constant2` now covers large-constant bytecode functions.
+- [x] Add before/after benches for each meaningful hot-path JIT expansion:
+      `jit_hotpath` now includes add, `constant2`, `stack-ref1`, and an optional
+      real `.elc` zero-arg bytecode sample.
 
 Exit condition:
-- The JIT earns its complexity with measured wins on real code.
+- The first audit-driven JIT coverage loop is complete. Quick Criterion numbers
+  show wins for add, `stack-ref1`, and the real `.elc` zero-arg sample; the
+  `constant2` pair is currently neutral/slightly slower through the eval
+  boundary, which is tracked as data for future tiering work rather than hidden.
 
 ## Immediate Next Queue
 
@@ -223,10 +246,12 @@ Current next queue:
    pre-JIT subset: top-level bytecode execution, function-cell dispatch,
    redefinition-sensitive calls, metadata primitives, and the load/require
    audit gates.
-8. [ ] Fix the JIT hot-call path to use version-checked compiled lookup, then add
+8. [x] Fix the JIT hot-call path to use version-checked compiled lookup, then add
    redefinition/deopt/tier-transition tests.
 9. [x] Clean up split-module warnings and import surfaces so CI can tighten toward
    warning-free elisp builds.
+10. [x] Build the next JIT coverage loop from measured post-bootstrap hot
+    bytecode functions, not synthetic opcodes.
 
 Pre-JIT handoff:
 - The pre-JIT blocking track in Milestones 1-5 is complete for the standalone
@@ -235,8 +260,9 @@ Pre-JIT handoff:
   deeper `cl-struct-define` inheritance fidelity, full `cl-generic` method
   combination/dispatch, and app/server command-dispatch integration on top of
   the elisp keymap data.
-- Next implementation milestone is Milestone 6: make tiering safe before
-  expanding JIT coverage.
+- Milestones 6 and 7 are complete enough for the next JIT phase: broaden VM/JIT
+  parity for higher-level bytecode operations (`car`/`cdr`, calls, varrefs,
+  stack mutation) while preserving the audit-and-benchmark loop.
 
 ## Notes
 

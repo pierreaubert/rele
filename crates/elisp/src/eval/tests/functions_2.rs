@@ -221,7 +221,11 @@ fn test_jit_compile_bytecode_succeeds() {
     interp
         .jit_compile("rele-jit-compile-bc-test")
         .expect("should compile");
-    assert_eq!(interp.jit_stats().compiled_count.max(1), 1);
+    assert_eq!(interp.jit_stats().compiled_count, 1);
+    assert_eq!(
+        interp.jit_tier("rele-jit-compile-bc-test"),
+        crate::jit::Tier::Compiled
+    );
 }
 #[test]
 fn test_jit_stats_starts_zero_for_fresh_interpreter() {
@@ -230,6 +234,8 @@ fn test_jit_stats_starts_zero_for_fresh_interpreter() {
     assert_eq!(stats.total_calls, 0);
     assert_eq!(stats.hot_count, 0);
     assert_eq!(stats.compiled_count, 0);
+    assert_eq!(stats.invalidation_count, 0);
+    assert_eq!(stats.deopt_count, 0);
 }
 #[test]
 fn test_def_version_bumps_on_defun() {
@@ -278,6 +284,172 @@ fn test_profiler_detects_hot_bytecode_function() {
     let (total, hot) = interp.profiler_stats();
     assert_eq!(total, 5);
     assert_eq!(hot, 1, "function should now be detected as hot");
+}
+
+#[cfg(feature = "jit")]
+#[allow(dead_code)]
+fn bytecode_add_two_args() -> crate::object::BytecodeFunction {
+    crate::object::BytecodeFunction {
+        argdesc: 0x0202,
+        bytecode: vec![0x01, 0x01, 0x5c, 0x87],
+        constants: vec![],
+        maxdepth: 4,
+        docstring: None,
+        interactive: None,
+    }
+}
+
+#[cfg(feature = "jit")]
+#[allow(dead_code)]
+fn bytecode_add1() -> crate::object::BytecodeFunction {
+    crate::object::BytecodeFunction {
+        argdesc: 0x0101,
+        bytecode: vec![0x54, 0x87],
+        constants: vec![],
+        maxdepth: 2,
+        docstring: None,
+        interactive: None,
+    }
+}
+
+#[cfg(feature = "jit")]
+#[test]
+fn test_jit_redefinition_invalidates_compiled_entry() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let sym = crate::obarray::intern("rele-jit-redef");
+    interp
+        .state
+        .set_function_cell(sym, LispObject::BytecodeFn(bytecode_add1()));
+    interp.jit_compile("rele-jit-redef").unwrap();
+    assert_eq!(interp.jit_stats().compiled_count, 1);
+    assert_eq!(
+        interp.jit_tier("rele-jit-redef"),
+        crate::jit::Tier::Compiled
+    );
+
+    interp
+        .eval_source("(defun rele-jit-redef (x) (+ x 41))")
+        .unwrap();
+    assert_eq!(interp.jit_tier("rele-jit-redef"), crate::jit::Tier::Interp);
+    let stats = interp.jit_stats();
+    assert_eq!(stats.compiled_count, 0);
+    assert_eq!(stats.invalidation_count, 1);
+    assert_eq!(
+        interp.eval(read("(rele-jit-redef 1)").unwrap()).unwrap(),
+        LispObject::integer(42)
+    );
+}
+
+#[cfg(feature = "jit")]
+#[test]
+fn test_jit_deopt_falls_back_to_vm_for_float_arithmetic() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let sym = crate::obarray::intern("rele-jit-deopt-plus");
+    interp
+        .state
+        .set_function_cell(sym, LispObject::BytecodeFn(bytecode_add_two_args()));
+    interp.jit_compile("rele-jit-deopt-plus").unwrap();
+
+    assert_eq!(
+        interp
+            .eval(read("(rele-jit-deopt-plus 3 4)").unwrap())
+            .unwrap(),
+        LispObject::integer(7)
+    );
+    assert_eq!(
+        interp
+            .eval(read("(rele-jit-deopt-plus 1.5 2.25)").unwrap())
+            .unwrap(),
+        LispObject::float(3.75)
+    );
+    let stats = interp.jit_stats();
+    assert_eq!(stats.compiled_count, 1);
+    assert_eq!(stats.deopt_count, 1);
+}
+
+#[cfg(feature = "jit")]
+#[test]
+fn test_jit_eager_compile_and_hot_compile_return_same_values() {
+    let mut eager = Interpreter::new();
+    add_primitives(&mut eager);
+    let eager_sym = crate::obarray::intern("rele-jit-eager-plus");
+    eager
+        .state
+        .set_function_cell(eager_sym, LispObject::BytecodeFn(bytecode_add_two_args()));
+    eager.jit_compile("rele-jit-eager-plus").unwrap();
+
+    let mut hot = Interpreter::new();
+    add_primitives(&mut hot);
+    *hot.state.profiler.write() = crate::jit::Profiler::new(2);
+    let hot_sym = crate::obarray::intern("rele-jit-hot-plus");
+    hot.state
+        .set_function_cell(hot_sym, LispObject::BytecodeFn(bytecode_add_two_args()));
+
+    let eager_result = eager
+        .eval(read("(rele-jit-eager-plus 20 22)").unwrap())
+        .unwrap();
+    let first_hot_result = hot
+        .eval(read("(rele-jit-hot-plus 20 22)").unwrap())
+        .unwrap();
+    let compiled_hot_result = hot
+        .eval(read("(rele-jit-hot-plus 20 22)").unwrap())
+        .unwrap();
+
+    assert_eq!(eager_result, LispObject::integer(42));
+    assert_eq!(first_hot_result, eager_result);
+    assert_eq!(compiled_hot_result, eager_result);
+    assert_eq!(
+        eager.jit_tier("rele-jit-eager-plus"),
+        crate::jit::Tier::Compiled
+    );
+    assert_eq!(
+        hot.jit_tier("rele-jit-hot-plus"),
+        crate::jit::Tier::Compiled
+    );
+    assert_eq!(hot.jit_stats().compiled_count, 1);
+}
+
+#[cfg(feature = "jit")]
+#[test]
+fn test_jit_tier_transitions_over_same_symbol() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    *interp.state.profiler.write() = crate::jit::Profiler::new(2);
+    let sym = crate::obarray::intern("rele-jit-tier");
+    interp
+        .state
+        .set_function_cell(sym, LispObject::BytecodeFn(bytecode_add1()));
+
+    assert_eq!(interp.jit_tier("rele-jit-tier"), crate::jit::Tier::Interp);
+    assert_eq!(
+        interp.eval(read("(rele-jit-tier 1)").unwrap()).unwrap(),
+        LispObject::integer(2)
+    );
+    assert_eq!(interp.jit_tier("rele-jit-tier"), crate::jit::Tier::Interp);
+    assert_eq!(
+        interp.eval(read("(rele-jit-tier 1)").unwrap()).unwrap(),
+        LispObject::integer(2)
+    );
+    assert_eq!(interp.jit_tier("rele-jit-tier"), crate::jit::Tier::Compiled);
+
+    interp
+        .state
+        .set_function_cell(sym, LispObject::BytecodeFn(bytecode_add_two_args()));
+    assert_eq!(interp.jit_tier("rele-jit-tier"), crate::jit::Tier::Interp);
+    assert_eq!(interp.jit_stats().compiled_count, 0);
+    assert_eq!(
+        interp.eval(read("(rele-jit-tier 20 22)").unwrap()).unwrap(),
+        LispObject::integer(42)
+    );
+    assert_eq!(interp.jit_tier("rele-jit-tier"), crate::jit::Tier::Interp);
+    assert_eq!(
+        interp.eval(read("(rele-jit-tier 20 22)").unwrap()).unwrap(),
+        LispObject::integer(42)
+    );
+    assert_eq!(interp.jit_tier("rele-jit-tier"), crate::jit::Tier::Compiled);
+    assert_eq!(interp.jit_stats().compiled_count, 1);
 }
 #[test]
 fn test_backquote_expansion() {

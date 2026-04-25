@@ -388,10 +388,11 @@ pub(crate) fn eval_funcall(
     macros: &MacroTable,
     state: &InterpreterState,
 ) -> ElispResult<Value> {
+    let func_obj = value_to_obj(func);
+    let caller_symbol = func_obj.as_symbol_id();
     let func_name: Option<String> = {
-        let func_obj = value_to_obj(func);
-        if let LispObject::Symbol(id) = func_obj {
-            let name = crate::obarray::symbol_name(id);
+        if let LispObject::Symbol(id) = &func_obj {
+            let name = crate::obarray::symbol_name(*id);
             if name.starts_with(':') && env.read().get_function(&name).is_none() {
                 Some(name)
             } else {
@@ -411,9 +412,13 @@ pub(crate) fn eval_funcall(
         }
         return Err(ElispError::VoidFunction(kw.clone()));
     }
-    let func = resolve_function(func, env, editor, macros, state)?;
     let args = eval_list(args, env, editor, macros, state)?;
-    call_function(func, args, env, editor, macros, state)
+    if caller_symbol.is_some() {
+        call_function(obj_to_value(func_obj), args, env, editor, macros, state)
+    } else {
+        let func = resolve_function(func, env, editor, macros, state)?;
+        call_function(func, args, env, editor, macros, state)
+    }
 }
 pub(super) fn resolve_function(
     func: Value,

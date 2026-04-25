@@ -305,7 +305,9 @@ fn call_function_inner(
             }
         }
         LispObject::BytecodeFn(ref bc) => {
-            let func_id = bc as *const _ as usize;
+            let func_id = caller_sym
+                .map(|sym| sym.0 as usize)
+                .unwrap_or(bc as *const _ as usize);
             #[allow(unused_variables)]
             let should_jit = state.profiler.write().record_call(func_id);
             let args_obj = value_to_obj(args);
@@ -334,7 +336,9 @@ fn call_function_inner(
                                     let val = crate::value::Value::from_raw(raw);
                                     return Ok(val);
                                 }
-                                crate::jit::NativeResult::Deoptimize => {}
+                                crate::jit::NativeResult::Deoptimize => {
+                                    jit.record_deopt();
+                                }
                             }
                         }
                     }

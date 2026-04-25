@@ -11,7 +11,7 @@ use super::{eval, is_callable_value};
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::obarray::{self, SymbolId};
-use crate::object::LispObject;
+use crate::object::{BytecodeFunction, LispObject};
 use crate::value::{Value, obj_to_value, value_to_obj};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -102,12 +102,34 @@ impl InterpreterState {
         self.symbol_cells.read().get_function_cell(sym)
     }
     pub fn set_function_cell(&self, sym: obarray::SymbolId, val: LispObject) {
+        let had_bytecode = self
+            .symbol_cells
+            .read()
+            .get_function_cell(sym)
+            .is_some_and(|old| matches!(old, LispObject::BytecodeFn(_)));
+        if had_bytecode {
+            let func_id = sym.0 as usize;
+            self.profiler.write().reset(func_id);
+            #[cfg(feature = "jit")]
+            self.jit.write().invalidate(func_id);
+        }
         self.symbol_cells.write().set_function_cell(sym, val);
     }
     pub fn clear_value_cell(&self, sym: obarray::SymbolId) {
         self.symbol_cells.write().clear_value_cell(sym);
     }
     pub fn clear_function_cell(&self, sym: obarray::SymbolId) {
+        let had_bytecode = self
+            .symbol_cells
+            .read()
+            .get_function_cell(sym)
+            .is_some_and(|old| matches!(old, LispObject::BytecodeFn(_)));
+        if had_bytecode {
+            let func_id = sym.0 as usize;
+            self.profiler.write().reset(func_id);
+            #[cfg(feature = "jit")]
+            self.jit.write().invalidate(func_id);
+        }
         self.symbol_cells.write().clear_function_cell(sym);
     }
     pub fn get_plist(&self, sym: obarray::SymbolId, prop: obarray::SymbolId) -> LispObject {
@@ -456,6 +478,22 @@ impl Interpreter {
     pub fn get(&self, name: &str) -> Option<LispObject> {
         self.env.read().get(name)
     }
+    /// Return a snapshot of bytecode-backed function cells currently loaded.
+    ///
+    /// This is intentionally read-only and name-oriented so audit tools can
+    /// inspect real bootstrap coverage without coupling to test internals.
+    pub fn bytecode_functions(&self) -> Vec<(String, BytecodeFunction)> {
+        self.state
+            .symbol_cells
+            .read()
+            .function_cells()
+            .into_iter()
+            .filter_map(|(sym, function)| match function {
+                LispObject::BytecodeFn(bytecode) => Some((obarray::symbol_name(sym), bytecode)),
+                _ => None,
+            })
+            .collect()
+    }
     /// Returns `(total_calls, hot_functions_count)` from the JIT profiler.
     pub fn profiler_stats(&self) -> (u64, u64) {
         let profiler = self.state.profiler.read();
@@ -465,10 +503,10 @@ impl Interpreter {
     /// has never been called, or has been invalidated via redefinition,
     /// reports `Tier::Interp`.
     ///
-    /// Implementation: a function is in `Tier::Compiled` when the
-    /// profiler counts it as hot AND its current `def_version` matches
-    /// the version we'd have compiled against. Without the `jit`
-    /// feature, always `Tier::Interp`.
+    /// Implementation: a function is in `Tier::Compiled` only when the
+    /// compiler currently holds a native entry whose recorded
+    /// `def_version` matches the live symbol. Without the `jit` feature,
+    /// always `Tier::Interp`.
     pub fn jit_tier(&self, name: &str) -> crate::jit::Tier {
         #[cfg(feature = "jit")]
         {
@@ -476,12 +514,13 @@ impl Interpreter {
             let Some(cell) = self.state.get_function_cell(sym) else {
                 return crate::jit::Tier::Interp;
             };
-            let crate::object::LispObject::BytecodeFn(ref bc) = cell else {
+            let crate::object::LispObject::BytecodeFn(_) = cell else {
                 return crate::jit::Tier::Interp;
             };
-            let func_id = bc as *const _ as usize;
-            let profiler = self.state.profiler.read();
-            if profiler.should_compile(func_id) {
+            let func_id = sym.0 as usize;
+            let version = self.state.def_version(sym);
+            let mut jit = self.state.jit.write();
+            if jit.get_compiled_checked(func_id, version).is_some() {
                 crate::jit::Tier::Compiled
             } else {
                 crate::jit::Tier::Interp
@@ -519,7 +558,7 @@ impl Interpreter {
             let crate::object::LispObject::BytecodeFn(ref bc) = cell else {
                 return Err(crate::jit::JitError::NotBytecode(name.to_string()));
             };
-            let func_id = bc as *const _ as usize;
+            let func_id = sym.0 as usize;
             let version = self.state.def_version(sym);
             let mut jit = self.state.jit.write();
             jit.compile_with_version(func_id, bc, version)
@@ -542,7 +581,27 @@ impl Interpreter {
             compiled_count: {
                 #[cfg(feature = "jit")]
                 {
-                    profiler.hot_function_count()
+                    self.state.jit.read().compiled_count()
+                }
+                #[cfg(not(feature = "jit"))]
+                {
+                    0
+                }
+            },
+            invalidation_count: {
+                #[cfg(feature = "jit")]
+                {
+                    self.state.jit.read().invalidation_count()
+                }
+                #[cfg(not(feature = "jit"))]
+                {
+                    0
+                }
+            },
+            deopt_count: {
+                #[cfg(feature = "jit")]
+                {
+                    self.state.jit.read().deopt_count()
                 }
                 #[cfg(not(feature = "jit"))]
                 {

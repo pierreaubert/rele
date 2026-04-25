@@ -164,6 +164,22 @@ impl SymbolCells {
         self.cells.get(sym.0 as usize)?.function.clone()
     }
 
+    /// Return a snapshot of all populated function cells.
+    ///
+    /// Used by audit tooling to inspect the bytecode surface loaded into one
+    /// interpreter without exposing mutable symbol-cell internals.
+    pub fn function_cells(&self) -> Vec<(SymbolId, LispObject)> {
+        self.cells
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, data)| {
+                data.function
+                    .clone()
+                    .map(|function| (SymbolId(idx as u32), function))
+            })
+            .collect()
+    }
+
     /// Write the symbol's function cell.
     ///
     /// Side effect: bumps the symbol's `def_version` counter.
