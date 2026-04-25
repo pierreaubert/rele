@@ -441,7 +441,8 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "posn-actual-col-row"
         | "posn-timestamp"
         | "posn-image"
-        | "posn-object-width-height" => Ok(LispObject::nil()),
+        | "posn-object-width-height"
+        | "frame-or-buffer-changed-p" => Ok(LispObject::nil()),
 
         // Keymap stubs
         "kbd" => Ok(args.first().unwrap_or(LispObject::nil())),

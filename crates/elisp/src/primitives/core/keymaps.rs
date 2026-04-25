@@ -1,80 +1,267 @@
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
-use std::sync::Arc;
 
 pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
     match name {
         "make-sparse-keymap" => Some(prim_make_sparse_keymap(args)),
         "make-keymap" => Some(prim_make_keymap(args)),
         "keymapp" => Some(prim_keymapp(args)),
-        "define-key" => Some(prim_define_key(args)),
+        "define-key" | "keymap-set" => Some(prim_define_key(args)),
+        "define-keymap" => Some(prim_define_keymap(args)),
+        "key-valid-p" => Some(prim_key_valid_p(args)),
         "make-composed-keymap" => Some(prim_make_composed_keymap(args)),
+        "set-keymap-parent" => Some(prim_set_keymap_parent(args)),
+        "keymap-parent" => Some(prim_keymap_parent(args)),
+        "lookup-key" | "keymap-lookup" | "key-binding" => Some(prim_lookup_key(args)),
+        "copy-keymap" => Some(prim_copy_keymap(args)),
+        "global-set-key" | "local-set-key" => Some(prim_set_current_map_key(name, args)),
+        "use-global-map" => Some(prim_use_global_map(args)),
+        "use-local-map" => Some(prim_use_local_map(args)),
+        "current-global-map" => Some(prim_current_global_map(args)),
+        "current-local-map" => Some(prim_current_local_map(args)),
+        "current-active-maps" => Some(prim_current_active_maps(args)),
         "type-of" => Some(prim_type_of(args)),
         _ => None,
     }
 }
 
+fn parent_marker() -> LispObject {
+    LispObject::symbol(":parent")
+}
+
+fn make_sparse_keymap() -> LispObject {
+    LispObject::cons(LispObject::symbol("keymap"), LispObject::nil())
+}
+
+fn make_full_keymap() -> LispObject {
+    let char_table = super::make_char_table(LispObject::symbol("keymap"), LispObject::nil());
+    LispObject::cons(
+        LispObject::symbol("keymap"),
+        LispObject::cons(char_table, LispObject::nil()),
+    )
+}
+
+fn key_equal(a: &LispObject, b: &LispObject) -> bool {
+    a == b
+}
+
+fn is_keymap(obj: &LispObject) -> bool {
+    obj.destructure_cons()
+        .is_some_and(|(head, _)| head.as_symbol().as_deref() == Some("keymap"))
+}
+
+fn keymap_parent(map: &LispObject) -> LispObject {
+    let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
+    while let Some((entry, rest)) = cur.destructure_cons() {
+        if let Some((key, value)) = entry.destructure_cons() {
+            if key == parent_marker() {
+                return value;
+            }
+        }
+        cur = rest;
+    }
+    LispObject::nil()
+}
+
+fn define_key_in_map(map: &LispObject, key: LispObject, def: LispObject) -> ElispResult<()> {
+    if !is_keymap(map) {
+        return Ok(());
+    }
+
+    let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
+    while let Some((entry, rest)) = cur.destructure_cons() {
+        if let Some((entry_key, _)) = entry.destructure_cons() {
+            if entry_key != parent_marker() && key_equal(&entry_key, &key) {
+                entry.set_cdr(def);
+                return Ok(());
+            }
+        }
+        cur = rest;
+    }
+
+    let old_tail = map.cdr().unwrap_or_else(LispObject::nil);
+    map.set_cdr(LispObject::cons(LispObject::cons(key, def), old_tail));
+    Ok(())
+}
+
+fn lookup_in_map(map: &LispObject, key: &LispObject) -> LispObject {
+    if !is_keymap(map) {
+        return LispObject::nil();
+    }
+
+    let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
+    while let Some((entry, rest)) = cur.destructure_cons() {
+        if is_keymap(&entry) {
+            let found = lookup_in_map(&entry, key);
+            if !found.is_nil() {
+                return found;
+            }
+        } else if let Some((entry_key, value)) = entry.destructure_cons() {
+            if entry_key != parent_marker() && key_equal(&entry_key, key) {
+                return value;
+            }
+        }
+        cur = rest;
+    }
+
+    let parent = keymap_parent(map);
+    if parent.is_nil() {
+        LispObject::nil()
+    } else {
+        lookup_in_map(&parent, key)
+    }
+}
+
+fn deep_copy(obj: &LispObject) -> LispObject {
+    match obj {
+        LispObject::Cons(_) => {
+            let car = obj.car().unwrap_or_else(LispObject::nil);
+            let cdr = obj.cdr().unwrap_or_else(LispObject::nil);
+            LispObject::cons(deep_copy(&car), deep_copy(&cdr))
+        }
+        LispObject::Vector(v) => LispObject::Vector(std::sync::Arc::new(
+            crate::eval::SyncRefCell::new(v.lock().iter().map(deep_copy).collect()),
+        )),
+        _ => obj.clone(),
+    }
+}
+
 pub fn prim_make_sparse_keymap(args: &LispObject) -> ElispResult<LispObject> {
     let _ = args;
-    Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(
-        vec![
-            LispObject::symbol("keymap"),
-            LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec![]))),
-            LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(vec![]))),
-            LispObject::cons(LispObject::nil(), LispObject::nil()),
-        ],
-    ))))
+    Ok(make_sparse_keymap())
 }
 
 pub fn prim_make_keymap(args: &LispObject) -> ElispResult<LispObject> {
     let _ = args;
-    prim_make_sparse_keymap(args)
+    Ok(make_full_keymap())
 }
 
 pub fn prim_keymapp(args: &LispObject) -> ElispResult<LispObject> {
-    let obj = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    if let Some((car, _)) = obj.destructure_cons() {
-        if car.as_symbol().as_deref() == Some("keymap") {
-            return Ok(LispObject::t());
-        }
-    }
-    Ok(LispObject::nil())
+    let obj = args.first().unwrap_or_else(LispObject::nil);
+    Ok(LispObject::from(is_keymap(&obj)))
 }
 
 pub fn prim_define_key(args: &LispObject) -> ElispResult<LispObject> {
     let map = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let key = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     let def = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
-    let _ = (map, key, def);
-    Ok(LispObject::nil())
+    define_key_in_map(&map, key, def.clone())?;
+    Ok(def)
+}
+
+pub fn prim_define_keymap(args: &LispObject) -> ElispResult<LispObject> {
+    let map = make_sparse_keymap();
+    let mut cur = args.clone();
+    while let Some((key, rest)) = cur.destructure_cons() {
+        let Some((def, next)) = rest.destructure_cons() else {
+            break;
+        };
+        define_key_in_map(&map, key, def)?;
+        cur = next;
+    }
+    Ok(map)
+}
+
+pub fn prim_key_valid_p(args: &LispObject) -> ElispResult<LispObject> {
+    let key = args.first().unwrap_or_else(LispObject::nil);
+    Ok(LispObject::from(!key.is_nil()))
 }
 
 pub fn prim_make_composed_keymap(args: &LispObject) -> ElispResult<LispObject> {
     let maps = args.first().unwrap_or_else(LispObject::nil);
     let parent = args.nth(1).unwrap_or_else(LispObject::nil);
-    let mut entries = Vec::new();
+    let result = make_sparse_keymap();
 
     if !maps.is_nil() {
-        if prim_keymapp(&LispObject::cons(maps.clone(), LispObject::nil()))? == LispObject::t() {
-            entries.push(maps);
+        if is_keymap(&maps) {
+            let old_tail = result.cdr().unwrap_or_else(LispObject::nil);
+            result.set_cdr(LispObject::cons(maps, old_tail));
         } else {
             let mut cur = maps;
-            while let Some((car, cdr)) = cur.destructure_cons() {
-                entries.push(car);
-                cur = cdr;
+            while let Some((map, rest)) = cur.destructure_cons() {
+                let old_tail = result.cdr().unwrap_or_else(LispObject::nil);
+                result.set_cdr(LispObject::cons(map, old_tail));
+                cur = rest;
             }
         }
     }
 
     if !parent.is_nil() {
-        entries.push(parent);
+        set_parent(&result, parent);
     }
 
-    let mut result = LispObject::nil();
-    for entry in entries.into_iter().rev() {
-        result = LispObject::cons(entry, result);
+    Ok(result)
+}
+
+fn set_parent(map: &LispObject, parent: LispObject) {
+    let marker = parent_marker();
+    let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
+    while let Some((entry, rest)) = cur.destructure_cons() {
+        if let Some((key, _)) = entry.destructure_cons() {
+            if key == marker {
+                entry.set_cdr(parent);
+                return;
+            }
+        }
+        cur = rest;
     }
-    Ok(LispObject::cons(LispObject::symbol("keymap"), result))
+    let old_tail = map.cdr().unwrap_or_else(LispObject::nil);
+    map.set_cdr(LispObject::cons(LispObject::cons(marker, parent), old_tail));
+}
+
+pub fn prim_set_keymap_parent(args: &LispObject) -> ElispResult<LispObject> {
+    let map = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let parent = args.nth(1).unwrap_or_else(LispObject::nil);
+    set_parent(&map, parent.clone());
+    Ok(parent)
+}
+
+pub fn prim_keymap_parent(args: &LispObject) -> ElispResult<LispObject> {
+    let map = args.first().unwrap_or_else(LispObject::nil);
+    Ok(keymap_parent(&map))
+}
+
+pub fn prim_lookup_key(args: &LispObject) -> ElispResult<LispObject> {
+    let map = args.first().unwrap_or_else(LispObject::nil);
+    let key = args.nth(1).unwrap_or_else(LispObject::nil);
+    Ok(lookup_in_map(&map, &key))
+}
+
+pub fn prim_copy_keymap(args: &LispObject) -> ElispResult<LispObject> {
+    let map = args.first().unwrap_or_else(LispObject::nil);
+    Ok(deep_copy(&map))
+}
+
+pub fn prim_set_current_map_key(name: &str, args: &LispObject) -> ElispResult<LispObject> {
+    let _ = name;
+    let _key = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let def = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    Ok(def)
+}
+
+pub fn prim_use_global_map(args: &LispObject) -> ElispResult<LispObject> {
+    let _ = args.first().unwrap_or_else(LispObject::nil);
+    Ok(LispObject::nil())
+}
+
+pub fn prim_use_local_map(args: &LispObject) -> ElispResult<LispObject> {
+    let _ = args.first().unwrap_or_else(LispObject::nil);
+    Ok(LispObject::nil())
+}
+
+pub fn prim_current_global_map(args: &LispObject) -> ElispResult<LispObject> {
+    let _ = args;
+    Ok(make_sparse_keymap())
+}
+
+pub fn prim_current_local_map(args: &LispObject) -> ElispResult<LispObject> {
+    let _ = args;
+    Ok(LispObject::nil())
+}
+
+pub fn prim_current_active_maps(args: &LispObject) -> ElispResult<LispObject> {
+    let _ = args;
+    Ok(LispObject::cons(make_sparse_keymap(), LispObject::nil()))
 }
 
 pub fn prim_type_of(args: &LispObject) -> ElispResult<LispObject> {
@@ -105,4 +292,71 @@ pub fn prim_type_of(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::HashTable(_) => "hash-table",
     };
     Ok(LispObject::symbol(type_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(items: Vec<LispObject>) -> LispObject {
+        items
+            .into_iter()
+            .rev()
+            .fold(LispObject::nil(), |tail, item| LispObject::cons(item, tail))
+    }
+
+    #[test]
+    fn define_and_lookup_key_roundtrip() {
+        let map = make_sparse_keymap();
+        let key = LispObject::string("C-x C-s");
+        let command = LispObject::symbol("save-buffer");
+        prim_define_key(&args(vec![map.clone(), key.clone(), command.clone()])).unwrap();
+
+        assert_eq!(prim_lookup_key(&args(vec![map, key])).unwrap(), command);
+    }
+
+    #[test]
+    fn parent_lookup_falls_back() {
+        let parent = make_sparse_keymap();
+        let child = make_sparse_keymap();
+        let key = LispObject::string("q");
+        let command = LispObject::symbol("quit-window");
+
+        prim_define_key(&args(vec![parent.clone(), key.clone(), command.clone()])).unwrap();
+        prim_set_keymap_parent(&args(vec![child.clone(), parent.clone()])).unwrap();
+
+        assert_eq!(
+            prim_keymap_parent(&args(vec![child.clone()])).unwrap(),
+            parent
+        );
+        assert_eq!(prim_lookup_key(&args(vec![child, key])).unwrap(), command);
+    }
+
+    #[test]
+    fn copy_keymap_does_not_share_top_level_bindings() {
+        let map = make_sparse_keymap();
+        let key = LispObject::string("x");
+        prim_define_key(&args(vec![
+            map.clone(),
+            key.clone(),
+            LispObject::symbol("old"),
+        ]))
+        .unwrap();
+        let copy = prim_copy_keymap(&args(vec![map.clone()])).unwrap();
+        prim_define_key(&args(vec![
+            copy.clone(),
+            key.clone(),
+            LispObject::symbol("new"),
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            prim_lookup_key(&args(vec![map, key.clone()])).unwrap(),
+            LispObject::symbol("old")
+        );
+        assert_eq!(
+            prim_lookup_key(&args(vec![copy, key])).unwrap(),
+            LispObject::symbol("new")
+        );
+    }
 }

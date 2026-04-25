@@ -10,6 +10,14 @@ and run real Emacs Lisp reliably, so the roadmap is intentionally staged:
 
 ## Success Criteria
 
+Current status snapshot:
+- Default `rele-elisp` tests are green: `475 passed`, `3 ignored`.
+- JIT build visibility is green: `cargo test -p rele-elisp --features jit --no-run`.
+- Loadup bootstrap is green: `105 / 105` files.
+- Secondary require audit is green: `891 / 891` forms across `cl-lib`,
+  `cl-macs`, `cl-extra`, `cl-seq`, `cl-print`, `subr-x`, `pcase`, `gv`, and
+  `ert`.
+
 Interpreter-ready means:
 - `cargo test -p rele-elisp`
 - `cargo test -p rele-elisp --lib`
@@ -27,18 +35,21 @@ JIT-ready means:
 
 ## Milestone 1: Green Interpreter Baseline
 
-- [ ] Keep the default crate test build green.
-- [ ] Keep `--features jit --no-run` green so JIT regressions stay visible.
-- [ ] Make targeted failures easy to reproduce with one-command tests.
+- [x] Keep the default crate test build green.
+- [x] Keep `--features jit --no-run` green so JIT regressions stay visible.
+- [x] Make targeted failures easy to reproduce with one-command tests.
 - [ ] Separate compile failures from runtime/bootstrap failures in CI.
 
 Exit condition:
-- The crate builds and the remaining failures are runtime behavior gaps only.
+- The crate builds and bootstrap/require failures are tracked as behavior gaps,
+  not compile blockers.
 
 ## Milestone 2: Runtime Isolation
 
 - [ ] Audit remaining process-global interpreter state beyond the obarray.
 - [ ] Ensure ERT registrations do not leak between interpreters.
+- [x] Move current keymap state off thread-local storage and into
+      interpreter-local value cells.
 - [ ] Ensure current buffer / match data / feature state are isolated enough
       for parallel test execution.
 - [ ] Remove ad hoc cleanup from tests where runtime-owned reset/isolation is
@@ -53,10 +64,13 @@ Exit condition:
 - [x] Move stdlib staging to repo `tmp/` to match repo policy.
 - [x] Expose a clear bootstrap API used by tests, audit tools, and future app
       integration.
-- [ ] Add a small “bootstrap health” suite that exercises the core load chain.
+- [x] Add a small “bootstrap health” suite that exercises the core load chain.
+- [x] Keep `load_audit` green for the Emacs 30.2 loadup chain.
+- [x] Keep `require_audit` green for the first secondary library ring.
 
 Exit condition:
-- The same bootstrap code path is shared by tests, audits, and future clients.
+- The same bootstrap code path is shared by tests, audits, and future clients,
+  and it is good enough to use as a regression gate.
 
 ## Milestone 4: Interpreter Compatibility Gaps
 
@@ -81,10 +95,24 @@ Current high-value gap buckets:
 - [x] `tool-bar-local-item`
 - [x] Sparse char-table storage for high-codepoint `aref` / `aset`, range
       writes, parent links, and extra slots
-- [ ] Wrong-type regressions hit during `cl-*`, `oclosure`, and character data
+- [x] Wrong-type regressions hit during `cl-*`, `oclosure`, and character data
+      no longer block loadup or the first require audit ring.
+- [ ] Replace load-time metadata no-ops with real behavior where editor
+      features depend on them:
+      keymaps, coding systems, customization metadata, advice, and after-load.
+- [x] Keymaps have a usable runtime representation for staged load paths:
+      mutable bindings, parent fallback, composed maps, global/local maps,
+      lookup, and `defvar-keymap` / `define-keymap` raw-form handling.
+- [ ] Finish keymap fidelity beyond load/runtime storage:
+      canonical `kbd` / `key-parse`, remapping, prefix maps, menu entries, and
+      editor command dispatch integration.
+- [ ] Turn the short-circuited generated table paths into explicit lazy data
+      structures instead of evaluator pattern skips.
 
 Exit condition:
-- Core stdlib files load with a small, explicit set of known unsupported areas.
+- Core stdlib and the first secondary library ring load cleanly, and the
+  remaining unsupported areas are explicit semantic-debt items rather than
+  bootstrap blockers.
 
 ## Milestone 5: Semantic Parity Hardening
 
@@ -96,6 +124,10 @@ Exit condition:
   - [ ] macro expansion after stdlib bootstrap
   - [ ] `load` / `require` / `provide`
 - [ ] Add a few end-to-end tests around real loaded stdlib functions.
+- [ ] Keep `load_audit` and `require_audit` as required gates while replacing
+      stubs with semantics.
+- [ ] Add focused tests for the current bootstrap shortcuts before removing
+      them, so semantic replacements do not accidentally widen behavior.
 
 Exit condition:
 - The interpreter is boring: predictable, covered, and easy to debug.
@@ -144,12 +176,35 @@ These are the next tasks to pick up in order:
    file, failing form, error class, missing primitive/special-form/semantic.
 8. [x] Finish the `cl-preloaded` circular bootstrap: it now loads `94/94`
    forms, including the built-in `t` type registration path.
-9. [ ] Fix the highest-frequency bootstrap blockers before adding new stubs.
+9. [x] Fix the highest-frequency bootstrap blockers before adding new stubs.
+10. [x] Finish loadup bootstrap: `105 / 105` files now load completely.
+11. [x] Finish the first secondary require audit ring: `891 / 891` forms now
+    load across `cl-*`, `subr-x`, `pcase`, `gv`, and `ert`.
 
-Current short list from targeted runs:
-- charset-heavy files still hit eval-op limits while building mapping tables
-- `isearch` still exposes keymap initialization and symbol-normalization gaps
-- reader-symbol edge cases still block a handful of Lisp-mode forms
+Current next queue:
+1. [x] Replace the first layer of keymap stubs with usable runtime semantics:
+   `define-key`, `keymap-set`, parent maps, composed maps, lookup, global/local
+   maps, and `defvar-keymap` / `define-keymap` loading behavior.
+2. [x] Make current keymaps interpreter-local so `global-set-key`,
+   `local-set-key`, `current-global-map`, `current-local-map`, and
+   `key-binding` do not leak across interpreters.
+3. [ ] Finish keymap fidelity:
+   canonical `kbd` / `key-parse` output, remapping, prefix maps, menu entries,
+   and editor command dispatch integration.
+4. [ ] Finish the runtime isolation audit by moving match data and any EIEIO
+   class registries that still depend on thread/process globals into
+   interpreter-owned state.
+5. [ ] Replace coding-system and translation-table load shortcuts with explicit
+   runtime metadata objects and lazy generated tables.
+6. [ ] Replace customization/advice metadata no-ops where loaded libraries later
+   query that metadata (`defcustom`, `custom-declare-*`, `advice-add`,
+   `after-load-alist`).
+7. [ ] Add interpreter/VM parity gates that run the green loadup and require-audit
+   subsets through bytecode where possible.
+8. [ ] Fix the JIT hot-call path to use version-checked compiled lookup, then add
+   redefinition/deopt/tier-transition tests.
+9. [ ] Clean up split-module warnings and import surfaces so CI can tighten toward
+   warning-free elisp builds.
 
 ## Notes
 

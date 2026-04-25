@@ -521,12 +521,17 @@ pub(super) fn eval_load(
     // 4th arg (nosuffix): when non-nil, don't add .el / .elc suffixes
     let nosuffix = args_obj.nth(3).map(|v| !v.is_nil()).unwrap_or(false);
 
-    // Prefer .elc (fast bytecode) over .el. The former deadlock issue
-    // with re-entrant RwLock is fixed — SyncRefCell panics instead of
-    // hanging, and the PartialEq identity check prevents the main
-    // re-entrant path.
+    // Prefer source only for generated/load-heavy features where the source
+    // evaluator has narrow bootstrap shortcuts. Most stdlib requires still do
+    // better through bytecode while the interpreter is incomplete.
+    let prefer_source = matches!(
+        file_str.as_str(),
+        "cp51932" | "eucjp-ms" | "treesit" | "international/cp51932" | "international/eucjp-ms"
+    );
     let suffixes: &[&str] = if nosuffix {
         &["", ".gz"]
+    } else if prefer_source {
+        &[".el", ".el.gz", ".elc", ""]
     } else {
         &[".elc", ".el", ".el.gz", ""]
     };

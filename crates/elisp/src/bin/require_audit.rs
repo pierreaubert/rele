@@ -134,7 +134,7 @@ fn run() {
                 Ok(_) => ok_count += 1,
                 Err(e) => {
                     if first_errors.len() < 5 {
-                        first_errors.push(format!("{e}"));
+                        first_errors.push(format!("form {i}: {e}"));
                     }
                 }
             }

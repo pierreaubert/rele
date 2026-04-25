@@ -567,3 +567,39 @@ pub(super) fn eval_pcase_let(
 
     eval_progn(obj_to_value(body), &new_env, editor, macros, state)
 }
+
+/// Evaluate `(pcase-dolist (PAT LIST [RESULT]) BODY...)`.
+pub(super) fn eval_pcase_dolist(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let args_obj = value_to_obj(args);
+    let spec = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let body = args_obj.rest().unwrap_or(LispObject::nil());
+    let pat = spec.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let list_form = spec.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let result_form = spec.nth(2);
+    let list = value_to_obj(eval(obj_to_value(list_form), env, editor, macros, state)?);
+
+    let mut cur = list;
+    while let Some((item, rest)) = cur.destructure_cons() {
+        if let Some(bindings) = pcase_match(&pat, &item, env, editor, macros, state)? {
+            let parent = Arc::new(env.read().clone());
+            let loop_env = Arc::new(RwLock::new(super::Environment::with_parent(parent)));
+            for (name, value) in bindings {
+                loop_env.write().define(&name, value);
+            }
+            eval_progn(obj_to_value(body.clone()), &loop_env, editor, macros, state)?;
+        }
+        cur = rest;
+    }
+
+    if let Some(result) = result_form {
+        eval(obj_to_value(result), env, editor, macros, state)
+    } else {
+        Ok(Value::nil())
+    }
+}
