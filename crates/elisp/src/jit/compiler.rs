@@ -1700,18 +1700,6 @@ mod tests {
         //
         // When N is nil, we branch → return nil.
         // When N is 7, we pop, push "fell-through", return it.
-        let func = BytecodeFunction {
-            // No args, two constants.
-            argdesc: 0x0000,
-            bytecode: vec![
-                192, // constant 0 (arg-from-outside is absent; arg pushed by caller)
-                    // Actually we want a test that mirrors (or X 7). Use arg 0:
-            ],
-            constants: vec![LispObject::Integer(7)],
-            maxdepth: 2,
-            docstring: None,
-            interactive: None,
-        };
         // Bytecode: stack-ref 0, goto-if-nil-else-pop 6, constant 0,
         // return, return.  The target offset (6) is the final return.
         // Layout: [0, 133, 6, 0, 192, 135, 135]

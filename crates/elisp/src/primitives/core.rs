@@ -7,7 +7,7 @@ pub(crate) mod ert;
 mod file_ops;
 mod hash;
 mod io;
-mod keymaps;
+pub(crate) mod keymaps;
 mod list;
 mod math;
 mod misc;
@@ -1026,6 +1026,45 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "string-lines",
     ];
     for name in stub_names {
+        interp.define(name, LispObject::primitive(name));
+    }
+    for name in [
+        "kbd",
+        "key-parse",
+        "define-coding-system",
+        "define-coding-system-internal",
+        "define-coding-system-alias",
+        "coding-system-p",
+        "check-coding-system",
+        "coding-system-list",
+        "coding-system-plist",
+        "coding-system-put",
+        "coding-system-get",
+        "coding-system-base",
+        "coding-system-change-eol-conversion",
+        "coding-system-priority-list",
+        "set-coding-system-priority",
+        "prefer-coding-system",
+        "find-coding-systems-string",
+        "find-coding-systems-region",
+        "find-coding-systems-for-charsets",
+        "define-translation-table",
+        "make-translation-table-from-alist",
+        "translation-table-id",
+        "custom-add-option",
+        "custom-add-version",
+        "custom-declare-variable",
+        "custom-declare-face",
+        "custom-declare-group",
+        "advice-add",
+        "advice-remove",
+        "advice-function-mapc",
+        "advice-function-member-p",
+        "advice-member-p",
+        "advice--p",
+        "advice-p",
+        "ad-is-advised",
+    ] {
         interp.define(name, LispObject::primitive(name));
     }
 

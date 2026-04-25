@@ -6,7 +6,8 @@
 //! Usage:
 //!   load_audit [--emacs-lisp-dir DIR]
 //!
-//! Falls back to the same probing logic as the test harness.
+//! Uses the shared runtime bootstrap helpers that tests, audits, and future
+//! editor integration all exercise.
 
 fn main() {
     let emacs_dir = std::env::args()
@@ -52,7 +53,7 @@ fn main() {
         std::process::exit(2);
     }
 
-    // Create interpreter with the same setup as the test harness
+    // Create interpreter through the shared runtime bootstrap path.
     let interp = rele_elisp::eval::bootstrap::make_stdlib_interp();
 
     let mut total_ok: usize = 0;

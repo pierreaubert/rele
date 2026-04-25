@@ -1,30 +1,16 @@
 //! R15 void-variable fixtures round 3 — tests for legitimate Emacs globals.
 //!
 //! This test module verifies that every void-variable fixture added in R15
-//! is properly initialised in `make_stdlib_interp()`. Each test reproduces
-//! the R5 pattern: build a fresh interpreter, seed the same fixtures, then
-//! assert both `(boundp 'VAR)` and `(symbol-value 'VAR)`.
+//! is properly initialised in `make_stdlib_interp()`. Each test builds a
+//! fresh interpreter through the shared runtime bootstrap helper, then asserts
+//! both `(boundp 'VAR)` and `(symbol-value 'VAR)`.
 //!
 //! Only the (a)-class variables from the round-2 baseline shortlist are
 //! covered here. (b) (macro/let-bound locals) and (c) (reader/gensym) cases
 //! are documented in the PR body and deferred to a follow-up stream.
 
-use rele_elisp::{Interpreter, LispObject, add_primitives, primitives_modules, read};
-
-/// Builds an interpreter pre-seeded with the R15 fixtures that the real
-/// `rele_elisp::eval::tests::make_stdlib_interp` configures. Kept in sync
-/// with that function — if you add a new R15 fixture there, mirror it here.
-fn make_stdlib_interp() -> Interpreter {
-    let mut interp = Interpreter::new();
-    add_primitives(&mut interp);
-    primitives_modules::register(&mut interp);
-
-    // R15 fixtures (see crates/elisp/src/eval/tests.rs for provenance).
-    interp.define("internet-is-working", LispObject::nil());
-    interp.define("regex-tests--resources-dir", LispObject::string(""));
-
-    interp
-}
+use rele_elisp::eval::bootstrap::make_stdlib_interp;
+use rele_elisp::{Interpreter, LispObject, read};
 
 fn assert_boundp(interp: &Interpreter, name: &str) {
     let src = format!("(boundp '{name})");

@@ -7,6 +7,7 @@ use super::spawn_worker;
 use super::*;
 
 /// Per-file outcome sent from a worker manager back to the main loop.
+#[allow(dead_code)]
 pub(super) enum FileOutcome {
     /// Successfully processed; includes per-test JSONL lines already
     /// formatted by the worker, plus the summary row.
@@ -30,11 +31,13 @@ pub(super) enum FileOutcome {
 /// reused across many files (the amortization that makes the pool
 /// fast). Dropping the `Worker` kills the child, which closes its
 /// stdout, which makes the reader thread exit.
+#[allow(dead_code)]
 pub(super) struct Worker {
     pub(super) child: std::process::Child,
     pub(super) lines_rx: std::sync::mpsc::Receiver<Option<String>>,
 }
 impl Worker {
+    #[allow(dead_code)]
     pub(super) fn spawn(bin: &std::path::Path) -> Option<Self> {
         let mut child = spawn_worker(bin)?;
         let stdout = child.stdout.take()?;
@@ -65,6 +68,7 @@ impl Worker {
 }
 /// Summary row from one `__SUMMARY__` line.
 #[derive(Default, Clone, Copy)]
+#[allow(dead_code)]
 pub(super) struct FileSummary {
     pub(super) passed: usize,
     pub(super) failed: usize,

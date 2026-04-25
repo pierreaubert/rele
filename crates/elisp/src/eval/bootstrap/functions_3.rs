@@ -6,7 +6,7 @@ use crate::eval::Interpreter;
 use crate::object::LispObject;
 
 use super::ensure_stdlib_files_for;
-use super::functions::{STDLIB_DIR, ensure_stdlib_files_for_dir};
+use super::functions::STDLIB_DIR;
 use super::functions_4::run_rele_ert_tests_detailed_inner;
 use super::types::{ErtRunStats, ErtTestResult};
 
@@ -389,11 +389,11 @@ pub fn probe_emacs_file(interp: &Interpreter, file_path: &str) -> Option<(usize,
     }
     let total = forms.len();
     let mut ok = 0;
-    for (i, form) in forms.into_iter().enumerate() {
+    for (_i, form) in forms.into_iter().enumerate() {
         interp.reset_eval_ops();
         interp.set_eval_ops_limit(5_000_000);
         interp.set_deadline(std::time::Instant::now() + std::time::Duration::from_secs(5));
-        let t = std::time::Instant::now();
+        let _t = std::time::Instant::now();
         if interp.eval(form).is_ok() {
             ok += 1;
         }

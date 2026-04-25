@@ -1,14 +1,9 @@
 //! P6 tests for keyword slot accessor dispatch in EIEIO.
 
-use rele_elisp::LispObject;
 use rele_elisp::primitives_eieio::{
-    Class, Slot, prim_make_instance, register_class, try_keyword_slot_call,
+    prim_make_instance, register_class, try_keyword_slot_call, Class, Slot,
 };
-
-fn reset_classes() {
-    // Classes are thread-local, we can't directly reset from here.
-    // Tests will use unique class names to avoid collisions.
-}
+use rele_elisp::LispObject;
 
 fn symbol(s: &str) -> LispObject {
     LispObject::symbol(s)

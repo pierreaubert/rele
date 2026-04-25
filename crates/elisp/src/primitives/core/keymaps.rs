@@ -45,6 +45,70 @@ fn key_equal(a: &LispObject, b: &LispObject) -> bool {
     a == b
 }
 
+fn canonical_key_token(token: &str) -> String {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let mut parts: Vec<&str> = trimmed.split('-').collect();
+    let Some(base) = parts.pop() else {
+        return trimmed.to_string();
+    };
+    let mut mods = Vec::new();
+    for part in parts {
+        let canonical = match part.to_ascii_lowercase().as_str() {
+            "control" | "ctrl" | "c" => "C",
+            "meta" | "m" => "M",
+            "shift" | "s" => "S",
+            "super" | "sup" => "s",
+            "hyper" | "h" => "H",
+            "alt" | "a" => "A",
+            _ => part,
+        };
+        if !mods.contains(&canonical) {
+            mods.push(canonical);
+        }
+    }
+    let base = match base.to_ascii_lowercase().as_str() {
+        "return" => "RET".to_string(),
+        "escape" => "ESC".to_string(),
+        "delete" => "DEL".to_string(),
+        "backspace" => "BS".to_string(),
+        "tab" => "TAB".to_string(),
+        "space" | "spc" => "SPC".to_string(),
+        other if other.len() == 1 => other.to_string(),
+        _ => base.to_string(),
+    };
+    if mods.is_empty() {
+        base
+    } else {
+        format!("{}-{}", mods.join("-"), base)
+    }
+}
+
+pub fn canonical_key_string(input: &str) -> String {
+    input
+        .split_whitespace()
+        .map(canonical_key_token)
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn canonical_key_object(key: &LispObject) -> LispObject {
+    match key {
+        LispObject::String(s) => LispObject::string(&canonical_key_string(s)),
+        LispObject::Vector(items) => {
+            let normalized: Vec<LispObject> =
+                items.lock().iter().map(canonical_key_object).collect();
+            LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(
+                normalized,
+            )))
+        }
+        _ => key.clone(),
+    }
+}
+
 fn is_keymap(obj: &LispObject) -> bool {
     obj.destructure_cons()
         .is_some_and(|(head, _)| head.as_symbol().as_deref() == Some("keymap"))
@@ -143,7 +207,7 @@ pub fn prim_keymapp(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_define_key(args: &LispObject) -> ElispResult<LispObject> {
     let map = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let key = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let key = canonical_key_object(&args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?);
     let def = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
     define_key_in_map(&map, key, def.clone())?;
     Ok(def)
@@ -156,7 +220,7 @@ pub fn prim_define_keymap(args: &LispObject) -> ElispResult<LispObject> {
         let Some((def, next)) = rest.destructure_cons() else {
             break;
         };
-        define_key_in_map(&map, key, def)?;
+        define_key_in_map(&map, canonical_key_object(&key), def)?;
         cur = next;
     }
     Ok(map)
@@ -223,7 +287,7 @@ pub fn prim_keymap_parent(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_lookup_key(args: &LispObject) -> ElispResult<LispObject> {
     let map = args.first().unwrap_or_else(LispObject::nil);
-    let key = args.nth(1).unwrap_or_else(LispObject::nil);
+    let key = canonical_key_object(&args.nth(1).unwrap_or_else(LispObject::nil));
     Ok(lookup_in_map(&map, &key))
 }
 

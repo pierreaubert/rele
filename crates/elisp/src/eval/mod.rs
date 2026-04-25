@@ -15,10 +15,8 @@ pub(crate) type RwLock<T> = SyncRefCell<T>;
 
 pub use environment::{Environment, is_callable_value};
 pub use macro_table::{Macro, MacroTable};
-pub use thread_locals::{
-    FeatureList, dec_eval_depth, get_match_group, inc_eval_depth, set_match_data,
-};
-use thread_locals::{MATCH_DATA, MATCH_STRING, REGEX_CACHE};
+use thread_locals::REGEX_CACHE;
+pub use thread_locals::{FeatureList, dec_eval_depth, inc_eval_depth};
 
 macro_rules! eval_next {
     ($expr:expr, $env:expr, $editor:expr, $macros:expr, $state:expr) => {{
@@ -56,6 +54,7 @@ mod error_forms;
 mod functions;
 mod keymap_forms;
 mod macro_table;
+mod metadata;
 mod pcase;
 mod special_forms;
 pub mod state_cl;
@@ -64,7 +63,7 @@ mod thread_locals;
 // Re-export functions used internally and externally
 use bootstrap_shortcuts::{
     get_or_create_runtime_char_table, is_cus_start_properties_let,
-    is_generated_translation_table_let,
+    is_generated_translation_table_let, register_generated_translation_table_let,
 };
 use builtins::{
     emacs_regex_to_rust, eval_dolist, eval_featurep, eval_format, eval_get, eval_mapc, eval_mapcar,
@@ -214,11 +213,14 @@ pub(super) fn eval_setf_one(
                 let id = crate::obarray::intern(&name_str);
                 let key = crate::obarray::intern("cl--class");
                 state.put_plist(id, key, new_val.clone());
-                crate::primitives_eieio::register_class(crate::primitives_eieio::Class {
-                    name: name_str,
-                    parent: None,
-                    slots: Vec::new(),
-                });
+                crate::primitives_eieio::register_class_for_state(
+                    state,
+                    crate::primitives_eieio::Class {
+                        name: name_str,
+                        parent: None,
+                        slots: Vec::new(),
+                    },
+                );
             }
             Ok(obj_to_value(new_val))
         }
@@ -468,11 +470,14 @@ pub(super) fn eval_cl_defstruct(
             default: LispObject::nil(),
         })
         .collect();
-    crate::primitives_eieio::register_class(crate::primitives_eieio::Class {
-        name: name.clone(),
-        parent: None,
-        slots: slots_reg,
-    });
+    crate::primitives_eieio::register_class_for_state(
+        state,
+        crate::primitives_eieio::Class {
+            name: name.clone(),
+            parent: None,
+            slots: slots_reg,
+        },
+    );
     {
         let tags_var = format!("cl-struct-{}-tags", name);
         let tags_sym = crate::obarray::intern(&tags_var);
@@ -1085,6 +1090,11 @@ pub(super) fn eval_inner(
             {
                 return result;
             }
+            if let Some(result) =
+                metadata::eval_metadata_form(sym_name, &cdr, env, editor, macros, state)
+            {
+                return result;
+            }
             match sym_name {
                 "quote" => match cdr.first() {
                     Some(arg) => Ok(obj_to_value(arg)),
@@ -1101,6 +1111,7 @@ pub(super) fn eval_inner(
                 "defun" => eval_defun(obj_to_value(cdr), env, editor, macros, state),
                 "let" => {
                     if is_generated_translation_table_let(&cdr) {
+                        register_generated_translation_table_let(&cdr, state);
                         Ok(obj_to_value(LispObject::nil()))
                     } else if is_cus_start_properties_let(&cdr) {
                         Ok(Value::nil())
@@ -1164,12 +1175,11 @@ pub(super) fn eval_inner(
                     builtins::eval_progn_value(obj_to_value(cdr), env, editor, macros, state)
                 }
                 "save-match-data" => {
-                    let saved_data = MATCH_DATA.with(|d| d.borrow().clone());
-                    let saved_str = MATCH_STRING.with(|s| s.borrow().clone());
+                    let saved_data = state.match_data.read().clone();
+                    let saved_str = state.match_string.read().clone();
                     let result =
                         builtins::eval_progn_value(obj_to_value(cdr), env, editor, macros, state);
-                    MATCH_DATA.with(|d| *d.borrow_mut() = saved_data);
-                    MATCH_STRING.with(|s| *s.borrow_mut() = saved_str);
+                    state.set_match_data(saved_data, saved_str);
                     result
                 }
                 "current-buffer" => {
@@ -2137,7 +2147,6 @@ pub(super) fn eval_inner(
                 | "abbrev-mode" => Ok(Value::nil()),
                 "declare"
                 | "interactive"
-                | "eval-after-load"
                 | "make-help-screen"
                 | "declare-function"
                 | "gv-define-expander"
@@ -2145,6 +2154,45 @@ pub(super) fn eval_inner(
                 | "gv-define-simple-setter"
                 | "cl-deftype"
                 | "define-symbol-prop" => Ok(Value::nil()),
+                "eval-after-load" => {
+                    let file_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let file =
+                        value_to_obj(eval(obj_to_value(file_expr), env, editor, macros, state)?);
+                    let form_expr = cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+                    let form =
+                        value_to_obj(eval(obj_to_value(form_expr), env, editor, macros, state)?);
+                    let sym = obarray::intern("after-load-alist");
+                    let old = state
+                        .global_env
+                        .read()
+                        .get_id(sym)
+                        .unwrap_or_else(LispObject::nil);
+                    let entry =
+                        LispObject::cons(file, LispObject::cons(form.clone(), LispObject::nil()));
+                    let updated = LispObject::cons(entry, old);
+                    state.global_env.write().set_id(sym, updated.clone());
+                    state.set_value_cell(sym, updated);
+                    Ok(obj_to_value(form))
+                }
+                "with-eval-after-load" => {
+                    let file_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let file =
+                        value_to_obj(eval(obj_to_value(file_expr), env, editor, macros, state)?);
+                    let body = cdr.rest().unwrap_or(LispObject::nil());
+                    let form = LispObject::cons(LispObject::symbol("progn"), body);
+                    let sym = obarray::intern("after-load-alist");
+                    let old = state
+                        .global_env
+                        .read()
+                        .get_id(sym)
+                        .unwrap_or_else(LispObject::nil);
+                    let entry =
+                        LispObject::cons(file, LispObject::cons(form.clone(), LispObject::nil()));
+                    let updated = LispObject::cons(entry, old);
+                    state.global_env.write().set_id(sym, updated.clone());
+                    state.set_value_cell(sym, updated);
+                    Ok(obj_to_value(form))
+                }
                 "defvar-local" => {
                     let var_name = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let sym_name = var_name
@@ -3006,11 +3054,14 @@ pub(super) fn eval_inner(
                         }
                         cur = rest;
                     }
-                    crate::primitives_eieio::register_class(crate::primitives_eieio::Class {
-                        name: name.clone(),
-                        parent: parent_name,
-                        slots,
-                    });
+                    crate::primitives_eieio::register_class_for_state(
+                        state,
+                        crate::primitives_eieio::Class {
+                            name: name.clone(),
+                            parent: parent_name,
+                            slots,
+                        },
+                    );
                     Ok(obj_to_value(LispObject::symbol(&name)))
                 }
                 "setf" => {
@@ -3802,20 +3853,20 @@ pub(super) fn eval_inner(
                                                 .map(|m| (start + m.start(), start + m.end())),
                                         );
                                     }
-                                    set_match_data(data, None);
+                                    state.set_match_data(data, Some(text.clone()));
                                     let m = caps.get(0).unwrap();
                                     Ok(obj_to_value(LispObject::integer(
                                         (start + m.start()) as i64,
                                     )))
                                 } else {
-                                    set_match_data(Vec::new(), None);
+                                    state.set_match_data(Vec::new(), None);
                                     Ok(Value::nil())
                                 }
                             } else if let Some(m) = re.find(&text[start..]) {
                                 if set_data {
-                                    set_match_data(
+                                    state.set_match_data(
                                         vec![Some((start + m.start(), start + m.end()))],
-                                        None,
+                                        Some(text.clone()),
                                     );
                                 }
                                 Ok(obj_to_value(LispObject::integer(
@@ -3823,7 +3874,7 @@ pub(super) fn eval_inner(
                                 )))
                             } else {
                                 if set_data {
-                                    set_match_data(Vec::new(), None);
+                                    state.set_match_data(Vec::new(), None);
                                 }
                                 Ok(Value::nil())
                             }
@@ -3836,7 +3887,7 @@ pub(super) fn eval_inner(
                     let n = value_to_obj(eval(obj_to_value(n_expr), env, editor, macros, state)?)
                         .as_integer()
                         .unwrap_or(0) as usize;
-                    match get_match_group(n) {
+                    match state.get_match_group(n) {
                         Some((s, _)) => Ok(obj_to_value(LispObject::integer(s as i64))),
                         None => Ok(Value::nil()),
                     }
@@ -3846,7 +3897,7 @@ pub(super) fn eval_inner(
                     let n = value_to_obj(eval(obj_to_value(n_expr), env, editor, macros, state)?)
                         .as_integer()
                         .unwrap_or(0) as usize;
-                    match get_match_group(n) {
+                    match state.get_match_group(n) {
                         Some((_, e)) => Ok(obj_to_value(LispObject::integer(e as i64))),
                         None => Ok(Value::nil()),
                     }
@@ -3861,9 +3912,9 @@ pub(super) fn eval_inner(
                             value_to_obj(eval(obj_to_value(str_expr), env, editor, macros, state)?);
                         s.as_string().cloned()
                     } else {
-                        MATCH_STRING.with(|s| s.borrow().clone())
+                        state.get_match_string()
                     };
-                    match (get_match_group(n), src) {
+                    match (state.get_match_group(n), src) {
                         (Some((s, e)), Some(text)) => Ok(obj_to_value(LispObject::string(
                             text.get(s..e).unwrap_or(""),
                         ))),
@@ -3871,23 +3922,7 @@ pub(super) fn eval_inner(
                     }
                 }
                 "match-data" => {
-                    let data: Vec<LispObject> = MATCH_DATA.with(|d| {
-                        let borrowed = d.borrow();
-                        let mut out = Vec::with_capacity(borrowed.len() * 2);
-                        for group in borrowed.iter() {
-                            match group {
-                                Some((s, e)) => {
-                                    out.push(LispObject::integer(*s as i64));
-                                    out.push(LispObject::integer(*e as i64));
-                                }
-                                None => {
-                                    out.push(LispObject::nil());
-                                    out.push(LispObject::nil());
-                                }
-                            }
-                        }
-                        out
-                    });
+                    let data = state.match_data_as_objects();
                     Ok(state.list_from_objects(data))
                 }
                 "replace-match" | "looking-at" | "re-search-forward" | "re-search-backward"

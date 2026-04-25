@@ -3,8 +3,7 @@
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
 use super::SyncRefCell as RwLock;
-use super::{Environment, InterpreterState, Macro, MacroTable, eval, eval_progn};
-use super::{builtins, state_cl};
+use super::{Environment, InterpreterState, Macro, MacroTable, eval};
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
@@ -74,6 +73,7 @@ pub(crate) fn call_stateful_primitive(
         "default-value" => Some(stateful_symbol_value(args, env, state)),
         "default-boundp" => Some(stateful_boundp(args, env, state)),
         "set-default" => Some(stateful_set_default(args, env)),
+        "type-of" => Some(stateful_type_of(args, state)),
         "makunbound" => Some(stateful_makunbound(args, state)),
         "fmakunbound" => Some(stateful_fmakunbound(args, state)),
         "make-hash-table" => Some(stateful_make_hash_table(args, state)),
@@ -100,6 +100,9 @@ pub(crate) fn call_stateful_primitive(
             {
                 return Some(r);
             }
+            if let Some(r) = super::super::metadata::call_metadata_primitive(name, args, state) {
+                return Some(r);
+            }
             if let Some(r) = crate::primitives_buffer::call_buffer_primitive(name, args) {
                 return Some(r);
             }
@@ -109,7 +112,8 @@ pub(crate) fn call_stateful_primitive(
             if let Some(r) = crate::primitives_file::call_file_primitive(name, args, state) {
                 return Some(r);
             }
-            if let Some(r) = crate::primitives_eieio::call_eieio_primitive(name, args) {
+            if let Some(r) = crate::primitives_eieio::call_eieio_primitive(name, args, Some(state))
+            {
                 return Some(r);
             }
             if let Some(r) = crate::primitives_cl::call_cl_primitive(name, args) {
@@ -141,6 +145,21 @@ fn stateful_signal(args: &LispObject) -> ElispResult<LispObject> {
         symbol,
         data,
     })))
+}
+
+fn stateful_type_of(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
+    let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    if let LispObject::Vector(v) = &arg {
+        let guard = v.lock();
+        if let Some(first) = guard.first() {
+            if let Some(sym) = first.as_symbol() {
+                if crate::primitives_eieio::get_class_for_state(state, &sym).is_some() {
+                    return Ok(LispObject::symbol(&sym));
+                }
+            }
+        }
+    }
+    crate::primitives::call_primitive("type-of", args)
 }
 /// `(error FMT &rest ARGS)` via funcall. Format the message with
 /// pre-evaluated args, then signal `error` with it.

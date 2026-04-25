@@ -33,6 +33,23 @@ pub(super) fn is_generated_translation_table_let(args: &LispObject) -> bool {
     form_contains_call(&body, "define-translation-table")
 }
 
+pub(super) fn register_generated_translation_table_let(
+    args: &LispObject,
+    state: &InterpreterState,
+) {
+    let (bindings, body) = args.clone().destructure();
+    let Some(map) = translation_table_map_binding_value(bindings) else {
+        return;
+    };
+    for name in translation_table_names(&body) {
+        state
+            .translation_tables
+            .write()
+            .insert(name.clone(), map.clone());
+        state.set_value_cell(crate::obarray::intern(&name), map.clone());
+    }
+}
+
 pub(super) fn is_cus_start_properties_let(args: &LispObject) -> bool {
     let (bindings, body) = args.clone().destructure();
     let binds_standard = let_binds_symbol(&bindings, "standard");
@@ -70,6 +87,48 @@ fn is_translation_table_map_binding(bindings: LispObject) -> bool {
         head = rest;
     }
     count == 1
+}
+
+fn translation_table_map_binding_value(bindings: LispObject) -> Option<LispObject> {
+    let (binding, rest) = bindings.destructure_cons()?;
+    if !rest.is_nil() {
+        return None;
+    }
+    let (name, init) = binding.destructure_cons()?;
+    if name.as_symbol().as_deref() != Some("map") {
+        return None;
+    }
+    let init_expr = init.first()?;
+    let (quote, quoted) = init_expr.destructure_cons()?;
+    if quote.as_symbol().as_deref() != Some("quote") {
+        return None;
+    }
+    quoted.first()
+}
+
+fn translation_table_names(form: &LispObject) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_translation_table_names(form, &mut out);
+    out
+}
+
+fn collect_translation_table_names(form: &LispObject, out: &mut Vec<String>) {
+    let Some((head, rest)) = form.destructure_cons() else {
+        return;
+    };
+    if head.as_symbol().as_deref() == Some("define-translation-table") {
+        if let Some(name_form) = rest.first() {
+            let name = name_form
+                .as_quote_content()
+                .and_then(|obj| obj.as_symbol())
+                .or_else(|| name_form.as_symbol());
+            if let Some(name) = name {
+                out.push(name);
+            }
+        }
+    }
+    collect_translation_table_names(&head, out);
+    collect_translation_table_names(&rest, out);
 }
 
 fn is_map_quote_binding(binding: &LispObject) -> bool {

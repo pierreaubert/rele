@@ -503,6 +503,74 @@ pub(super) fn eval_format(
 
 /// (load FILE &optional NOERROR NOMESSAGE NOSUFFIX MUST-SUFFIX)
 /// Search `load-path` for FILE with .elc / .el suffixes, read and eval all forms.
+fn after_load_key_matches(key: &LispObject, requested: &str, loaded_path: &str) -> bool {
+    let key_name = key.as_string().cloned().or_else(|| key.as_symbol());
+    let Some(key_name) = key_name else {
+        return false;
+    };
+    let loaded = std::path::Path::new(loaded_path);
+    let file_name = loaded.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let stem = file_name
+        .strip_suffix(".el.gz")
+        .or_else(|| file_name.strip_suffix(".elc"))
+        .or_else(|| file_name.strip_suffix(".el"))
+        .unwrap_or(file_name);
+    key_name == requested || key_name == loaded_path || key_name == file_name || key_name == stem
+}
+
+fn run_after_load_hooks(
+    requested: &str,
+    loaded_path: &str,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<()> {
+    let sym = crate::obarray::intern("after-load-alist");
+    let alist = state
+        .global_env
+        .read()
+        .get_id(sym)
+        .unwrap_or_else(LispObject::nil);
+    let mut cur = alist;
+    let mut remaining_rev = LispObject::nil();
+    let mut forms_to_run = Vec::new();
+
+    while let Some((entry, rest)) = cur.destructure_cons() {
+        let (key, forms) = match entry.destructure_cons() {
+            Some(pair) => pair,
+            None => {
+                remaining_rev = LispObject::cons(entry, remaining_rev);
+                cur = rest;
+                continue;
+            }
+        };
+        if after_load_key_matches(&key, requested, loaded_path) {
+            let mut form_list = forms;
+            while let Some((form, next)) = form_list.destructure_cons() {
+                forms_to_run.push(form);
+                form_list = next;
+            }
+        } else {
+            remaining_rev = LispObject::cons(LispObject::cons(key, forms), remaining_rev);
+        }
+        cur = rest;
+    }
+
+    let mut remaining = LispObject::nil();
+    while let Some((entry, rest)) = remaining_rev.destructure_cons() {
+        remaining = LispObject::cons(entry, remaining);
+        remaining_rev = rest;
+    }
+    state.global_env.write().set_id(sym, remaining.clone());
+    state.set_value_cell(sym, remaining);
+
+    for form in forms_to_run {
+        eval(obj_to_value(form), env, editor, macros, state)?;
+    }
+    Ok(())
+}
+
 pub(super) fn eval_load(
     args: Value,
     env: &Arc<RwLock<Environment>>,
@@ -659,6 +727,7 @@ pub(super) fn eval_load(
                     ok += 1;
                 }
             }
+            run_after_load_hooks(&file_str, path, env, editor, macros, state)?;
             return Ok(Value::t());
         }
     }

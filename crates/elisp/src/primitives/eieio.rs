@@ -15,8 +15,10 @@
 //!   instances from plain vectors whose first element happens to be a
 //!   class name. All slot-access primitives check for the sentinel
 //!   before trusting the class name at index 1.
-//! - Methods: stored in a thread-local hashmap keyed by (name, first-
-//!   arg class name). `cl-call-next-method` walks the class hierarchy.
+//! - Methods: stored in a small registry keyed by (name, first-arg class
+//!   name). Interpreter execution keeps class metadata in
+//!   `InterpreterState`; the thread-local fallback exists only for
+//!   stateless primitive unit tests.
 //!
 //! The goal is breadth, not fidelity. Tests that actually *check*
 //! slot-accessor correctness will pass; tests that depend on method
@@ -26,6 +28,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::error::{ElispError, ElispResult};
+use crate::eval::InterpreterState;
 use crate::object::LispObject;
 
 /// One slot definition for a class.
@@ -75,8 +78,25 @@ pub fn register_class(class: Class) {
     });
 }
 
+pub fn register_class_for_state(state: &InterpreterState, class: Class) {
+    state
+        .eieio_classes
+        .write()
+        .insert(class.name.clone(), class);
+}
+
 pub fn get_class(name: &str) -> Option<Class> {
     CLASSES.with(|c| c.borrow().get(name).cloned())
+}
+
+pub fn get_class_for_state(state: &InterpreterState, name: &str) -> Option<Class> {
+    state.eieio_classes.read().get(name).cloned()
+}
+
+fn get_class_from(state: Option<&InterpreterState>, name: &str) -> Option<Class> {
+    state
+        .and_then(|s| get_class_for_state(s, name))
+        .or_else(|| get_class(name))
 }
 
 pub fn register_method(name: &str, method: Method) {
@@ -96,13 +116,17 @@ pub fn get_methods(name: &str) -> Vec<Method> {
 /// Walk a class's inheritance chain top-down, starting at `name` and
 /// climbing via `parent`. Includes `name` itself.
 pub fn class_hierarchy(name: &str) -> Vec<String> {
+    class_hierarchy_from(None, name)
+}
+
+fn class_hierarchy_from(state: Option<&InterpreterState>, name: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = Some(name.to_string());
     while let Some(n) = cur {
         if out.contains(&n) {
             break; // cycle guard
         }
-        let parent = CLASSES.with(|c| c.borrow().get(&n).and_then(|cl| cl.parent.clone()));
+        let parent = get_class_from(state, &n).and_then(|cl| cl.parent);
         out.push(n);
         cur = parent;
     }
@@ -114,25 +138,46 @@ pub fn class_hierarchy(name: &str) -> Vec<String> {
 /// `(eieio-class-p OBJ)`. A class is represented by our registry entry
 /// keyed by the symbol's name.
 pub fn prim_eieio_class_p(args: &LispObject) -> ElispResult<LispObject> {
+    prim_eieio_class_p_with_state(args, None)
+}
+
+fn prim_eieio_class_p_with_state(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
     let a = args.first().unwrap_or(LispObject::nil());
     let name = match a.as_symbol() {
         Some(n) => n,
         None => return Ok(LispObject::nil()),
     };
-    Ok(LispObject::from(get_class(&name).is_some()))
+    Ok(LispObject::from(get_class_from(state, &name).is_some()))
 }
 
 pub fn prim_cl_class_p(args: &LispObject) -> ElispResult<LispObject> {
     prim_eieio_class_p(args)
 }
 
+fn prim_cl_class_p_with_state(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
+    prim_eieio_class_p_with_state(args, state)
+}
+
 pub fn prim_find_class(args: &LispObject) -> ElispResult<LispObject> {
+    prim_find_class_with_state(args, None)
+}
+
+fn prim_find_class_with_state(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
     let a = args.first().unwrap_or(LispObject::nil());
     let name = match a.as_symbol() {
         Some(n) => n,
         None => return Ok(LispObject::nil()),
     };
-    if get_class(&name).is_some() {
+    if get_class_from(state, &name).is_some() {
         // Return the class's symbol — not the full struct. This
         // matches Emacs's convention where `cl--find-class` returns a
         // class record, but most tests just check for truthy.
@@ -146,13 +191,27 @@ pub fn prim_cl_find_class(args: &LispObject) -> ElispResult<LispObject> {
     prim_find_class(args)
 }
 
+fn prim_cl_find_class_with_state(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
+    prim_find_class_with_state(args, state)
+}
+
 /// `(make-instance CLASS &rest INITARGS)` — create a new instance.
 pub fn prim_make_instance(args: &LispObject) -> ElispResult<LispObject> {
+    prim_make_instance_with_state(args, None)
+}
+
+fn prim_make_instance_with_state(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
     let class_arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let class_name = class_arg
         .as_symbol()
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
-    let class = get_class(&class_name).ok_or_else(|| {
+    let class = get_class_from(state, &class_name).ok_or_else(|| {
         ElispError::Signal(Box::new(crate::error::SignalData {
             symbol: LispObject::symbol("invalid-slot-type"),
             data: LispObject::cons(class_arg.clone(), LispObject::nil()),
@@ -232,6 +291,13 @@ fn as_items(obj: &LispObject) -> Option<Vec<LispObject>> {
 
 /// `(slot-value INSTANCE SLOT)` — look up SLOT on INSTANCE.
 pub fn prim_slot_value(args: &LispObject) -> ElispResult<LispObject> {
+    prim_slot_value_with_state(args, None)
+}
+
+fn prim_slot_value_with_state(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
     let instance = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let slot = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     let slot_name = slot
@@ -248,7 +314,7 @@ pub fn prim_slot_value(args: &LispObject) -> ElispResult<LispObject> {
             ),
         }))
     })?;
-    let class = get_class(&class_name)
+    let class = get_class_from(state, &class_name)
         .ok_or_else(|| ElispError::EvalError(format!("unknown class: {class_name}")))?;
     let idx = class
         .slots
@@ -274,6 +340,13 @@ pub fn prim_eieio_oref(args: &LispObject) -> ElispResult<LispObject> {
 
 /// `(set-slot-value INSTANCE SLOT VALUE)`.
 pub fn prim_set_slot_value(args: &LispObject) -> ElispResult<LispObject> {
+    prim_set_slot_value_with_state(args, None)
+}
+
+fn prim_set_slot_value_with_state(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
     let instance = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let slot = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     let value = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
@@ -291,7 +364,7 @@ pub fn prim_set_slot_value(args: &LispObject) -> ElispResult<LispObject> {
             ),
         }))
     })?;
-    let class = get_class(&class_name)
+    let class = get_class_from(state, &class_name)
         .ok_or_else(|| ElispError::EvalError(format!("unknown class: {class_name}")))?;
     let idx = class
         .slots
@@ -334,6 +407,13 @@ pub fn prim_slot_boundp(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_object_of_class_p(args: &LispObject) -> ElispResult<LispObject> {
+    prim_object_of_class_p_with_state(args, None)
+}
+
+fn prim_object_of_class_p_with_state(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
     let obj = args.first().unwrap_or(LispObject::nil());
     let target = args.nth(1).and_then(|a| a.as_symbol()).unwrap_or_default();
     if target.is_empty() {
@@ -345,15 +425,22 @@ pub fn prim_object_of_class_p(args: &LispObject) -> ElispResult<LispObject> {
     let Some(class_name) = instance_class(&items) else {
         return Ok(LispObject::nil());
     };
-    let hierarchy = class_hierarchy(&class_name);
+    let hierarchy = class_hierarchy_from(state, &class_name);
     Ok(LispObject::from(hierarchy.contains(&target)))
 }
 
 pub fn prim_eieio_object_p(args: &LispObject) -> ElispResult<LispObject> {
+    prim_eieio_object_p_with_state(args, None)
+}
+
+fn prim_eieio_object_p_with_state(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
     let obj = args.first().unwrap_or(LispObject::nil());
     let is_inst = as_items(&obj)
         .and_then(|items| instance_class(&items))
-        .map(|n| get_class(&n).is_some())
+        .map(|n| get_class_from(state, &n).is_some())
         .unwrap_or(false);
     Ok(LispObject::from(is_inst))
 }
@@ -384,6 +471,13 @@ pub fn prim_eieio_object_name(_args: &LispObject) -> ElispResult<LispObject> {
 /// arrives as the literal cons `(quote netrc)`. We best-effort
 /// de-quote simple forms; full eval would need interpreter context.
 pub fn prim_eieio_defclass_internal(args: &LispObject) -> ElispResult<LispObject> {
+    prim_eieio_defclass_internal_with_state(args, None)
+}
+
+fn prim_eieio_defclass_internal_with_state(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
     let cname_obj = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let cname = cname_obj
         .as_symbol()
@@ -437,11 +531,16 @@ pub fn prim_eieio_defclass_internal(args: &LispObject) -> ElispResult<LispObject
         cur = rest;
     }
 
-    register_class(Class {
+    let class = Class {
         name: cname.clone(),
         parent: parent_name,
         slots,
-    });
+    };
+    if let Some(state) = state {
+        register_class_for_state(state, class);
+    } else {
+        register_class(class);
+    }
     Ok(LispObject::symbol(&cname))
 }
 
@@ -495,7 +594,7 @@ pub fn prim_advice_remove(_args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::nil())
 }
 
-pub fn prim_advice__p(args: &LispObject) -> ElispResult<LispObject> {
+pub fn prim_advice_p(args: &LispObject) -> ElispResult<LispObject> {
     // Never advised.
     let _ = args;
     Ok(LispObject::nil())
@@ -551,6 +650,14 @@ pub fn try_keyword_slot_call(
     kw_symbol: &str,
     args: &LispObject,
 ) -> Option<ElispResult<LispObject>> {
+    try_keyword_slot_call_with_state(kw_symbol, args, None)
+}
+
+pub fn try_keyword_slot_call_with_state(
+    kw_symbol: &str,
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> Option<ElispResult<LispObject>> {
     // Only handle symbols starting with `:` (keywords)
     if !kw_symbol.starts_with(':') {
         return None;
@@ -562,7 +669,7 @@ pub fn try_keyword_slot_call(
     // Get the class name from the instance
     let items = as_items(&instance)?;
     let class_name = instance_class(&items)?;
-    let class = get_class(&class_name)?;
+    let class = get_class_from(state, &class_name)?;
 
     // Strip the leading `:` from the keyword to get the initarg name
     let initarg_name = kw_symbol.strip_prefix(':').unwrap_or(kw_symbol);
@@ -589,34 +696,38 @@ pub fn try_keyword_slot_call(
 
 // ---- Dispatch ---------------------------------------------------------
 
-pub fn call_eieio_primitive(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
+pub fn call_eieio_primitive(
+    name: &str,
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> Option<ElispResult<LispObject>> {
     Some(match name {
-        "eieio-class-p" => prim_eieio_class_p(args),
-        "cl-class-p" | "class-p" => prim_cl_class_p(args),
-        "find-class" => prim_find_class(args),
-        "cl--find-class" | "cl-find-class" => prim_cl_find_class(args),
-        "make-instance" => prim_make_instance(args),
-        "slot-value" => prim_slot_value(args),
-        "oref" => prim_oref(args),
-        "eieio-oref" => prim_eieio_oref(args),
-        "set-slot-value" => prim_set_slot_value(args),
-        "oset" => prim_oset(args),
-        "eieio-oset" => prim_eieio_oset(args),
+        "eieio-class-p" => prim_eieio_class_p_with_state(args, state),
+        "cl-class-p" | "class-p" => prim_cl_class_p_with_state(args, state),
+        "find-class" => prim_find_class_with_state(args, state),
+        "cl--find-class" | "cl-find-class" => prim_cl_find_class_with_state(args, state),
+        "make-instance" => prim_make_instance_with_state(args, state),
+        "slot-value" => prim_slot_value_with_state(args, state),
+        "oref" => prim_slot_value_with_state(args, state),
+        "eieio-oref" => prim_slot_value_with_state(args, state),
+        "set-slot-value" => prim_set_slot_value_with_state(args, state),
+        "oset" => prim_set_slot_value_with_state(args, state),
+        "eieio-oset" => prim_set_slot_value_with_state(args, state),
         "slot-boundp" => prim_slot_boundp(args),
         // Note: `cl-typep` is the general type-check function; the
         // EIEIO-specific class check is `object-of-class-p`. Routing
         // `cl-typep` here would miss builtin types (integer, number,
         // string, ...) — handled in primitives_cl.rs instead.
-        "object-of-class-p" => prim_object_of_class_p(args),
-        "eieio-object-p" => prim_eieio_object_p(args),
+        "object-of-class-p" => prim_object_of_class_p_with_state(args, state),
+        "eieio-object-p" => prim_eieio_object_p_with_state(args, state),
         "eieio-object-class" | "cl-type-of" => prim_eieio_object_class(args),
         "eieio-object-name" | "object-name" => prim_eieio_object_name(args),
-        "eieio-defclass-internal" => prim_eieio_defclass_internal(args),
+        "eieio-defclass-internal" => prim_eieio_defclass_internal_with_state(args, state),
         "eieio-make-class-predicate" => prim_eieio_make_class_predicate(args),
         "eieio-make-child-predicate" => prim_eieio_make_child_predicate(args),
         "advice-add" => prim_advice_add(args),
         "advice-remove" => prim_advice_remove(args),
-        "advice--p" | "advice-p" => prim_advice__p(args),
+        "advice--p" | "advice-p" => prim_advice_p(args),
         "advice-function-member-p" => prim_advice_function_member_p(args),
         "advice-member-p" => prim_advice_member_p(args),
         "ad-is-advised" => prim_ad_is_advised(args),

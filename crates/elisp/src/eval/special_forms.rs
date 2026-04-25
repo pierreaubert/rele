@@ -110,7 +110,8 @@ pub(super) fn eval_macroexpand(
     state: &InterpreterState,
 ) -> ElispResult<Value> {
     let args_obj = value_to_obj(args);
-    let mut form = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let form_arg = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let mut form = value_to_obj(eval(obj_to_value(form_arg), env, editor, macros, state)?);
 
     // Keep expanding until the outermost form is no longer a macro call,
     // matching Emacs's `macroexpand` semantics.

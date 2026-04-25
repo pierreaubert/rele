@@ -3,16 +3,15 @@
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
 use super::SyncRefCell as RwLock;
-use super::{Environment, InterpreterState, Macro, MacroTable, eval, eval_progn};
-use super::{bind_param_dynamic, builtins, call_stateful_primitive, state_cl, unwind_specpdl};
+use super::{Environment, InterpreterState, MacroTable, eval, eval_progn};
+use super::{bind_param_dynamic, unwind_specpdl};
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
 use std::sync::Arc;
 
-use super::functions::source_level_fallback;
-use super::types::FallbackFrame;
+use super::functions::{call_stateful_primitive, source_level_fallback};
 
 pub(super) fn eval_list(
     args: Value,
@@ -380,7 +379,11 @@ fn call_function_inner(
                 }
             }
             let args_obj = value_to_obj(args);
-            if let Some(result) = crate::primitives_eieio::try_keyword_slot_call(&name, &args_obj) {
+            if let Some(result) = crate::primitives_eieio::try_keyword_slot_call_with_state(
+                &name,
+                &args_obj,
+                Some(state),
+            ) {
                 return result.map(obj_to_value);
             }
             source_level_fallback(&name, &args_obj, env, editor, macros, state)
@@ -391,8 +394,8 @@ fn call_function_inner(
 }
 #[cfg(test)]
 mod tests {
-    use super::super::FALLBACK_STACK;
-    use super::*;
+    use super::super::functions::FALLBACK_STACK;
+    use super::super::types::FallbackFrame;
     /// Regression: R3. Previously the FALLBACK_STACK was pushed/popped
     /// by explicit method calls. If the `eval` inside the fallback
     /// panicked, the pop never ran and the name stayed on the stack

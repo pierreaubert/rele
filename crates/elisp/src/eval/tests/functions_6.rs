@@ -43,6 +43,7 @@ fn test_full_bootstrap_chain() {
         .expect("failed to spawn bootstrap thread");
     handle.join().expect("bootstrap thread panicked");
 }
+#[allow(dead_code)]
 fn run_full_bootstrap_chain() {
     if !ensure_stdlib_files() {
         return;

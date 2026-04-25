@@ -38,6 +38,22 @@ pub struct InterpreterState {
     pub cons_count: Arc<std::sync::atomic::AtomicU64>,
     /// Autoload mappings: function-name -> file-to-load.
     pub autoloads: AutoloadTable,
+    /// Match data from source-level `string-match` / `match-string`.
+    /// This used to be thread-local, which let two interpreter instances
+    /// on the same test worker observe each other's captures.
+    pub match_data: Arc<RwLock<Vec<Option<(usize, usize)>>>>,
+    pub match_string: Arc<RwLock<Option<String>>>,
+    /// EIEIO class registry. This is interpreter-local so loading EIEIO
+    /// classes in one runtime cannot affect another runtime on the same
+    /// process or test worker.
+    pub eieio_classes: Arc<RwLock<HashMap<String, crate::primitives_eieio::Class>>>,
+    /// Runtime metadata that used to be represented by bootstrap-only no-ops.
+    pub coding_systems: Arc<RwLock<HashMap<String, LispObject>>>,
+    pub coding_aliases: Arc<RwLock<HashMap<String, String>>>,
+    pub coding_priority: Arc<RwLock<Vec<String>>>,
+    pub translation_tables: Arc<RwLock<HashMap<String, LispObject>>>,
+    pub custom_metadata: Arc<RwLock<HashMap<SymbolId, LispObject>>>,
+    pub advice_metadata: Arc<RwLock<HashMap<SymbolId, Vec<LispObject>>>>,
     /// Per-eval operation counter. Incremented on every eval call.
     /// When `eval_ops_limit` is > 0 and ops exceeds it, eval returns an error.
     pub eval_ops: Arc<std::sync::atomic::AtomicU64>,
@@ -105,6 +121,33 @@ impl InterpreterState {
     }
     pub fn replace_plist(&self, sym: obarray::SymbolId, plist: LispObject) {
         self.symbol_cells.write().replace_plist(sym, plist);
+    }
+    pub fn set_match_data(&self, captures: Vec<Option<(usize, usize)>>, text: Option<String>) {
+        *self.match_data.write() = captures;
+        *self.match_string.write() = text;
+    }
+    pub fn get_match_group(&self, n: usize) -> Option<(usize, usize)> {
+        self.match_data.read().get(n).and_then(|x| *x)
+    }
+    pub fn get_match_string(&self) -> Option<String> {
+        self.match_string.read().clone()
+    }
+    pub fn match_data_as_objects(&self) -> Vec<LispObject> {
+        let borrowed = self.match_data.read();
+        let mut out = Vec::with_capacity(borrowed.len() * 2);
+        for group in borrowed.iter() {
+            match group {
+                Some((s, e)) => {
+                    out.push(LispObject::integer(*s as i64));
+                    out.push(LispObject::integer(*e as i64));
+                }
+                None => {
+                    out.push(LispObject::nil());
+                    out.push(LispObject::nil());
+                }
+            }
+        }
+        out
     }
     pub fn def_version(&self, sym: obarray::SymbolId) -> u64 {
         self.symbol_cells.read().def_version(sym)
@@ -307,6 +350,15 @@ impl Interpreter {
                 })),
                 cons_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 autoloads: Arc::new(RwLock::new(HashMap::new())),
+                match_data: Arc::new(RwLock::new(Vec::new())),
+                match_string: Arc::new(RwLock::new(None)),
+                eieio_classes: Arc::new(RwLock::new(HashMap::new())),
+                coding_systems: Arc::new(RwLock::new(HashMap::new())),
+                coding_aliases: Arc::new(RwLock::new(HashMap::new())),
+                coding_priority: Arc::new(RwLock::new(Vec::new())),
+                translation_tables: Arc::new(RwLock::new(HashMap::new())),
+                custom_metadata: Arc::new(RwLock::new(HashMap::new())),
+                advice_metadata: Arc::new(RwLock::new(HashMap::new())),
                 eval_ops: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 eval_ops_limit: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 deadline: std::cell::Cell::new(None),

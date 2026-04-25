@@ -175,6 +175,7 @@ fn test_emacs_all_files_run() {
 }
 /// Drive a pool of `emacs_test_worker` subprocesses over the file list,
 /// write results to `jsonl`, and print an aggregate summary.
+#[allow(dead_code)]
 fn run_worker_pool(
     files: &[std::path::PathBuf],
     root: &str,
@@ -309,6 +310,7 @@ fn run_worker_pool(
 /// `__SUMMARY__` + `__DONE__` from stdout. Only respawns on
 /// timeout/crash — otherwise the single bootstrap (~2 s) is
 /// amortized across however many files this worker processes.
+#[allow(dead_code)]
 fn worker_manager(
     wid: usize,
     task_rx: std::sync::Arc<
@@ -416,6 +418,7 @@ fn worker_manager(
         }
     }
 }
+#[allow(dead_code)]
 fn parse_summary(rest: &str) -> Option<FileSummary> {
     let parts: Vec<&str> = rest.split_whitespace().collect();
     match parts.len() {
@@ -442,6 +445,7 @@ fn parse_summary(rest: &str) -> Option<FileSummary> {
         _ => None,
     }
 }
+#[allow(dead_code)]
 fn worker_binary_path() -> std::path::PathBuf {
     let mut exe = std::env::current_exe().expect("current_exe");
     while exe.pop() {
@@ -456,6 +460,7 @@ fn worker_binary_path() -> std::path::PathBuf {
     }
     std::path::PathBuf::from("./target/release/emacs_test_worker")
 }
+#[allow(dead_code)]
 pub(super) fn spawn_worker(bin: &std::path::Path) -> Option<std::process::Child> {
     use std::process::{Command, Stdio};
     Command::new(bin)

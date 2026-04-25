@@ -1,40 +1,9 @@
 /// R5 void-variable fixtures round 2 — tests for legitimate Emacs globals
 ///
 /// This test module verifies that all void-variable stubs added in R5
-/// are properly initialized in make_stdlib_interp().
-use rele_elisp::{Interpreter, LispObject, read};
-use rele_elisp::{add_primitives, primitives_modules};
-
-fn make_stdlib_interp() -> Interpreter {
-    let mut interp = Interpreter::new();
-    add_primitives(&mut interp);
-    primitives_modules::register(&mut interp);
-
-    // Duplicate the definitions from eval/tests.rs for testing
-    // These must be kept in sync with the actual make_stdlib_interp() function.
-
-    // R5: void-variable fixtures round 2
-    interp.define("eshell-last-output-end", LispObject::nil());
-    interp.define("shortdoc--groups", LispObject::nil());
-    interp.define("erc-modules", LispObject::nil());
-    interp.define("erc-autojoin-delay", LispObject::nil());
-    interp.define("erc-reuse-buffers", LispObject::nil());
-    interp.define("macroexp--dynvars", LispObject::nil());
-    interp.define("executing-kbd-macro", LispObject::nil());
-    interp.define("require-public-key", LispObject::nil());
-    interp.define("delete-by-moving-to-trash", LispObject::nil());
-    interp.define("syntax-propertize--done", LispObject::nil());
-    interp.define("parse-sexp-lookup-properties", LispObject::nil());
-    interp.define("minibuffer-auto-raise", LispObject::nil());
-    interp.define("so-long-file-local-mode-function", LispObject::nil());
-    interp.define("window-system", LispObject::nil());
-    interp.define("mh-sys-path", LispObject::nil());
-    interp.define("mh-cmd-note", LispObject::integer(0));
-    interp.define("tramp-methods", LispObject::nil());
-    interp.define("eshell-ls-use-in-dired", LispObject::nil());
-
-    interp
-}
+/// are properly initialized by the shared runtime bootstrap helper.
+use rele_elisp::eval::bootstrap::make_stdlib_interp;
+use rele_elisp::{LispObject, read};
 
 #[test]
 fn test_r5_eshell_last_output_end() {

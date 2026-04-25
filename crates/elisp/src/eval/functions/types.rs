@@ -2,11 +2,11 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-use super::FALLBACK_STACK;
 use super::SyncRefCell as RwLock;
-use super::{Environment, InterpreterState, Macro, MacroTable, eval, eval_progn};
+use super::functions::FALLBACK_STACK;
+use super::{Environment, InterpreterState, MacroTable, eval};
 use crate::EditorCallbacks;
-use crate::error::{ElispError, ElispResult};
+use crate::error::ElispResult;
 use crate::object::LispObject;
 use crate::value::{obj_to_value, value_to_obj};
 use std::sync::Arc;
@@ -85,6 +85,7 @@ impl FallbackFrame {
         }
     }
 }
+#[allow(dead_code)]
 pub(super) enum Iter {
     InList(LispObject),
     OnList(LispObject),

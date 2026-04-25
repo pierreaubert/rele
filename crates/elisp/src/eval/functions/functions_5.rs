@@ -2,7 +2,7 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-use super::{Environment, InterpreterState, Macro, MacroTable, eval, eval_progn};
+use super::InterpreterState;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 

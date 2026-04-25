@@ -3,8 +3,9 @@
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
 use super::SyncRefCell as RwLock;
-use super::{Environment, InterpreterState, Macro, MacroTable, eval, eval_progn};
-use super::{builtins, call_function, call_stateful_primitive, eval_list};
+use super::call_function;
+use super::functions_3::eval_list;
+use super::{Environment, InterpreterState, MacroTable, eval};
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
@@ -403,7 +404,9 @@ pub(crate) fn eval_funcall(
     if let Some(ref kw) = func_name {
         let evaled_args = eval_list(args, env, editor, macros, state)?;
         let args_obj = value_to_obj(evaled_args);
-        if let Some(result) = crate::primitives_eieio::try_keyword_slot_call(kw, &args_obj) {
+        if let Some(result) =
+            crate::primitives_eieio::try_keyword_slot_call_with_state(kw, &args_obj, Some(state))
+        {
             return result.map(obj_to_value);
         }
         return Err(ElispError::VoidFunction(kw.clone()));

@@ -32,12 +32,84 @@
 //! current test object before each body so `(ert-running-test)` never
 //! returns nil while BODY is executing.
 
+use rele_elisp::eval::bootstrap::run_rele_ert_tests_detailed;
 use rele_elisp::{Interpreter, add_primitives, read};
 
 fn fresh_interp() -> Interpreter {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     interp
+}
+
+#[test]
+fn r23_ert_registrations_are_interpreter_local() {
+    let interp_a = fresh_interp();
+    let interp_b = fresh_interp();
+
+    interp_a
+        .eval(read("(ert-deftest r23-isolated-a () (should t))").unwrap())
+        .expect("register test in interp A");
+    interp_b
+        .eval(read("(ert-deftest r23-isolated-b () (should t))").unwrap())
+        .expect("register test in interp B");
+
+    assert!(
+        interp_a
+            .eval(read("(ert-get-test 'r23-isolated-b)").unwrap())
+            .expect("A should not see B")
+            .is_nil(),
+        "ERT registration from interpreter B leaked into interpreter A",
+    );
+    assert!(
+        interp_b
+            .eval(read("(ert-get-test 'r23-isolated-a)").unwrap())
+            .expect("B should not see A")
+            .is_nil(),
+        "ERT registration from interpreter A leaked into interpreter B",
+    );
+
+    let (stats_a, results_a) = run_rele_ert_tests_detailed(&interp_a);
+    let names_a: Vec<&str> = results_a
+        .iter()
+        .map(|result| result.name.as_str())
+        .collect();
+    assert_eq!(stats_a.passed, 1);
+    assert_eq!(names_a, vec!["r23-isolated-a"]);
+
+    let (stats_b, results_b) = run_rele_ert_tests_detailed(&interp_b);
+    let names_b: Vec<&str> = results_b
+        .iter()
+        .map(|result| result.name.as_str())
+        .collect();
+    assert_eq!(stats_b.passed, 1);
+    assert_eq!(names_b, vec!["r23-isolated-b"]);
+}
+
+#[test]
+fn r23_same_ert_symbol_has_per_interpreter_test_body() {
+    let interp_pass = fresh_interp();
+    let interp_fail = fresh_interp();
+
+    interp_pass
+        .eval(read("(ert-deftest r23-same-name () (should t))").unwrap())
+        .expect("register passing test");
+    interp_fail
+        .eval(read("(ert-deftest r23-same-name () (should nil))").unwrap())
+        .expect("register failing test");
+
+    let (pass_stats, pass_results) = run_rele_ert_tests_detailed(&interp_pass);
+    assert_eq!(pass_stats.passed, 1);
+    assert_eq!(pass_stats.failed, 0);
+    assert_eq!(pass_results.len(), 1);
+    assert_eq!(pass_results[0].name, "r23-same-name");
+    assert_eq!(pass_results[0].result, "pass");
+
+    let (fail_stats, fail_results) = run_rele_ert_tests_detailed(&interp_fail);
+    assert_eq!(fail_stats.passed, 0);
+    assert_eq!(fail_stats.failed, 1);
+    assert_eq!(fail_results.len(), 1);
+    assert_eq!(fail_results[0].name, "r23-same-name");
+    assert_eq!(fail_results[0].result, "fail");
 }
 
 /// `(ert-get-test 'X)` must return a non-nil value once X is

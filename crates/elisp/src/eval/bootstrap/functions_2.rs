@@ -204,14 +204,29 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("window-configuration-change-hook", LispObject::nil());
     interp.define("buffer-list-update-hook", LispObject::nil());
     interp.define("make-overlay", LispObject::primitive("make-overlay"));
-    interp.define("custom-add-option", LispObject::primitive("ignore"));
-    interp.define("custom-add-version", LispObject::primitive("ignore"));
-    interp.define("custom-declare-variable", LispObject::primitive("ignore"));
-    interp.define("custom-declare-face", LispObject::primitive("ignore"));
-    interp.define("custom-declare-group", LispObject::primitive("ignore"));
+    interp.define(
+        "custom-add-option",
+        LispObject::primitive("custom-add-option"),
+    );
+    interp.define(
+        "custom-add-version",
+        LispObject::primitive("custom-add-version"),
+    );
+    interp.define(
+        "custom-declare-variable",
+        LispObject::primitive("custom-declare-variable"),
+    );
+    interp.define(
+        "custom-declare-face",
+        LispObject::primitive("custom-declare-face"),
+    );
+    interp.define(
+        "custom-declare-group",
+        LispObject::primitive("custom-declare-group"),
+    );
     interp.define("keymapp", LispObject::primitive("keymapp"));
     interp.define("map-keymap", LispObject::primitive("ignore"));
-    interp.define("key-parse", LispObject::primitive("identity"));
+    interp.define("key-parse", LispObject::primitive("key-parse"));
     interp.define("keymap--check", LispObject::primitive("ignore"));
     interp.define("keymap--compile-check", LispObject::primitive("ignore"));
     interp.define("byte-compile-warn", LispObject::primitive("ignore"));
@@ -220,7 +235,7 @@ pub fn make_stdlib_interp() -> Interpreter {
         LispObject::primitive("ignore"),
     );
     interp.define("event-convert-list", LispObject::primitive("ignore"));
-    interp.define("kbd", LispObject::primitive("identity"));
+    interp.define("kbd", LispObject::primitive("kbd"));
     interp.define("emacs-build-number", LispObject::integer(1));
     interp.define("emacs-build-time", LispObject::nil());
     interp.define("emacs-repository-version", LispObject::string("unknown"));
@@ -237,23 +252,32 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("charset-plist", LispObject::primitive("ignore"));
     interp.define("define-charset-internal", LispObject::primitive("ignore"));
     interp.define("charset-dimension", LispObject::primitive("ignore"));
-    interp.define("define-coding-system", LispObject::primitive("ignore"));
+    interp.define(
+        "define-coding-system",
+        LispObject::primitive("define-coding-system"),
+    );
     interp.define(
         "define-coding-system-alias",
-        LispObject::primitive("ignore"),
+        LispObject::primitive("define-coding-system-alias"),
     );
     interp.define(
         "set-coding-system-priority",
-        LispObject::primitive("ignore"),
+        LispObject::primitive("set-coding-system-priority"),
     );
     interp.define("set-charset-priority", LispObject::primitive("ignore"));
-    interp.define("coding-system-put", LispObject::primitive("ignore"));
+    interp.define(
+        "coding-system-put",
+        LispObject::primitive("coding-system-put"),
+    );
     interp.define("set-language-environment", LispObject::primitive("ignore"));
     interp.define(
         "set-default-coding-systems",
         LispObject::primitive("ignore"),
     );
-    interp.define("prefer-coding-system", LispObject::primitive("ignore"));
+    interp.define(
+        "prefer-coding-system",
+        LispObject::primitive("prefer-coding-system"),
+    );
     interp.define("set-buffer-multibyte", LispObject::primitive("ignore"));
     interp.define(
         "set-keyboard-coding-system-internal",
@@ -289,11 +313,23 @@ pub fn make_stdlib_interp() -> Interpreter {
         "find-operation-coding-system",
         LispObject::primitive("ignore"),
     );
-    interp.define("coding-system-p", LispObject::primitive("ignore"));
-    interp.define("check-coding-system", LispObject::primitive("identity"));
-    interp.define("coding-system-list", LispObject::primitive("ignore"));
-    interp.define("coding-system-base", LispObject::primitive("identity"));
-    interp.define("coding-system-get", LispObject::primitive("ignore"));
+    interp.define("coding-system-p", LispObject::primitive("coding-system-p"));
+    interp.define(
+        "check-coding-system",
+        LispObject::primitive("check-coding-system"),
+    );
+    interp.define(
+        "coding-system-list",
+        LispObject::primitive("coding-system-list"),
+    );
+    interp.define(
+        "coding-system-base",
+        LispObject::primitive("coding-system-base"),
+    );
+    interp.define(
+        "coding-system-get",
+        LispObject::primitive("coding-system-get"),
+    );
     interp.define("coding-system-type", LispObject::primitive("ignore"));
     interp.define("coding-system-eol-type", LispObject::primitive("ignore"));
     interp.define("minibuffer-prompt-properties", LispObject::nil());
@@ -540,10 +576,13 @@ pub fn make_stdlib_interp() -> Interpreter {
     );
     interp.define("set-language-info", LispObject::primitive("ignore"));
     interp.define("register-input-method", LispObject::primitive("ignore"));
-    interp.define("define-translation-table", LispObject::primitive("ignore"));
+    interp.define(
+        "define-translation-table",
+        LispObject::primitive("define-translation-table"),
+    );
     interp.define(
         "make-translation-table-from-alist",
-        LispObject::primitive("ignore"),
+        LispObject::primitive("make-translation-table-from-alist"),
     );
     interp.define("define-ccl-program", LispObject::primitive("ignore"));
     interp.define("set-nested-alist", LispObject::primitive("ignore"));
@@ -1112,7 +1151,10 @@ pub fn make_stdlib_interp() -> Interpreter {
     );
     interp.define("ccl-encode-ethio-font", LispObject::nil());
     interp.define("isearch-mode-map", LispObject::nil());
-    interp.define("coding-system-put", LispObject::primitive("ignore"));
+    interp.define(
+        "coding-system-put",
+        LispObject::primitive("coding-system-put"),
+    );
     interp.define("define-charset-alias", LispObject::primitive("ignore"));
     interp.define("map-charset-chars", LispObject::primitive("ignore"));
     interp.define("rx-define", LispObject::primitive("ignore"));

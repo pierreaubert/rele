@@ -332,7 +332,7 @@ fn test_batched_defun_stubs_resolve() {
         ("(backward-prefix-chars)", "nil"),
         ("(undo-boundary)", "nil"),
         ("(buffer-text-pixel-size)", "(0 . 0)"),
-        ("(coding-system-p 'utf-8)", "nil"),
+        ("(coding-system-p 'utf-8)", "t"),
         ("(directory-name-p \"foo/\")", "t"),
         ("(directory-name-p \"foo\")", "nil"),
         ("(file-name-as-directory \"x\")", "x/"),
@@ -443,7 +443,9 @@ fn test_batched_defun_stubs_resolve_round4() {
 #[test]
 fn test_batched_defun_stubs_resolve_round5() {
     use std::io::Write;
-    let tmp = std::env::temp_dir().join(format!("rele-elisp-batch5-{}", std::process::id()));
+    let tmp = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tmp")
+        .join(format!("rele-elisp-batch5-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     let a = tmp.join("a.txt");
     let b = tmp.join("b.txt");

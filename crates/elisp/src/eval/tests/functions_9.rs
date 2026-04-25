@@ -43,6 +43,7 @@ mod module_stubs {
     #[allow(unused_imports)]
     use crate::{Interpreter, LispObject, add_primitives, primitives_modules, read};
     /// Helper to create an interpreter with module stubs
+    #[allow(dead_code)]
     fn make_interp() -> Interpreter {
         let mut interp = Interpreter::new();
         add_primitives(&mut interp);

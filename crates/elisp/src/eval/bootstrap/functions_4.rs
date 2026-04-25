@@ -25,6 +25,10 @@ pub(super) fn run_rele_ert_tests_detailed_inner(
         let cells = interp.state.symbol_cells.read();
         for sym_idx in 0..ob.symbol_count() {
             let id = obarray::SymbolId(sym_idx as u32);
+            // The global obarray is name-only. ERT registrations live in
+            // this interpreter's SymbolCells, so stale names from other
+            // interpreters are ignored here unless this interpreter also
+            // registered the ERT plist entries.
             let thunk = cells.get_plist(id, test_key);
             if !thunk.is_nil() {
                 let struct_obj = cells.get_plist(id, test_struct_key);

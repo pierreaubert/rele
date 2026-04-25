@@ -11,7 +11,6 @@ pub(super) use super::special_forms::eval_progn;
 pub(super) use super::state_cl;
 pub(super) use super::sync_cell::SyncRefCell;
 pub(super) use super::types::InterpreterState;
-pub(super) use crate::value::{obj_to_value, value_to_obj};
 
 pub mod fallbackframe_traits;
 pub mod functions;
@@ -21,11 +20,6 @@ pub mod functions_4;
 pub mod functions_5;
 pub mod types;
 
-// Re-export all types
-pub use fallbackframe_traits::*;
-pub use functions::*;
-pub use functions_2::*;
-pub use functions_3::*;
-pub use functions_4::*;
-pub use functions_5::*;
-pub use types::*;
+pub(crate) use functions_2::{eval_apply, eval_funcall, eval_funcall_form};
+pub(crate) use functions_3::{apply_lambda, call_function};
+pub(in crate::eval) use functions_4::eval_cl_loop;
