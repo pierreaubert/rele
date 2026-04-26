@@ -9,6 +9,7 @@ use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::functions::{call_stateful_primitive, source_level_fallback};
@@ -49,6 +50,7 @@ pub(crate) fn apply_lambda(
     let parent_env = Arc::new(env.read().clone());
     let new_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
     let specpdl_depth = state.specpdl.read().len();
+    let mut param_ids: HashSet<crate::obarray::SymbolId> = HashSet::new();
     let mut params_list = params.clone();
     let mut args_list = value_to_obj(args);
     let mut optional = false;
@@ -101,16 +103,19 @@ pub(crate) fn apply_lambda(
             }
             if aux {
                 let value = LispObject::nil();
+                param_ids.insert(crate::obarray::intern(&name));
                 bind_param_dynamic(&name, value, &new_env, state);
                 params_list = params_rest;
                 continue;
             }
             if key_mode {
+                param_ids.insert(crate::obarray::intern(&name));
                 key_params.push((name, LispObject::nil()));
                 params_list = params_rest;
                 continue;
             }
             if rest {
+                param_ids.insert(crate::obarray::intern(&name));
                 bind_param_dynamic(&name, args_list.clone(), &new_env, state);
                 args_list = LispObject::nil();
                 params_list = params_rest;
@@ -127,6 +132,7 @@ pub(crate) fn apply_lambda(
                     }
                 }
             };
+            param_ids.insert(crate::obarray::intern(&name));
             bind_param_dynamic(&name, arg, &new_env, state);
             args_list = args_rest;
         } else if aux {
@@ -136,10 +142,12 @@ pub(crate) fn apply_lambda(
                 let init = init_rest.first().unwrap_or(LispObject::nil());
                 let value =
                     value_to_obj(eval(obj_to_value(init), &new_env, editor, macros, state)?);
+                param_ids.insert(crate::obarray::intern(&name));
                 bind_param_dynamic(&name, value, &new_env, state);
             }
         } else if key_mode {
             let (name, default) = super::special_forms::extract_key_param(param);
+            param_ids.insert(crate::obarray::intern(&name));
             key_params.push((name, default));
             params_list = params_rest;
             continue;
@@ -193,10 +201,16 @@ pub(crate) fn apply_lambda(
                     }
                 }
             };
+            param_ids.insert(crate::obarray::intern(name));
             bind_param_dynamic(name, value, &new_env, state);
         }
     }
     let result = eval_progn(obj_to_value(body.clone()), &new_env, editor, macros, state);
+    for (id, value) in new_env.read().local_binding_entries() {
+        if !param_ids.contains(&id) && env.read().get_id_local(id).is_some() {
+            env.write().set_id(id, value);
+        }
+    }
     unwind_specpdl(state, specpdl_depth);
     result
 }
@@ -349,6 +363,12 @@ fn call_function_inner(
         }
         LispObject::Symbol(id) => {
             let name = crate::obarray::symbol_name(id);
+            let args_obj = value_to_obj(args.clone());
+            if let Some(result) =
+                super::state_cl::call_stateful_cl(&name, &args_obj, env, editor, macros, state)
+            {
+                return result;
+            }
             let resolved = env.read().get_function(&name);
             if let Some(val) = resolved {
                 return call_function_inner(
@@ -382,7 +402,6 @@ fn call_function_inner(
                     );
                 }
             }
-            let args_obj = value_to_obj(args);
             if let Some(result) = crate::primitives_eieio::try_keyword_slot_call_with_state(
                 &name,
                 &args_obj,

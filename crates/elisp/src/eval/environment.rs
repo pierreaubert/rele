@@ -107,6 +107,13 @@ impl Environment {
         self.bindings.insert(id, value);
     }
 
+    pub fn local_binding_entries(&self) -> Vec<(SymbolId, LispObject)> {
+        self.bindings
+            .iter()
+            .map(|(id, value)| (*id, value.clone()))
+            .collect()
+    }
+
     pub fn capture_as_alist(&self) -> LispObject {
         let mut seen: HashSet<SymbolId> = HashSet::new();
         let mut pairs: Vec<(SymbolId, LispObject)> = Vec::new();

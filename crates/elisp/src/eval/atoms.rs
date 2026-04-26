@@ -22,6 +22,15 @@ pub(super) fn eval_atom(
         }
         if state.special_vars.read().contains(&sym_id) {
             if state.specpdl.read().iter().any(|(id, _)| *id == sym_id) {
+                let env = env.read();
+                if let Some(val) = env.get_id_local(sym_id) {
+                    return Some(if val.is_unbound_marker() {
+                        Err(ElispError::VoidVariable(name))
+                    } else {
+                        Ok(obj_to_value(val))
+                    });
+                }
+                drop(env);
                 let global = state.global_env.read();
                 return Some(match global.get_id(sym_id) {
                     Some(val) if val.is_unbound_marker() => Err(ElispError::VoidVariable(name)),

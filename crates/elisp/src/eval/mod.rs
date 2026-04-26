@@ -80,7 +80,10 @@ use error_forms::{
     eval_catch, eval_condition_case, eval_error_fn, eval_signal, eval_throw, eval_unwind_protect,
     eval_user_error_fn,
 };
-pub(crate) use functions::{SetOperation, assign_symbol_value, set_function_cell_checked};
+pub(crate) use functions::{
+    SetOperation, assign_symbol_value, deliver_variable_watchers, resolve_variable_alias,
+    set_function_cell_checked,
+};
 use functions::{apply_lambda, eval_apply, eval_funcall, eval_funcall_form};
 use special_forms::{
     eval_and, eval_cond, eval_defalias, eval_defconst, eval_defmacro, eval_defun, eval_defvar,
@@ -1063,6 +1066,75 @@ pub(super) fn eval(
 fn tail_call(expr: Value) -> ElispResult<Value> {
     Err(ElispError::TailEval(expr))
 }
+
+fn char_index_to_byte(s: &str, char_index: usize) -> usize {
+    s.char_indices()
+        .nth(char_index)
+        .map(|(idx, _)| idx)
+        .unwrap_or(s.len())
+}
+
+fn byte_index_to_char(s: &str, byte_index: usize) -> usize {
+    s[..byte_index.min(s.len())].chars().count()
+}
+
+fn has_too_large_repeat(pattern: &str) -> bool {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    while i + 3 < chars.len() {
+        if chars[i] == '\\' && chars[i + 1] == '{' {
+            let mut j = i + 2;
+            let mut digits = String::new();
+            while j < chars.len() && chars[j].is_ascii_digit() {
+                digits.push(chars[j]);
+                j += 1;
+            }
+            if j + 1 < chars.len()
+                && chars[j] == '\\'
+                && chars[j + 1] == '}'
+                && digits.parse::<usize>().is_ok_and(|count| count > 65_535)
+            {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+fn invalid_regexp_signal(message: &str) -> ElispError {
+    ElispError::Signal(Box::new(crate::error::SignalData {
+        symbol: LispObject::symbol("invalid-regexp"),
+        data: LispObject::cons(LispObject::string(message), LispObject::nil()),
+    }))
+}
+
+fn encode_raw_bytes_as_private(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            let code = c as u32;
+            if (0x80..=0xff).contains(&code) {
+                char::from_u32(0xE000 + code).unwrap_or(c)
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+fn decode_private_raw_bytes(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            let code = c as u32;
+            if (0xE080..=0xE0FF).contains(&code) {
+                char::from_u32(code - 0xE000).unwrap_or(c)
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 // --- Functions from original mod.rs (eval_inner, special form dispatch) ---
 
 pub(super) fn eval_inner(
@@ -2290,25 +2362,15 @@ pub(super) fn eval_inner(
                             data: LispObject::cons(sym, LispObject::nil()),
                         })));
                     }
-                    if env.read().get_id_local(sym_id).is_some()
-                        && !Arc::ptr_eq(env, &state.global_env)
-                    {
-                        env.write().set_id(sym_id, LispObject::unbound_marker());
-                    } else if state.specpdl.read().iter().any(|(id, _)| *id == sym_id) {
-                        state
-                            .global_env
-                            .write()
-                            .set_id(sym_id, LispObject::unbound_marker());
-                    } else {
-                        state.clear_value_cell(sym_id);
-                        state.global_env.write().unset_id(sym_id);
-                        crate::buffer::with_registry_mut(|registry| {
-                            let current = registry.current_id();
-                            if let Some(buffer) = registry.get_mut(current) {
-                                buffer.locals.remove(&name);
-                            }
-                        });
-                    }
+                    assign_symbol_value(
+                        sym_id,
+                        LispObject::unbound_marker(),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                        SetOperation::Makunbound,
+                    )?;
                     Ok(obj_to_value(sym))
                 }
                 "garbage-collect" => {
@@ -2376,6 +2438,16 @@ pub(super) fn eval_inner(
                         let v = state.get_plist(id, key);
                         return Ok(obj_to_value(v));
                     }
+                    Ok(Value::nil())
+                }
+                "cl--class-allparents" | "cl--class-children" => {
+                    let _ = eval(
+                        obj_to_value(cdr.first().unwrap_or_else(LispObject::nil)),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    );
                     Ok(Value::nil())
                 }
                 "define-error" => {
@@ -2948,26 +3020,87 @@ pub(super) fn eval_inner(
                         value_to_obj(eval(obj_to_value(syms_form), env, editor, macros, state)?);
                     let vals =
                         value_to_obj(eval(obj_to_value(vals_form), env, editor, macros, state)?);
-                    let mut saves: Vec<(String, Option<LispObject>)> = Vec::new();
+                    let binding_buffer_key = crate::obarray::intern("rele-dynamic-binding-buffer");
+                    let mut saves: Vec<(
+                        crate::obarray::SymbolId,
+                        Option<LispObject>,
+                        Option<LispObject>,
+                        LispObject,
+                        bool,
+                    )> = Vec::new();
                     let mut s_cur = syms;
                     let mut v_cur = vals;
                     while let Some((s, s_rest)) = s_cur.destructure_cons() {
                         let (v, v_rest) = v_cur
                             .destructure_cons()
                             .unwrap_or((LispObject::nil(), LispObject::nil()));
-                        if let Some(n) = s.as_symbol() {
-                            saves.push((n.clone(), env.read().get(&n)));
-                            env.write().set(&n, v);
+                        if let Some(id) = s.as_symbol_id() {
+                            let id = resolve_variable_alias(id, state);
+                            let old_cell = state.get_value_cell(id);
+                            saves.push((
+                                id,
+                                env.read().get_id_local(id),
+                                old_cell.clone(),
+                                state.get_plist(id, binding_buffer_key),
+                                state.special_vars.read().contains(&id),
+                            ));
+                            state.special_vars.write().insert(id);
+                            state.specpdl.write().push((id, old_cell));
+                            let current_buffer_id =
+                                crate::buffer::with_registry(|registry| registry.current_id());
+                            state.put_plist(
+                                id,
+                                binding_buffer_key,
+                                LispObject::integer(current_buffer_id as i64),
+                            );
+                            state.global_env.write().set_id(id, v.clone());
+                            state.set_value_cell(id, v.clone());
+                            env.write().set_id(id, v.clone());
+                            deliver_variable_watchers(
+                                id,
+                                &v,
+                                SetOperation::Let,
+                                env,
+                                editor,
+                                macros,
+                                state,
+                            )?;
                         }
                         s_cur = s_rest;
                         v_cur = v_rest;
                     }
                     let result = eval_progn(obj_to_value(body), env, editor, macros, state);
-                    for (n, old) in saves.into_iter().rev() {
-                        match old {
-                            Some(v) => env.write().set(&n, v),
-                            None => env.write().set(&n, LispObject::nil()),
+                    for (id, old_env, old_cell, old_binding_buffer, was_special) in
+                        saves.into_iter().rev()
+                    {
+                        match old_env {
+                            Some(v) => env.write().set_id(id, v),
+                            None => env.write().unset_id(id),
                         }
+                        match old_cell {
+                            Some(v) => {
+                                state.set_value_cell(id, v.clone());
+                                state.global_env.write().set_id(id, v);
+                            }
+                            None => {
+                                state.clear_value_cell(id);
+                                state.global_env.write().unset_id(id);
+                            }
+                        }
+                        if !was_special {
+                            state.special_vars.write().remove(&id);
+                        }
+                        state.put_plist(id, binding_buffer_key, old_binding_buffer);
+                        let restored = state.get_value_cell(id).unwrap_or_else(LispObject::nil);
+                        deliver_variable_watchers(
+                            id,
+                            &restored,
+                            SetOperation::Unlet,
+                            env,
+                            editor,
+                            macros,
+                            state,
+                        )?;
                     }
                     result
                 }
@@ -3438,10 +3571,43 @@ pub(super) fn eval_inner(
                     let body = cdr.rest().unwrap_or(LispObject::nil());
                     eval_progn(obj_to_value(body), env, editor, macros, state)
                 }
-                "defvaralias"
-                | "define-obsolete-function-alias"
-                | "define-obsolete-variable-alias"
-                | "set-advertised-calling-convention" => {
+                "defvaralias" | "define-obsolete-variable-alias" => {
+                    let alias = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let base = value_to_obj(eval(
+                        obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let alias_id = alias
+                        .as_symbol_id()
+                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    let base_id = base
+                        .as_symbol_id()
+                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    deliver_variable_watchers(
+                        alias_id,
+                        &LispObject::Symbol(base_id),
+                        SetOperation::Defvaralias,
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?;
+                    let watcher_key = crate::obarray::intern("variable-watchers");
+                    state.put_plist(alias_id, watcher_key, LispObject::nil());
+                    let alias_key = crate::obarray::intern("variable-alias");
+                    state.put_plist(alias_id, alias_key, LispObject::Symbol(base_id));
+                    Ok(obj_to_value(LispObject::Symbol(alias_id)))
+                }
+                "define-obsolete-function-alias" | "set-advertised-calling-convention" => {
                     Ok(obj_to_value(cdr.first().unwrap_or_else(LispObject::nil)))
                 }
                 "push" => {
@@ -3476,12 +3642,21 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let name = arg
-                        .as_symbol()
+                    let id = arg
+                        .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-                    Ok(obj_to_value(
-                        env.read().get(&name).unwrap_or(LispObject::nil()),
-                    ))
+                    let id = resolve_variable_alias(id, state);
+                    let name = crate::obarray::symbol_name(id);
+                    let buffer_local = crate::buffer::with_registry(|registry| {
+                        registry
+                            .get(registry.current_id())
+                            .and_then(|buffer| buffer.locals.get(&name).cloned())
+                    });
+                    let value = buffer_local
+                        .or_else(|| env.read().get_id_local(id))
+                        .or_else(|| state.get_value_cell(id))
+                        .unwrap_or_else(LispObject::nil);
+                    Ok(obj_to_value(value))
                 }
                 "default-value" => {
                     let arg = value_to_obj(eval(
@@ -3494,6 +3669,7 @@ pub(super) fn eval_inner(
                     let id = arg
                         .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    let id = resolve_variable_alias(id, state);
                     Ok(obj_to_value(
                         state.get_value_cell(id).unwrap_or_else(LispObject::nil),
                     ))
@@ -3509,6 +3685,7 @@ pub(super) fn eval_inner(
                     let id = arg
                         .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    let id = resolve_variable_alias(id, state);
                     Ok(obj_to_value(LispObject::from(
                         state
                             .get_value_cell(id)
@@ -3533,9 +3710,15 @@ pub(super) fn eval_inner(
                     let id = sym
                         .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-                    env.write().set_id(id, val.clone());
-                    state.global_env.write().set_id(id, val.clone());
-                    state.set_value_cell(id, val.clone());
+                    let val = assign_symbol_value(
+                        id,
+                        val,
+                        env,
+                        editor,
+                        macros,
+                        state,
+                        SetOperation::SetDefault,
+                    )?;
                     Ok(obj_to_value(val))
                 }
                 "symbol-function" => {
@@ -3826,7 +4009,9 @@ pub(super) fn eval_inner(
                     let s = name_val
                         .as_string()
                         .ok_or_else(|| ElispError::WrongTypeArgument("string".to_string()))?;
-                    Ok(obj_to_value(LispObject::symbol(s)))
+                    Ok(obj_to_value(LispObject::Symbol(
+                        crate::obarray::make_uninterned(&s),
+                    )))
                 }
                 "fset" => {
                     let sym = value_to_obj(eval(
@@ -4020,16 +4205,23 @@ pub(super) fn eval_inner(
                     let str_expr = cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
                     let re_val =
                         value_to_obj(eval(obj_to_value(re_expr), env, editor, macros, state)?);
-                    let re_str = re_val
+                    let mut re_str = re_val
                         .as_string()
                         .ok_or_else(|| ElispError::WrongTypeArgument("string".to_string()))?
                         .clone();
                     let text_val =
                         value_to_obj(eval(obj_to_value(str_expr), env, editor, macros, state)?);
-                    let text = text_val
+                    let mut text = text_val
                         .as_string()
                         .ok_or_else(|| ElispError::WrongTypeArgument("string".to_string()))?
                         .clone();
+                    let re_multibyte = crate::object::string_is_multibyte(&re_str);
+                    let text_multibyte = crate::object::string_is_multibyte(&text);
+                    if text_multibyte && !re_multibyte {
+                        re_str = encode_raw_bytes_as_private(&re_str);
+                    } else if re_multibyte && !text_multibyte {
+                        text = encode_raw_bytes_as_private(&text);
+                    }
                     let start = if let Some(s) = cdr.nth(2) {
                         value_to_obj(eval(obj_to_value(s), env, editor, macros, state)?)
                             .as_integer()
@@ -4037,8 +4229,21 @@ pub(super) fn eval_inner(
                     } else {
                         0
                     };
-                    let rust_re = emacs_regex_to_rust(&re_str);
+                    let mut rust_re = emacs_regex_to_rust(&re_str);
+                    let case_fold_id = crate::obarray::intern("case-fold-search");
+                    let case_fold = env
+                        .read()
+                        .get_id(case_fold_id)
+                        .or_else(|| state.get_value_cell(case_fold_id))
+                        .is_some_and(|value| !value.is_nil());
+                    if case_fold {
+                        rust_re = format!("(?i:{rust_re})");
+                    }
                     let set_data = sym_name == "string-match";
+                    let start_byte = char_index_to_byte(&text, start);
+                    if has_too_large_repeat(&re_str) {
+                        return Err(invalid_regexp_signal("Regular expression too big"));
+                    }
                     let re_opt = REGEX_CACHE.with(|cache| {
                         let mut c = cache.borrow_mut();
                         if let Some(re) = c.get(&rust_re) {
@@ -4052,34 +4257,43 @@ pub(super) fn eval_inner(
                     match re_opt {
                         Some(re) => {
                             if set_data && re.captures_len() > 1 {
-                                if let Some(caps) = re.captures(&text[start..]) {
+                                if let Some(caps) = re.captures(&text[start_byte..]) {
                                     let mut data: Vec<Option<(usize, usize)>> =
                                         Vec::with_capacity(caps.len());
                                     for i in 0..caps.len() {
-                                        data.push(
-                                            caps.get(i)
-                                                .map(|m| (start + m.start(), start + m.end())),
-                                        );
+                                        data.push(caps.get(i).map(|m| {
+                                            (
+                                                byte_index_to_char(&text, start_byte + m.start()),
+                                                byte_index_to_char(&text, start_byte + m.end()),
+                                            )
+                                        }));
                                     }
                                     state.set_match_data(data, Some(text.clone()));
                                     let m = caps.get(0).unwrap();
-                                    Ok(obj_to_value(LispObject::integer(
-                                        (start + m.start()) as i64,
-                                    )))
+                                    Ok(obj_to_value(LispObject::integer(byte_index_to_char(
+                                        &text,
+                                        start_byte + m.start(),
+                                    )
+                                        as i64)))
                                 } else {
                                     state.set_match_data(Vec::new(), None);
                                     Ok(Value::nil())
                                 }
-                            } else if let Some(m) = re.find(&text[start..]) {
+                            } else if let Some(m) = re.find(&text[start_byte..]) {
                                 if set_data {
                                     state.set_match_data(
-                                        vec![Some((start + m.start(), start + m.end()))],
+                                        vec![Some((
+                                            byte_index_to_char(&text, start_byte + m.start()),
+                                            byte_index_to_char(&text, start_byte + m.end()),
+                                        ))],
                                         Some(text.clone()),
                                     );
                                 }
-                                Ok(obj_to_value(LispObject::integer(
-                                    (start + m.start()) as i64,
-                                )))
+                                Ok(obj_to_value(LispObject::integer(byte_index_to_char(
+                                    &text,
+                                    start_byte + m.start(),
+                                )
+                                    as i64)))
                             } else {
                                 if set_data {
                                     state.set_match_data(Vec::new(), None);
@@ -4133,8 +4347,8 @@ pub(super) fn eval_inner(
                     let data = state.match_data_as_objects();
                     Ok(state.list_from_objects(data))
                 }
-                "replace-match" | "looking-at" | "re-search-forward" | "re-search-backward"
-                | "search-forward" | "search-backward" => Ok(Value::nil()),
+                "replace-match" | "re-search-forward" | "re-search-backward" | "search-forward"
+                | "search-backward" => Ok(Value::nil()),
                 "version-to-list" => {
                     let ver_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let ver =
@@ -4719,6 +4933,7 @@ pub(super) fn eval_inner(
                     Ok(Value::nil())
                 }
                 "encode-coding-string" | "decode-coding-string" => {
+                    let is_decode = car.as_symbol().as_deref() == Some("decode-coding-string");
                     let string_val = eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
@@ -4733,6 +4948,32 @@ pub(super) fn eval_inner(
                             cur = r;
                         }
                     }
+                    if is_decode {
+                        let id = crate::obarray::intern("last-coding-system-used");
+                        let name = crate::obarray::symbol_name(id);
+                        let updated_local = crate::buffer::with_registry_mut(|registry| {
+                            let current = registry.current_id();
+                            registry.get_mut(current).is_some_and(|buffer| {
+                                if let Some(slot) = buffer.locals.get_mut(&name) {
+                                    *slot = LispObject::symbol("no-conversion");
+                                    true
+                                } else {
+                                    false
+                                }
+                            })
+                        });
+                        if !updated_local {
+                            let _ = assign_symbol_value(
+                                id,
+                                LispObject::symbol("no-conversion"),
+                                env,
+                                editor,
+                                macros,
+                                state,
+                                SetOperation::Setq,
+                            )?;
+                        }
+                    }
                     Ok(string_val)
                 }
                 "set-keyboard-coding-system" | "set-terminal-coding-system" => {
@@ -4745,13 +4986,33 @@ pub(super) fn eval_inner(
                     )?;
                     Ok(Value::nil())
                 }
-                "string-to-multibyte" | "string-to-unibyte" => eval(
-                    obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
-                    env,
-                    editor,
-                    macros,
-                    state,
-                ),
+                "string-to-multibyte" | "string-to-unibyte" => {
+                    let value = eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?;
+                    let obj = value_to_obj(value);
+                    if let Some(s) = obj.as_string() {
+                        if car.as_symbol().as_deref() == Some("string-to-multibyte") {
+                            let converted = if crate::object::string_is_multibyte(s) {
+                                s.clone()
+                            } else {
+                                encode_raw_bytes_as_private(s)
+                            };
+                            crate::object::mark_string_multibyte(&converted, true);
+                            Ok(obj_to_value(LispObject::string(&converted)))
+                        } else {
+                            let converted = decode_private_raw_bytes(s);
+                            crate::object::mark_string_multibyte(&converted, false);
+                            Ok(obj_to_value(LispObject::string(&converted)))
+                        }
+                    } else {
+                        Ok(value)
+                    }
+                }
                 "unibyte-string" => {
                     let mut vals = Vec::new();
                     let mut cur = cdr.clone();

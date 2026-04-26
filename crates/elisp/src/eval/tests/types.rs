@@ -27,9 +27,9 @@ pub(super) enum FileOutcome {
     },
 }
 /// One worker: the child subprocess plus a dedicated reader thread
-/// that forwards stdout lines into `lines_rx`. Bootstrapped once;
-/// reused across many files (the amortization that makes the pool
-/// fast). Dropping the `Worker` kills the child, which closes its
+/// that forwards stdout lines into `lines_rx`. The worker process is
+/// reused across many files, but it creates a fresh interpreter for
+/// each file. Dropping the `Worker` kills the child, which closes its
 /// stdout, which makes the reader thread exit.
 #[allow(dead_code)]
 pub(super) struct Worker {

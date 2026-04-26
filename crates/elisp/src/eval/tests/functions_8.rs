@@ -308,8 +308,9 @@ fn run_worker_pool(
 /// One manager thread owns one persistent worker subprocess. Pulls
 /// files from the shared queue, writes to worker stdin, reads
 /// `__SUMMARY__` + `__DONE__` from stdout. Only respawns on
-/// timeout/crash — otherwise the single bootstrap (~2 s) is
-/// amortized across however many files this worker processes.
+/// timeout/crash. The child creates a fresh bootstrapped interpreter
+/// for every file so ERT registrations and global Lisp state do not
+/// leak between files.
 #[allow(dead_code)]
 fn worker_manager(
     wid: usize,

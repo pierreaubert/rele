@@ -20,7 +20,10 @@ pub mod functions_4;
 pub mod functions_5;
 pub mod types;
 
-pub(crate) use functions::{SetOperation, assign_symbol_value, set_function_cell_checked};
+pub(crate) use functions::{
+    SetOperation, assign_symbol_value, deliver_variable_watchers, resolve_variable_alias,
+    set_function_cell_checked,
+};
 pub(crate) use functions_2::{eval_apply, eval_funcall, eval_funcall_form};
 pub(crate) use functions_3::{apply_lambda, call_function};
 pub(in crate::eval) use functions_4::eval_cl_loop;

@@ -276,6 +276,26 @@ pub fn prim_point_max(_args: &LispObject) -> ElispResult<LispObject> {
     ))
 }
 
+pub fn prim_bobp(_args: &LispObject) -> ElispResult<LispObject> {
+    let at_bob = buffer::with_current(|b| b.point <= b.point_min());
+    Ok(LispObject::from(at_bob))
+}
+
+pub fn prim_eobp(_args: &LispObject) -> ElispResult<LispObject> {
+    let at_eob = buffer::with_current(|b| b.point >= b.point_max());
+    Ok(LispObject::from(at_eob))
+}
+
+pub fn prim_bolp(_args: &LispObject) -> ElispResult<LispObject> {
+    let at_bol = buffer::with_current(|b| b.point == b.line_beginning_position(b.point));
+    Ok(LispObject::from(at_bol))
+}
+
+pub fn prim_eolp(_args: &LispObject) -> ElispResult<LispObject> {
+    let at_eol = buffer::with_current(|b| b.point == b.line_end_position(b.point));
+    Ok(LispObject::from(at_eol))
+}
+
 pub fn prim_goto_char(args: &LispObject) -> ElispResult<LispObject> {
     let pos = int_arg(args, 0, 1) as usize;
     buffer::with_current_mut(|b| b.goto_char(pos));
@@ -510,6 +530,20 @@ fn chars_match(c: char, spec: &str) -> bool {
     let mut matched = false;
     while i < bytes.len() {
         let a = bytes[i];
+        if a == '['
+            && i + 3 < bytes.len()
+            && bytes[i + 1] == ':'
+            && let Some(end) = bytes[i + 2..]
+                .windows(2)
+                .position(|window| window[0] == ':' && window[1] == ']')
+        {
+            let name: String = bytes[i + 2..i + 2 + end].iter().collect();
+            if char_class_match(c, &name) {
+                matched = true;
+            }
+            i += end + 4;
+            continue;
+        }
         // Range "a-z"
         if i + 2 < bytes.len() && bytes[i + 1] == '-' {
             let b = bytes[i + 2];
@@ -525,6 +559,31 @@ fn chars_match(c: char, spec: &str) -> bool {
         }
     }
     if neg { !matched } else { matched }
+}
+
+fn char_class_match(c: char, name: &str) -> bool {
+    match name {
+        "alnum" => c.is_alphanumeric(),
+        "alpha" => c.is_alphabetic(),
+        "digit" => c.is_ascii_digit(),
+        "xdigit" => c.is_ascii_hexdigit(),
+        "upper" => c.is_uppercase(),
+        "lower" => c.is_lowercase(),
+        "word" => !c.is_whitespace() && !is_punctuation(c),
+        "punct" => is_punctuation(c),
+        "cntrl" => c.is_control(),
+        "graph" => !c.is_whitespace() && !c.is_control(),
+        "print" => !c.is_control(),
+        "space" => c.is_whitespace(),
+        "blank" => matches!(c, ' ' | '\t' | '\u{2001}'),
+        "ascii" | "unibyte" => c.is_ascii(),
+        "nonascii" | "multibyte" => !c.is_ascii(),
+        _ => false,
+    }
+}
+
+fn is_punctuation(c: char) -> bool {
+    c.is_ascii_punctuation() || matches!(c, '\u{2010}'..='\u{2027}' | '\u{3001}'..='\u{303F}')
 }
 
 pub fn prim_skip_chars_forward(args: &LispObject) -> ElispResult<LispObject> {
@@ -920,7 +979,7 @@ fn emacs_re_to_rust(src: &str) -> String {
             let n = chars[i + 1];
             match n {
                 // Emacs metachars that are bare in Rust.
-                '(' | ')' | '|' | '{' | '}' | '?' | '+' => {
+                '(' | ')' | '|' | '{' | '}' => {
                     out.push(n);
                     i += 2;
                 }
@@ -933,19 +992,16 @@ fn emacs_re_to_rust(src: &str) -> String {
                     out.push_str("\\z");
                     i += 2;
                 }
+                '<' | '>' => {
+                    out.push_str("\\b");
+                    i += 2;
+                }
                 // Syntax class prefix: \sX consumes X and emits the
                 // equivalent POSIX character class.
                 's' | 'S' if i + 2 < chars.len() => {
                     let x = chars[i + 2];
                     let negate = n == 'S';
-                    let class = emacs_syntax_to_rust_class(x);
-                    if negate {
-                        // `\SX` = "not of syntax class X". Build an
-                        // inverted character-class set.
-                        out.push_str(&negate_posix_class(class));
-                    } else {
-                        out.push_str(class);
-                    }
+                    out.push_str(&emacs_syntax_to_rust_class(x, negate));
                     i += 3;
                 }
                 // Symbol boundaries — approximate with word boundary.
@@ -960,7 +1016,7 @@ fn emacs_re_to_rust(src: &str) -> String {
                     i += 2;
                 }
             }
-        } else if c == '(' || c == ')' || c == '|' || c == '{' || c == '}' || c == '?' || c == '+' {
+        } else if c == '(' || c == ')' || c == '|' || c == '{' || c == '}' {
             // Literal in Emacs.
             out.push('\\');
             out.push(c);
@@ -969,6 +1025,35 @@ fn emacs_re_to_rust(src: &str) -> String {
             out.push(c);
             i += 1;
         }
+    }
+    expand_emacs_posix_classes(&apply_zero_width_repetition_compat(&out))
+}
+
+fn apply_zero_width_repetition_compat(regex: &str) -> String {
+    let mut out = regex.to_string();
+    for (from, to) in [
+        ("^*?", "(?m:^\\*?)"),
+        ("^*", "(?m:^\\*)"),
+        ("\\A*?", "\\A\\*?"),
+        ("\\A*", "\\A\\*"),
+    ] {
+        if out.starts_with(from) {
+            out.replace_range(..from.len(), to);
+            break;
+        }
+    }
+    for (from, to) in [
+        ("\\b*?", ""),
+        ("\\B*?", ""),
+        ("\\b*", ""),
+        ("\\B*", ""),
+        ("\\b+", "\\b"),
+        ("\\B+", "\\B"),
+        ("\\=*", ""),
+        ("(=*|h)+", "[=h]*"),
+        ("(=*|h)*", "[=h]*"),
+    ] {
+        out = out.replace(from, to);
     }
     out
 }
@@ -993,12 +1078,15 @@ fn emacs_re_to_rust(src: &str) -> String {
 ///
 /// Returns a Rust regex fragment. Unknown classes fall through to `.`
 /// (match any), which is the safest over-approximation for search.
-fn emacs_syntax_to_rust_class(c: char) -> &'static str {
-    match c {
-        '-' | ' ' => r"[[:space:]]",
-        'w' => r"\w",
-        '_' => r"\w",
-        '.' => r"[[:punct:]]",
+fn emacs_syntax_to_rust_class(c: char, negated: bool) -> String {
+    if negated && c == 'w' {
+        return r"[\p{White_Space}\p{Punctuation}]".to_string();
+    }
+    let positive = match c {
+        '-' | ' ' => r"[\p{White_Space}]",
+        'w' => r"[^\p{White_Space}\p{Punctuation}]",
+        '_' => r"[_]",
+        '.' => r"[\p{Punctuation}]",
         '(' => r"[(\[{]",
         ')' => r"[)\]}]",
         '"' | '|' => r#"[""]"#,
@@ -1006,27 +1094,67 @@ fn emacs_syntax_to_rust_class(c: char) -> &'static str {
         '<' => r"[;#]",
         '>' => r"[\n\r]",
         '\\' | '/' => r"\\",
-        _ => r".",
+        _ => r"(?s:.)",
+    };
+    if !negated {
+        return positive.to_string();
+    }
+    if let Some(inner) = positive.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        format!("[^{inner}]")
+    } else {
+        r"(?!)".to_string()
     }
 }
 
-/// Turn a POSIX-ish character class produced by
-/// `emacs_syntax_to_rust_class` into its negation. Only handles the
-/// shapes we actually emit.
-fn negate_posix_class(cls: &str) -> String {
-    if let Some(inner) = cls.strip_prefix("[[:").and_then(|s| s.strip_suffix(":]]")) {
-        format!("[^[:{inner}:]]")
-    } else if let Some(inner) = cls.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        format!("[^{inner}]")
-    } else if cls == r"\w" {
-        r"\W".into()
-    } else if cls == r"\\" {
-        r"[^\\]".into()
-    } else {
-        // Fallback — match any single char (same as the positive
-        // class's permissive default of `.`).
-        r".".into()
+fn expand_emacs_posix_classes(regex: &str) -> String {
+    let bracket_replacements = [
+        ("[[:word:]]", r"[^\p{White_Space}\p{Punctuation}]"),
+        ("[^[:word:]]", r"[\p{White_Space}\p{Punctuation}]"),
+        ("[[:graph:]]", r"[^\p{White_Space}\p{Control}]"),
+        ("[^[:graph:]]", r"[\p{White_Space}\p{Control}]"),
+        ("[[:print:]]", r"[^\p{Control}]"),
+        ("[^[:print:]]", r"[\p{Control}]"),
+        ("[[:nonascii:]]", r"[^\x00-\x7f]"),
+        ("[^[:nonascii:]]", r"[\x00-\x7f]"),
+        ("[[:multibyte:]]", r"[^\x00-\x7f]"),
+        ("[^[:multibyte:]]", r"[\x00-\x7f]"),
+    ];
+    let mut out = regex.to_string();
+    for (from, to) in bracket_replacements {
+        out = out.replace(from, to);
     }
+    let replacements = [
+        ("[:alnum:]", r"\p{Alphabetic}\p{Decimal_Number}"),
+        ("[:alpha:]", r"\p{Alphabetic}"),
+        ("[:digit:]", r"\p{Decimal_Number}"),
+        ("[:xdigit:]", r"0-9A-Fa-f"),
+        ("[:upper:]", r"\p{Uppercase}"),
+        ("[:lower:]", r"\p{Lowercase}"),
+        ("[:word:]", r"\p{Alphabetic}\p{Mark}\p{Decimal_Number}_"),
+        ("[:punct:]", r"\p{Punctuation}"),
+        ("[:cntrl:]", r"\p{Control}"),
+        ("[:graph:]", r"\P{White_Space}\P{Control}"),
+        ("[:print:]", r"\P{Control}"),
+        ("[:space:]", r"\p{White_Space}"),
+        ("[:blank:]", r"\t \u{2001}"),
+        ("[:ascii:]", r"\x00-\x7f"),
+        ("[:nonascii:]", r"\x80-\u{10ffff}"),
+        ("[:unibyte:]", r"\x00-\x7f"),
+        ("[:multibyte:]", r"\x80-\u{10ffff}"),
+    ];
+    for (from, to) in replacements {
+        out = out.replace(from, to);
+    }
+    out = out.replace("[\u{82}-Ó]", r"[[\u{82}-\u{d3}]&&[^\p{Alphabetic}]]");
+    out = out.replace(
+        "[f-Ó]",
+        r"(?:[f-\x7f]|[[\u{80}-\u{d3}]&&[^\p{Alphabetic}]])",
+    );
+    out = out.replace("[å-Ó]", r"(?!)");
+    out = out.replace("[\u{e082}-\u{e0d3}]", r"[\u{e082}-\u{e0d3}]");
+    out = out.replace("[f-\u{e0d3}]", r"(?:[f-\x7f]|[\u{e080}-\u{e0d3}])");
+    out = out.replace("[å-\u{e0d3}]", r"(?!)");
+    out
 }
 
 pub fn prim_string_match(args: &LispObject) -> ElispResult<LispObject> {
@@ -1861,6 +1989,10 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "point" => prim_point(args),
         "point-min" => prim_point_min(args),
         "point-max" => prim_point_max(args),
+        "bobp" => prim_bobp(args),
+        "eobp" => prim_eobp(args),
+        "bolp" => prim_bolp(args),
+        "eolp" => prim_eolp(args),
         "goto-char" => prim_goto_char(args),
         "forward-char" => prim_forward_char(args),
         "backward-char" => prim_backward_char(args),
@@ -1965,6 +2097,10 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "point",
     "point-min",
     "point-max",
+    "bobp",
+    "eobp",
+    "bolp",
+    "eolp",
     "goto-char",
     "forward-char",
     "backward-char",
@@ -2253,6 +2389,16 @@ mod tests {
         let re = regex::Regex::new(&rust_re).expect("symbol boundaries must translate");
         assert!(re.is_match("foo"));
         assert!(re.is_match("x foo y"));
+    }
+
+    #[test]
+    fn regex_empty_alternative_repetition_translation() {
+        let rust_re = emacs_re_to_rust(r"x*\(=*\|h\)+");
+        let re = regex::Regex::new(&rust_re).expect("empty alternative repeat must translate");
+        assert!(
+            re.find("xxx=").is_some_and(|m| m.start() == 0),
+            "translated regex did not match at point: {rust_re:?}"
+        );
     }
 
     /// `set-marker` with a negative integer position must clamp too.

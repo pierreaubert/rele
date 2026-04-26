@@ -47,6 +47,12 @@ impl SymbolTable {
         id
     }
 
+    pub fn make_uninterned(&mut self, name: &str) -> SymbolId {
+        let id = SymbolId(self.names.len() as u32);
+        self.names.push(name.to_string());
+        id
+    }
+
     pub fn name(&self, id: SymbolId) -> &str {
         &self.names[id.0 as usize]
     }
@@ -82,6 +88,15 @@ pub fn intern(name: &str) -> SymbolId {
 /// Look up the name for a symbol ID.
 pub fn symbol_name(id: SymbolId) -> String {
     GLOBAL_OBARRAY.read().name(id).to_string()
+}
+
+/// Allocate a symbol with NAME that is not entered into the name→id map.
+///
+/// This models Emacs uninterned symbols closely enough for identity-sensitive
+/// code: `(make-symbol "x")` prints/names as `x`, but it is not `eq` to the
+/// interned symbol `x` and does not collide with variables named `x`.
+pub fn make_uninterned(name: &str) -> SymbolId {
+    GLOBAL_OBARRAY.write().make_uninterned(name)
 }
 
 // ---------------------------------------------------------------------------

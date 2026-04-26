@@ -15,6 +15,10 @@ use super::*;
 fn cl_mapcar_pairs_multiple_lists() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
+    interp.define(
+        "buffer-local-toplevel-value",
+        LispObject::primitive("buffer-local-toplevel-value"),
+    );
     let r = interp
         .eval(read("(cl-mapcar '+ '(1 2 3) '(10 20 30))").unwrap())
         .unwrap();
@@ -65,6 +69,110 @@ fn cl_position_member_count_remove() {
             LispObject::integer(3),
             LispObject::integer(4)
         ]
+    );
+    let filtered = interp
+        .eval(
+            read(
+                "(cl-remove-if-not
+                   (lambda (x) (eql (length x) 1))
+                   '(\"\" \"0\" \"aa\"))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let filtered_items: Vec<_> = {
+        let mut out = Vec::new();
+        let mut c = filtered;
+        while let Some((car, cdr)) = c.destructure_cons() {
+            out.push(car);
+            c = cdr;
+        }
+        out
+    };
+    assert_eq!(filtered_items, vec![LispObject::string("0")]);
+}
+
+#[test]
+fn defvar_inside_let_initializes_default_not_dynamic_binding() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let result = interp
+        .eval(
+            read(
+                "(progn
+                   (defvar rele-defvar-let-x)
+                   (list
+                    (let ((rele-defvar-let-x 1))
+                      (defvar rele-defvar-let-x 2)
+                      rele-defvar-let-x)
+                    rele-defvar-let-x))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut items = Vec::new();
+    let mut current = result;
+    while let Some((car, cdr)) = current.destructure_cons() {
+        items.push(car);
+        current = cdr;
+    }
+    assert_eq!(items, vec![LispObject::integer(1), LispObject::integer(2)]);
+}
+
+#[test]
+fn default_toplevel_value_signals_void_variable_when_unbound() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let err = interp
+        .eval(read("(default-toplevel-value 'rele-unbound-default)").unwrap())
+        .unwrap_err();
+    assert!(matches!(err, ElispError::VoidVariable(name) if name == "rele-unbound-default"));
+}
+
+#[test]
+fn make_symbol_is_not_interned() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(
+        interp
+            .eval(read(r#"(eq (make-symbol "rele-uninterned") 'rele-uninterned)"#).unwrap())
+            .unwrap(),
+        LispObject::nil(),
+    );
+}
+
+#[test]
+fn buffer_local_dynamic_binding_preserves_toplevel_slot() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    interp.define(
+        "buffer-local-toplevel-value",
+        LispObject::primitive("buffer-local-toplevel-value"),
+    );
+    let result = interp
+        .eval(
+            read(
+                "(progn
+                   (defvar-local rele-buffer-local-dyn 'foo)
+                   (setq-local rele-buffer-local-dyn 'bar)
+                   (let ((rele-buffer-local-dyn 'baz))
+                     (setq-local rele-buffer-local-dyn 'quux)
+                     (list rele-buffer-local-dyn
+                           (buffer-local-toplevel-value
+                            'rele-buffer-local-dyn))))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut items = Vec::new();
+    let mut current = result;
+    while let Some((car, cdr)) = current.destructure_cons() {
+        items.push(car);
+        current = cdr;
+    }
+    assert_eq!(
+        items,
+        vec![LispObject::symbol("quux"), LispObject::symbol("bar")]
     );
 }
 #[test]

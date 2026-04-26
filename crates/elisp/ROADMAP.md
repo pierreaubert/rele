@@ -6,7 +6,9 @@ and run real Emacs Lisp reliably, so the roadmap is intentionally staged:
 
 1. Make the interpreter correct, isolated, and useful with real stdlib code.
 2. Build enough editor-facing primitives for packages and commands to run.
-3. Add JIT speedups only after the interpreter path is stable.
+3. Use the upstream Emacs test suite as the compatibility authority: a semantic
+   area is not complete until the corresponding upstream tests run cleanly.
+4. Add JIT speedups only after the interpreter path is stable.
 
 ## Success Criteria
 
@@ -32,6 +34,11 @@ Current status snapshot:
 - JIT hot-path benches include synthetic VM/JIT pairs and an optional real
   `.elc` zero-arg bytecode sample:
   `cargo bench -p rele-elisp --features jit --bench jit_hotpath`.
+- Full Emacs test-suite execution is available through the ignored gate:
+  `cargo test -p rele-elisp --lib test_emacs_all_files_run -- --nocapture --ignored`.
+  The worker now creates a fresh bootstrapped interpreter for each file so ERT
+  registrations, dynamic state, and obarray mutations cannot leak between files
+  in one worker process.
 
 Interpreter-ready means:
 - `cargo test -p rele-elisp`
@@ -256,13 +263,48 @@ Current next queue:
 Pre-JIT handoff:
 - The pre-JIT blocking track in Milestones 1-5 is complete for the standalone
   `rele-elisp` interpreter.
-- Remaining compatibility debt is explicit and non-blocking for JIT safety work:
-  deeper `cl-struct-define` inheritance fidelity, full `cl-generic` method
-  combination/dispatch, and app/server command-dispatch integration on top of
-  the elisp keymap data.
+- Remaining compatibility debt is no longer treated as "non-blocking" for the
+  Rust Emacs goal: before broadening JIT work, close upstream-compatible
+  semantic slices to 100% against their Emacs tests, then remove exclusions from
+  the full-suite harness.
 - Milestones 6 and 7 are complete enough for the next JIT phase: broaden VM/JIT
   parity for higher-level bytecode operations (`car`/`cdr`, calls, varrefs,
   stack mutation) while preserving the audit-and-benchmark loop.
+
+## Full Emacs Compatibility Track
+
+This track supersedes partial compatibility milestones. Work should close one
+upstream-tested semantic slice at a time, with isolated file execution and no
+cross-file ERT pollution.
+
+Current baseline facts:
+- The non-isolated full-suite run discovered `553` `.el` test files under the
+  local Emacs source tree, but reused interpreter state across files. Its raw
+  `9%` pass rate is kept only as crash/timeout evidence, not as a correctness
+  baseline.
+- The raw non-isolated run exposed hard harness/semantic blockers: worker
+  crashes in `cl-print-tests.el`, `nadvice-tests.el`, `regexp-opt-tests.el`, and
+  `which-key-tests.el`; file-level timeouts in `eval-tests.el`,
+  `fileio-tests.el`, `fns-tests.el`, and `print-tests.el`.
+- A two-file worker replay now proves per-file isolation: `sqlite-tests.el`
+  reports `0 pass / 0 fail / 0 error / 12 skip`, followed by `xml-tests.el`
+  reporting `0 pass / 1 fail / 0 error / 0 skip` instead of inheriting the
+  previous file's ERT registry.
+
+Next compatibility steps:
+1. [ ] Run a fresh isolated full-suite baseline and write its JSONL output as the
+   new compatibility ledger.
+2. [ ] Remove broad file exclusions only by making the excluded files load and
+   execute correctly, starting with `cl-lib-tests.el`, `cl-macs-tests.el`,
+   `backquote-tests.el`, and `bytecomp-tests.el`.
+3. [ ] Close the core data/binding slice to 100%: bool-vector mutation return
+   values, deeper buffer-local dynamic binding, variable watcher callback
+   delivery, `cl-type-of`, unibyte/multibyte string mutation, and per-buffer
+   predicate signaling.
+4. [ ] Close the crash slice to 100% before interpreting pass-rate numbers:
+   `cl-print`, `nadvice`, `regexp-opt`, and `which-key`.
+5. [ ] Close source-file timeout causes with semantic fixes, not larger
+   deadlines, unless native Emacs also requires long-running external resources.
 
 ## Notes
 

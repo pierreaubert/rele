@@ -1,17 +1,52 @@
 use crate::eval::SyncRefCell;
 use crate::obarray::{self, SymbolId};
 use num_bigint::BigInt;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Global counter for total cons cell allocations. Monotonically increasing.
 static GLOBAL_CONS_COUNT: AtomicU64 = AtomicU64::new(0);
+static STRING_MUTATIONS: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static STRING_MULTIBYTE_FLAGS: LazyLock<Mutex<HashMap<String, bool>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 const BOOL_VECTOR_MARKER: i64 = -10_000;
 const BOOL_VECTOR_LENGTH: i64 = -10_001;
 
 /// Read the global cons allocation counter.
 pub fn global_cons_count() -> u64 {
     GLOBAL_CONS_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn current_string_value(s: &str) -> String {
+    STRING_MUTATIONS
+        .lock()
+        .ok()
+        .and_then(|mutations| mutations.get(s).cloned())
+        .unwrap_or_else(|| s.to_string())
+}
+
+pub fn mutate_string_value(original: &str, value: String) {
+    if let Ok(mut mutations) = STRING_MUTATIONS.lock() {
+        mutations.insert(original.to_string(), value);
+    }
+}
+
+pub fn mark_string_multibyte(s: &str, multibyte: bool) {
+    if let Ok(mut flags) = STRING_MULTIBYTE_FLAGS.lock() {
+        flags.insert(s.to_string(), multibyte);
+    }
+}
+
+pub fn string_is_multibyte(s: &str) -> bool {
+    STRING_MULTIBYTE_FLAGS
+        .lock()
+        .ok()
+        .and_then(|flags| flags.get(s).copied())
+        .unwrap_or_else(|| !s.is_ascii())
 }
 
 /// Shared mutable cell used for cons, vector, and hash table mutation semantics.

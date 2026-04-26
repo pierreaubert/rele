@@ -267,34 +267,34 @@ impl<'a> Vm<'a> {
             16..=21 => {
                 let n = (op - 16) as usize;
                 let val = self.pop_obj()?;
-                self.local_set(n, val);
+                self.local_set(n, val)?;
             }
             22 => {
                 let n = self.fetch_u8() as usize;
                 let val = self.pop_obj()?;
-                self.local_set(n, val);
+                self.local_set(n, val)?;
             }
             23 => {
                 let n = self.fetch_u16() as usize;
                 let val = self.pop_obj()?;
-                self.local_set(n, val);
+                self.local_set(n, val)?;
             }
 
             // varbind (24-31): bind local variable N to top of stack
             24..=29 => {
                 let n = (op - 24) as usize;
                 let val = self.pop_obj()?;
-                self.varbind(n, val);
+                self.varbind(n, val)?;
             }
             30 => {
                 let n = self.fetch_u8() as usize;
                 let val = self.pop_obj()?;
-                self.varbind(n, val);
+                self.varbind(n, val)?;
             }
             31 => {
                 let n = self.fetch_u16() as usize;
                 let val = self.pop_obj()?;
-                self.varbind(n, val);
+                self.varbind(n, val)?;
             }
 
             // call (32-39): call function with N args
@@ -314,15 +314,15 @@ impl<'a> Vm<'a> {
             // unbind (40-47): unbind N variables
             40..=45 => {
                 let n = (op - 40) as usize;
-                self.unbind(n);
+                self.unbind(n)?;
             }
             46 => {
                 let n = self.fetch_u8() as usize;
-                self.unbind(n);
+                self.unbind(n)?;
             }
             47 => {
                 let n = self.fetch_u16() as usize;
-                self.unbind(n);
+                self.unbind(n)?;
             }
 
             // pophandler (48): pop a condition-case/catch handler frame.
@@ -1696,32 +1696,53 @@ impl<'a> Vm<'a> {
         self.locals.get(n).cloned().unwrap_or(LispObject::nil())
     }
 
-    fn local_set(&mut self, n: usize, val: LispObject) {
+    fn local_set(&mut self, n: usize, val: LispObject) -> ElispResult<()> {
         if n < self.constants.len() {
             if let Some(name) = self.constants[n].as_symbol() {
-                self.env.write().set(&name, val);
-                return;
+                let sym_id = crate::obarray::intern(&name);
+                crate::eval::assign_symbol_value(
+                    sym_id,
+                    val,
+                    self.env,
+                    self.editor,
+                    self.macros,
+                    self.state,
+                    crate::eval::SetOperation::Setq,
+                )?;
+                return Ok(());
             }
         }
         while self.locals.len() <= n {
             self.locals.push(LispObject::nil());
         }
         self.locals[n] = val;
+        Ok(())
     }
 
-    fn varbind(&mut self, n: usize, val: LispObject) {
+    fn varbind(&mut self, n: usize, val: LispObject) -> ElispResult<()> {
         if n < self.constants.len() {
             if let Some(name) = self.constants[n].as_symbol() {
+                let id = crate::obarray::intern(&name);
                 let old = self.env.read().get(&name);
                 self.specpdl.push((name.clone(), old));
-                self.env.write().set(&name, val);
-                return;
+                self.env.write().set(&name, val.clone());
+                crate::eval::deliver_variable_watchers(
+                    id,
+                    &val,
+                    crate::eval::SetOperation::Let,
+                    self.env,
+                    self.editor,
+                    self.macros,
+                    self.state,
+                )?;
+                return Ok(());
             }
         }
-        self.local_set(n, val);
+        self.local_set(n, val)?;
+        Ok(())
     }
 
-    fn unbind(&mut self, n: usize) {
+    fn unbind(&mut self, n: usize) -> ElispResult<()> {
         for _ in 0..n {
             if let Some((name, val)) = self.specpdl.pop() {
                 if name == "__unwind_protect__" {
@@ -1729,11 +1750,25 @@ impl<'a> Vm<'a> {
                     if let Some(handler) = self.unwind_handlers.pop() {
                         self.run_unwind_handler(&handler);
                     }
-                } else if let Some(val) = val {
-                    self.env.write().set(&name, val);
+                } else {
+                    let id = crate::obarray::intern(&name);
+                    let restored = val.clone().unwrap_or_else(LispObject::nil);
+                    if let Some(val) = val {
+                        self.env.write().set(&name, val);
+                    }
+                    crate::eval::deliver_variable_watchers(
+                        id,
+                        &restored,
+                        crate::eval::SetOperation::Unlet,
+                        self.env,
+                        self.editor,
+                        self.macros,
+                        self.state,
+                    )?;
                 }
             }
         }
+        Ok(())
     }
 
     fn op_call(&mut self, nargs: usize) -> ElispResult<()> {

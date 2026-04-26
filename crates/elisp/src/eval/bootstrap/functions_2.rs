@@ -197,8 +197,8 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("self-insert-command", LispObject::nil());
     interp.define("undefined", LispObject::nil());
     interp.define("minibuffer-recenter-top-bottom", LispObject::nil());
-    interp.define("symbol-value", LispObject::primitive("identity"));
-    interp.define("default-value", LispObject::primitive("ignore"));
+    interp.define("symbol-value", LispObject::primitive("symbol-value"));
+    interp.define("default-value", LispObject::primitive("default-value"));
     interp.define("recenter-top-bottom", LispObject::nil());
     interp.define("keymap-set-after", LispObject::primitive("ignore"));
     interp.define("key-valid-p", LispObject::primitive("ignore"));
@@ -409,6 +409,24 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("local-abbrev-table", LispObject::nil());
     interp.define("abbrev-mode", LispObject::nil());
     interp.define("overwrite-mode", LispObject::nil());
+    for name in [
+        "left-margin",
+        "line-spacing",
+        "scroll-up-aggressively",
+        "vertical-scroll-bar",
+        "overwrite-mode",
+    ] {
+        let _ = interp.eval_source(&format!("(put '{name} 'variable-buffer-local t)"));
+        interp
+            .state
+            .special_vars
+            .write()
+            .insert(crate::obarray::intern(name));
+    }
+    let _ = interp.eval_source("(put 'vertical-scroll-bar 'choice '(nil left right))");
+    let _ = interp.eval_source(
+        "(put 'overwrite-mode 'choice '(nil overwrite-mode-textual overwrite-mode-binary))",
+    );
     interp.define("face-new-frame-defaults", LispObject::nil());
     interp.define("face-remapping-alist", LispObject::nil());
     interp.define("face-list", LispObject::primitive("ignore"));
@@ -550,10 +568,10 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("text-property-any", LispObject::primitive("ignore"));
     interp.define("compare-buffer-substrings", LispObject::primitive("ignore"));
     interp.define("subst-char-in-region", LispObject::primitive("ignore"));
-    interp.define("bolp", LispObject::primitive("ignore"));
-    interp.define("eolp", LispObject::primitive("ignore"));
-    interp.define("bobp", LispObject::primitive("ignore"));
-    interp.define("eobp", LispObject::primitive("ignore"));
+    interp.define("bolp", LispObject::primitive("bolp"));
+    interp.define("eolp", LispObject::primitive("eolp"));
+    interp.define("bobp", LispObject::primitive("bobp"));
+    interp.define("eobp", LispObject::primitive("eobp"));
     interp.define("following-char", LispObject::primitive("ignore"));
     interp.define("preceding-char", LispObject::primitive("ignore"));
     interp.define("delete-region", LispObject::primitive("ignore"));

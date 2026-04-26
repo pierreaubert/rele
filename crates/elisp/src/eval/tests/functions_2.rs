@@ -589,7 +589,7 @@ fn test_batched_defun_stubs_resolve_round4() {
         ("(frame-pixel-width)", "800"),
         ("(frame-width)", "80"),
         ("(unibyte-string 104 105)", "hi"),
-        ("(multibyte-string-p \"hi\")", "t"),
+        ("(multibyte-string-p \"hi\")", "nil"),
         ("(multibyte-string-p 3)", "nil"),
         ("(char-width 65)", "1"),
         ("(string-lines \"a\\nb\\nc\")", "(\"a\" \"b\" \"c\")"),

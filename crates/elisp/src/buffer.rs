@@ -155,18 +155,26 @@ impl StubBuffer {
     pub fn point_max(&self) -> usize {
         match self.restriction {
             Some((_, b)) => b,
+            None if self.text.is_ascii() => self.text.len() + 1,
             None => self.text.chars().count() + 1,
         }
     }
 
     pub fn buffer_size(&self) -> usize {
-        self.text.chars().count()
+        if self.text.is_ascii() {
+            self.text.len()
+        } else {
+            self.text.chars().count()
+        }
     }
 
     /// Convert a 1-based char offset into a byte offset, clamped to the
     /// actual text bounds (not the narrow restriction — callers clamp
     /// to point-min/point-max themselves).
     pub fn char_to_byte(&self, char_pos: usize) -> usize {
+        if self.text.is_ascii() {
+            return char_pos.saturating_sub(1).min(self.text.len());
+        }
         let clamped = char_pos.saturating_sub(1).min(self.text.chars().count());
         self.text
             .char_indices()
@@ -176,6 +184,12 @@ impl StubBuffer {
     }
 
     pub fn char_at(&self, char_pos: usize) -> Option<char> {
+        if self.text.is_ascii() {
+            return char_pos
+                .checked_sub(1)
+                .and_then(|idx| self.text.as_bytes().get(idx))
+                .map(|b| *b as char);
+        }
         if char_pos < 1 || char_pos > self.text.chars().count() {
             return None;
         }
@@ -272,6 +286,9 @@ impl StubBuffer {
         let byte = self.char_to_byte(pos);
         // Walk back to find the previous \n (or bos).
         if let Some(p) = self.text[..byte].rfind('\n') {
+            if self.text.is_ascii() {
+                return p + 2;
+            }
             // p is byte offset of the \n; line begins at next char.
             // Convert back to char offset.
             1 + self.text[..=p].chars().count()
@@ -284,9 +301,12 @@ impl StubBuffer {
     pub fn line_end_position(&self, pos: usize) -> usize {
         let byte = self.char_to_byte(pos);
         if let Some(off) = self.text[byte..].find('\n') {
+            if self.text.is_ascii() {
+                return byte + off + 1;
+            }
             1 + self.text[..byte + off].chars().count()
         } else {
-            self.text.chars().count() + 1
+            self.buffer_size() + 1
         }
     }
 

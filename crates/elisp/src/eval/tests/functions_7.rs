@@ -78,8 +78,8 @@ fn test_remaining_pre_jit_semantics_batch() {
         (
             "(let ((a (bool-vector t))
                    (target (bool-vector t)))
-               (eq (bool-vector-union a a target) target))",
-            "t",
+               (bool-vector-union a a target))",
+            "nil",
         ),
         (
             "(progn
@@ -93,7 +93,7 @@ fn test_remaining_pre_jit_semantics_batch() {
                (setq watched-var 1)
                (setq-local watched-var 2)
                (reverse watched-log))",
-            "((watched-var 1 set t) (watched-var 2 set t))",
+            "((watched-var 1 set nil) (watched-var 2 set nil))",
         ),
         (
             "(condition-case err

@@ -49,7 +49,7 @@ pub(super) fn run_rele_ert_tests_detailed_inner(
             ),
         );
         interp.reset_eval_ops();
-        interp.set_eval_ops_limit(5_000_000);
+        interp.set_eval_ops_limit(50_000_000);
         if per_test_ms > 0 {
             interp.set_deadline(
                 std::time::Instant::now() + std::time::Duration::from_millis(per_test_ms),

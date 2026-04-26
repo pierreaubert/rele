@@ -86,7 +86,9 @@ pub(super) fn stateful_default_toplevel_value(
     let key = crate::obarray::intern("default-toplevel-value");
     let value = state.get_plist(sym, key);
     if value.is_nil() {
-        Ok(state.get_value_cell(sym).unwrap_or_else(LispObject::nil))
+        state
+            .get_value_cell(sym)
+            .ok_or_else(|| ElispError::VoidVariable(crate::obarray::symbol_name(sym)))
     } else {
         Ok(value)
     }

@@ -34,7 +34,14 @@ pub fn capitalize_string(s: &str) -> String {
     for c in s.chars() {
         if c.is_alphanumeric() {
             if word_start {
-                result.extend(c.to_uppercase());
+                let upper = c.to_uppercase().collect::<String>();
+                let mut chars = upper.chars();
+                if let Some(first) = chars.next() {
+                    result.push(first);
+                }
+                for rest in chars {
+                    result.extend(rest.to_lowercase());
+                }
                 word_start = false;
             } else {
                 result.extend(c.to_lowercase());

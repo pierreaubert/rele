@@ -132,15 +132,30 @@ pub fn prim_aset(args: &LispObject) -> ElispResult<LispObject> {
             Ok(val)
         }
         LispObject::String(s) => {
-            let len = s.chars().count();
+            let current = crate::object::current_string_value(&s);
+            let len = current.chars().count();
             let idx = if idx < 0 { len as i64 + idx } else { idx };
             if idx < 0 || (idx as usize) >= len {
                 return Err(ElispError::EvalError(
                     "aset: index out of range".to_string(),
                 ));
             }
-            val.as_integer()
+            let code = val
+                .as_integer()
                 .ok_or_else(|| ElispError::WrongTypeArgument("character".to_string()))?;
+            let is_multibyte = crate::object::string_is_multibyte(&s);
+            let old = current.chars().nth(idx as usize).unwrap_or('\0');
+            if is_multibyte && (!old.is_ascii() || !(0..=0x7f).contains(&code)) {
+                return Err(ElispError::WrongTypeArgument("character".to_string()));
+            }
+            if !is_multibyte && !(0..=0xff).contains(&code) {
+                return Err(ElispError::WrongTypeArgument("character".to_string()));
+            }
+            let ch = char::from_u32(code as u32)
+                .ok_or_else(|| ElispError::WrongTypeArgument("character".to_string()))?;
+            let mut chars: Vec<char> = current.chars().collect();
+            chars[idx as usize] = ch;
+            crate::object::mutate_string_value(&s, chars.into_iter().collect());
             Ok(val)
         }
         _ => Err(ElispError::WrongTypeArgument("array".to_string())),
@@ -299,12 +314,14 @@ fn bool_vector_binop(
         if bool_vector_len(&target).unwrap_or(0) != len {
             return Err(ElispError::WrongTypeArgument("bool-vector".to_string()));
         }
+        let mut changed = false;
         for (idx, bit) in bits.into_iter().enumerate() {
             if bool_vector_bit(&target, idx) != bit {
                 bool_vector_set(&target, idx, bit);
+                changed = true;
             }
         }
-        Ok(target)
+        Ok(if changed { target } else { LispObject::nil() })
     } else {
         Ok(bool_vector_from_bits(bits))
     }

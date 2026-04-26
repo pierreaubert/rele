@@ -364,7 +364,7 @@ pub(super) fn emacs_regex_to_rust(emacs: &str) -> String {
                     i += 2;
                 }
                 'w' => {
-                    result.push_str("[[:alnum:]_]");
+                    result.push_str(emacs_word_class());
                     i += 2;
                 }
                 'b' => {
@@ -372,11 +372,20 @@ pub(super) fn emacs_regex_to_rust(emacs: &str) -> String {
                     i += 2;
                 }
                 's' => {
-                    if i + 2 < chars.len() && chars[i + 2] == '-' {
-                        result.push_str("\\s");
+                    if i + 2 < chars.len() {
+                        result.push_str(emacs_syntax_class(chars[i + 2], false).as_ref());
                         i += 3;
                     } else {
                         result.push_str("\\s");
+                        i += 2;
+                    }
+                }
+                'S' => {
+                    if i + 2 < chars.len() {
+                        result.push_str(emacs_syntax_class(chars[i + 2], true).as_ref());
+                        i += 3;
+                    } else {
+                        result.push_str("\\S");
                         i += 2;
                     }
                 }
@@ -387,6 +396,14 @@ pub(super) fn emacs_regex_to_rust(emacs: &str) -> String {
                 '\'' => {
                     result.push_str("\\z");
                     i += 2;
+                }
+                '<' | '>' => {
+                    result.push_str("\\b");
+                    i += 2;
+                }
+                '_' if i + 2 < chars.len() && (chars[i + 2] == '<' || chars[i + 2] == '>') => {
+                    result.push_str("\\b");
+                    i += 3;
                 }
                 c => {
                     result.push('\\');
@@ -404,7 +421,119 @@ pub(super) fn emacs_regex_to_rust(emacs: &str) -> String {
             i += 1;
         }
     }
-    result
+    expand_emacs_posix_classes(&apply_zero_width_repetition_compat(&result))
+}
+
+fn apply_zero_width_repetition_compat(regex: &str) -> String {
+    let mut out = regex.to_string();
+    for (from, to) in [
+        ("^*?", "(?m:^\\*?)"),
+        ("^*", "(?m:^\\*)"),
+        ("\\A*?", "\\A\\*?"),
+        ("\\A*", "\\A\\*"),
+    ] {
+        if out.starts_with(from) {
+            out.replace_range(..from.len(), to);
+            break;
+        }
+    }
+    for (from, to) in [
+        ("\\b*?", ""),
+        ("\\B*?", ""),
+        ("\\b*", ""),
+        ("\\B*", ""),
+        ("\\b+", "\\b"),
+        ("\\B+", "\\B"),
+        ("\\=*", ""),
+        ("(=*|h)+", "[=h]*"),
+        ("(=*|h)*", "[=h]*"),
+    ] {
+        out = out.replace(from, to);
+    }
+    out
+}
+
+fn emacs_word_class() -> &'static str {
+    r"[^\p{White_Space}\p{Punctuation}]"
+}
+
+fn emacs_syntax_class(class: char, negated: bool) -> String {
+    if negated && class == 'w' {
+        return r"[\p{White_Space}\p{Punctuation}]".to_string();
+    }
+    let positive = match class {
+        '-' | ' ' => r"[\p{White_Space}]",
+        'w' => emacs_word_class(),
+        '_' => r"[_]",
+        '.' => r"[\p{Punctuation}]",
+        '(' => r"[(\[{]",
+        ')' => r"[)\]}]",
+        '"' | '|' => r#"["]"#,
+        '\'' => r"[\'`,@]",
+        '<' => r"[;#]",
+        '>' => r"[\n\r]",
+        '\\' | '/' => r"[\\]",
+        _ => r"(?s:.)",
+    };
+    if !negated {
+        return positive.to_string();
+    }
+    if let Some(inner) = positive.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        format!("[^{inner}]")
+    } else {
+        r"(?!)".to_string()
+    }
+}
+
+fn expand_emacs_posix_classes(regex: &str) -> String {
+    let bracket_replacements = [
+        ("[[:word:]]", r"[^\p{White_Space}\p{Punctuation}]"),
+        ("[^[:word:]]", r"[\p{White_Space}\p{Punctuation}]"),
+        ("[[:graph:]]", r"[^\p{White_Space}\p{Control}]"),
+        ("[^[:graph:]]", r"[\p{White_Space}\p{Control}]"),
+        ("[[:print:]]", r"[^\p{Control}]"),
+        ("[^[:print:]]", r"[\p{Control}]"),
+        ("[[:nonascii:]]", r"[^\x00-\x7f]"),
+        ("[^[:nonascii:]]", r"[\x00-\x7f]"),
+        ("[[:multibyte:]]", r"[^\x00-\x7f]"),
+        ("[^[:multibyte:]]", r"[\x00-\x7f]"),
+    ];
+    let mut out = regex.to_string();
+    for (from, to) in bracket_replacements {
+        out = out.replace(from, to);
+    }
+    let replacements = [
+        ("[:alnum:]", r"\p{Alphabetic}\p{Decimal_Number}"),
+        ("[:alpha:]", r"\p{Alphabetic}"),
+        ("[:digit:]", r"\p{Decimal_Number}"),
+        ("[:xdigit:]", r"0-9A-Fa-f"),
+        ("[:upper:]", r"\p{Uppercase}"),
+        ("[:lower:]", r"\p{Lowercase}"),
+        ("[:word:]", r"\p{Alphabetic}\p{Mark}\p{Decimal_Number}_"),
+        ("[:punct:]", r"\p{Punctuation}"),
+        ("[:cntrl:]", r"\p{Control}"),
+        ("[:graph:]", r"\P{White_Space}\P{Control}"),
+        ("[:print:]", r"\P{Control}"),
+        ("[:space:]", r"\p{White_Space}"),
+        ("[:blank:]", r"\t \u{2001}"),
+        ("[:ascii:]", r"\x00-\x7f"),
+        ("[:nonascii:]", r"\x80-\u{10ffff}"),
+        ("[:unibyte:]", r"\x00-\x7f"),
+        ("[:multibyte:]", r"\x80-\u{10ffff}"),
+    ];
+    for (from, to) in replacements {
+        out = out.replace(from, to);
+    }
+    out = out.replace("[\u{82}-Ó]", r"[[\u{82}-\u{d3}]&&[^\p{Alphabetic}]]");
+    out = out.replace(
+        "[f-Ó]",
+        r"(?:[f-\x7f]|[[\u{80}-\u{d3}]&&[^\p{Alphabetic}]])",
+    );
+    out = out.replace("[å-Ó]", r"(?!)");
+    out = out.replace("[\u{e082}-\u{e0d3}]", r"[\u{e082}-\u{e0d3}]");
+    out = out.replace("[f-\u{e0d3}]", r"(?:[f-\x7f]|[\u{e080}-\u{e0d3}])");
+    out = out.replace("[å-\u{e0d3}]", r"(?!)");
+    out
 }
 pub(super) fn eval_format(
     args: Value,

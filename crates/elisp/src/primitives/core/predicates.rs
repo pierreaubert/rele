@@ -91,6 +91,11 @@ pub fn prim_eql(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_equal(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let b = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    if let (LispObject::String(a), LispObject::String(b)) = (&a, &b) {
+        return Ok(LispObject::from(
+            crate::object::current_string_value(a) == crate::object::current_string_value(b),
+        ));
+    }
     Ok(LispObject::from(a == b))
 }
 

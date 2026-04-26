@@ -5,10 +5,13 @@ use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::dynamic::unwind_specpdl;
-use super::functions::{SetOperation, assign_symbol_value, set_function_cell_checked};
+use super::functions::{
+    SetOperation, assign_symbol_value, deliver_variable_watchers, set_function_cell_checked,
+};
 use super::{Environment, InterpreterState, Macro, MacroTable, eval};
 
 pub(super) fn eval_if(
@@ -110,6 +113,17 @@ pub(super) fn eval_make_local_variable(
         .or_else(|| env.read().get(&name))
         .unwrap_or_else(LispObject::nil);
     set_current_buffer_local(&name, value);
+    if name == "last-coding-system-used" {
+        state.set_value_cell(
+            id,
+            current_buffer_local(&name).unwrap_or_else(LispObject::nil),
+        );
+        state.global_env.write().set_id(
+            id,
+            current_buffer_local(&name).unwrap_or_else(LispObject::nil),
+        );
+        env.write().unset_id(id);
+    }
     Ok(obj_to_value(LispObject::Symbol(id)))
 }
 
@@ -152,6 +166,19 @@ fn set_current_buffer_local(name: &str, value: LispObject) {
         let current = registry.current_id();
         if let Some(buffer) = registry.get_mut(current) {
             buffer.locals.insert(name.to_string(), value);
+        }
+    });
+}
+
+fn local_toplevel_key(name: &str) -> String {
+    format!("__rele_buffer_local_toplevel::{name}")
+}
+
+fn remove_current_buffer_local(name: &str) {
+    crate::buffer::with_registry_mut(|registry| {
+        let current = registry.current_id();
+        if let Some(buffer) = registry.get_mut(current) {
+            buffer.locals.remove(name);
         }
     });
 }
@@ -491,7 +518,16 @@ pub(super) fn eval_let(
     let new_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
 
     let specpdl_depth = state.specpdl.read().len();
-    let mut local_saves: Vec<(crate::buffer::BufferId, String, LispObject)> = Vec::new();
+    let mut let_bound_ids: HashSet<crate::obarray::SymbolId> = HashSet::new();
+    let mut dynamic_saves: Vec<(crate::obarray::SymbolId, Option<LispObject>)> = Vec::new();
+    let mut local_saves: Vec<(
+        crate::buffer::BufferId,
+        crate::obarray::SymbolId,
+        String,
+        LispObject,
+        bool,
+    )> = Vec::new();
+    let mut lexical_watcher_saves: Vec<(crate::obarray::SymbolId, Option<LispObject>)> = Vec::new();
 
     let mut bindings_list = bindings;
     while let Some((binding, rest)) = bindings_list.destructure_cons() {
@@ -511,20 +547,57 @@ pub(super) fn eval_let(
         if crate::obarray::symbol_name(id) == "display-hourglass" {
             value = LispObject::from(!value.is_nil());
         }
+        let_bound_ids.insert(id);
 
         let name = crate::obarray::symbol_name(id);
         if state.special_vars.read().contains(&id) && has_current_buffer_local(&name) {
             let old = current_buffer_local(&name).unwrap_or_else(LispObject::nil);
             let buffer_id = crate::buffer::with_registry(|registry| registry.current_id());
-            local_saves.push((buffer_id, name.clone(), old));
-            set_current_buffer_local(&name, value);
+            let toplevel_key = local_toplevel_key(&name);
+            let created_toplevel_save = !has_current_buffer_local(&toplevel_key);
+            if created_toplevel_save {
+                set_current_buffer_local(&toplevel_key, old.clone());
+            }
+            local_saves.push((buffer_id, id, name.clone(), old, created_toplevel_save));
+            set_current_buffer_local(&name, value.clone());
+            deliver_variable_watchers(
+                id,
+                &value,
+                SetOperation::Let,
+                &new_env,
+                editor,
+                macros,
+                state,
+            )?;
         } else if state.special_vars.read().contains(&id) {
             let global = &state.global_env;
             let old = global.read().get_id(id);
+            dynamic_saves.push((id, old.clone()));
             state.specpdl.write().push((id, old));
             new_env.write().define_id(id, value.clone());
-            global.write().set_id(id, value);
+            global.write().set_id(id, value.clone());
+            deliver_variable_watchers(
+                id,
+                &value,
+                SetOperation::Let,
+                &new_env,
+                editor,
+                macros,
+                state,
+            )?;
         } else {
+            if has_variable_watchers(id, state) {
+                lexical_watcher_saves.push((id, env.read().get_id(id)));
+                deliver_variable_watchers(
+                    id,
+                    &value,
+                    SetOperation::Let,
+                    &new_env,
+                    editor,
+                    macros,
+                    state,
+                )?;
+            }
             new_env.write().define_id(id, value);
         }
 
@@ -532,14 +605,43 @@ pub(super) fn eval_let(
     }
 
     let result = eval_progn_no_tco(obj_to_value(body), &new_env, editor, macros, state);
+    propagate_lexical_mutations(&new_env, env, &let_bound_ids);
 
     unwind_specpdl(state, specpdl_depth);
-    for (buffer_id, name, old) in local_saves.into_iter().rev() {
+    for (id, old) in dynamic_saves.into_iter().rev() {
+        let restored = old.unwrap_or_else(LispObject::nil);
+        deliver_variable_watchers(
+            id,
+            &restored,
+            SetOperation::Unlet,
+            env,
+            editor,
+            macros,
+            state,
+        )?;
+    }
+    for (buffer_id, id, name, old, created_toplevel_save) in local_saves.into_iter().rev() {
         crate::buffer::with_registry_mut(|registry| {
             if let Some(buffer) = registry.get_mut(buffer_id) {
-                buffer.locals.insert(name, old);
+                buffer.locals.insert(name, old.clone());
             }
         });
+        if created_toplevel_save {
+            remove_current_buffer_local(&local_toplevel_key(&crate::obarray::symbol_name(id)));
+        }
+        deliver_variable_watchers(id, &old, SetOperation::Unlet, env, editor, macros, state)?;
+    }
+    for (id, old) in lexical_watcher_saves.into_iter().rev() {
+        let restored = old.unwrap_or_else(LispObject::nil);
+        deliver_variable_watchers(
+            id,
+            &restored,
+            SetOperation::Unlet,
+            env,
+            editor,
+            macros,
+            state,
+        )?;
     }
 
     result
@@ -696,7 +798,16 @@ pub(super) fn eval_let_star(
     let new_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
 
     let specpdl_depth = state.specpdl.read().len();
-    let mut local_saves: Vec<(crate::buffer::BufferId, String, LispObject)> = Vec::new();
+    let mut let_bound_ids: HashSet<crate::obarray::SymbolId> = HashSet::new();
+    let mut dynamic_saves: Vec<(crate::obarray::SymbolId, Option<LispObject>)> = Vec::new();
+    let mut local_saves: Vec<(
+        crate::buffer::BufferId,
+        crate::obarray::SymbolId,
+        String,
+        LispObject,
+        bool,
+    )> = Vec::new();
+    let mut lexical_watcher_saves: Vec<(crate::obarray::SymbolId, Option<LispObject>)> = Vec::new();
 
     let mut bindings_list = bindings;
     while let Some((binding, rest)) = bindings_list.destructure_cons() {
@@ -721,20 +832,57 @@ pub(super) fn eval_let_star(
         if crate::obarray::symbol_name(id) == "display-hourglass" {
             value = LispObject::from(!value.is_nil());
         }
+        let_bound_ids.insert(id);
 
         let name = crate::obarray::symbol_name(id);
         if state.special_vars.read().contains(&id) && has_current_buffer_local(&name) {
             let old = current_buffer_local(&name).unwrap_or_else(LispObject::nil);
             let buffer_id = crate::buffer::with_registry(|registry| registry.current_id());
-            local_saves.push((buffer_id, name.clone(), old));
-            set_current_buffer_local(&name, value);
+            let toplevel_key = local_toplevel_key(&name);
+            let created_toplevel_save = !has_current_buffer_local(&toplevel_key);
+            if created_toplevel_save {
+                set_current_buffer_local(&toplevel_key, old.clone());
+            }
+            local_saves.push((buffer_id, id, name.clone(), old, created_toplevel_save));
+            set_current_buffer_local(&name, value.clone());
+            deliver_variable_watchers(
+                id,
+                &value,
+                SetOperation::Let,
+                &new_env,
+                editor,
+                macros,
+                state,
+            )?;
         } else if state.special_vars.read().contains(&id) {
             let global = &state.global_env;
             let old = global.read().get_id(id);
+            dynamic_saves.push((id, old.clone()));
             state.specpdl.write().push((id, old));
             new_env.write().define_id(id, value.clone());
-            global.write().set_id(id, value);
+            global.write().set_id(id, value.clone());
+            deliver_variable_watchers(
+                id,
+                &value,
+                SetOperation::Let,
+                &new_env,
+                editor,
+                macros,
+                state,
+            )?;
         } else {
+            if has_variable_watchers(id, state) {
+                lexical_watcher_saves.push((id, new_env.read().get_id(id)));
+                deliver_variable_watchers(
+                    id,
+                    &value,
+                    SetOperation::Let,
+                    &new_env,
+                    editor,
+                    macros,
+                    state,
+                )?;
+            }
             new_env.write().define_id(id, value);
         }
 
@@ -742,17 +890,63 @@ pub(super) fn eval_let_star(
     }
 
     let result = eval_progn_no_tco(obj_to_value(body), &new_env, editor, macros, state);
+    propagate_lexical_mutations(&new_env, env, &let_bound_ids);
 
     unwind_specpdl(state, specpdl_depth);
-    for (buffer_id, name, old) in local_saves.into_iter().rev() {
+    for (id, old) in dynamic_saves.into_iter().rev() {
+        let restored = old.unwrap_or_else(LispObject::nil);
+        deliver_variable_watchers(
+            id,
+            &restored,
+            SetOperation::Unlet,
+            env,
+            editor,
+            macros,
+            state,
+        )?;
+    }
+    for (buffer_id, id, name, old, created_toplevel_save) in local_saves.into_iter().rev() {
         crate::buffer::with_registry_mut(|registry| {
             if let Some(buffer) = registry.get_mut(buffer_id) {
-                buffer.locals.insert(name, old);
+                buffer.locals.insert(name, old.clone());
             }
         });
+        if created_toplevel_save {
+            remove_current_buffer_local(&local_toplevel_key(&crate::obarray::symbol_name(id)));
+        }
+        deliver_variable_watchers(id, &old, SetOperation::Unlet, env, editor, macros, state)?;
+    }
+    for (id, old) in lexical_watcher_saves.into_iter().rev() {
+        let restored = old.unwrap_or_else(LispObject::nil);
+        deliver_variable_watchers(
+            id,
+            &restored,
+            SetOperation::Unlet,
+            env,
+            editor,
+            macros,
+            state,
+        )?;
     }
 
     result
+}
+
+fn propagate_lexical_mutations(
+    child: &Arc<RwLock<Environment>>,
+    parent: &Arc<RwLock<Environment>>,
+    frame_bound_ids: &HashSet<crate::obarray::SymbolId>,
+) {
+    for (id, value) in child.read().local_binding_entries() {
+        if !frame_bound_ids.contains(&id) && parent.read().get_id_local(id).is_some() {
+            parent.write().set_id(id, value);
+        }
+    }
+}
+
+fn has_variable_watchers(id: crate::obarray::SymbolId, state: &InterpreterState) -> bool {
+    let key = crate::obarray::intern("variable-watchers");
+    !state.get_plist(id, key).is_nil()
 }
 /// `(dlet BINDINGS BODY...)` — always-dynamic let, regardless of
 /// `lexical-binding`. Mirrors Emacs's definition `(progn (defvar x) ... (let

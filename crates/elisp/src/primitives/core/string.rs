@@ -508,7 +508,10 @@ pub fn prim_string_width(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_multibyte_string_p(args: &LispObject) -> ElispResult<LispObject> {
     let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    Ok(LispObject::from(arg.is_string()))
+    match arg {
+        LispObject::String(s) => Ok(LispObject::from(crate::object::string_is_multibyte(&s))),
+        _ => Ok(LispObject::nil()),
+    }
 }
 
 pub fn prim_string_search(args: &LispObject) -> ElispResult<LispObject> {

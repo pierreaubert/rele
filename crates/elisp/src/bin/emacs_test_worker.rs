@@ -1,11 +1,12 @@
 //! Worker subprocess for the Emacs ERT test harness.
 //!
-//! One instance bootstraps the stdlib once (~2 s), then processes
-//! many test files. The parent harness (`test_emacs_all_files_run`)
-//! maintains a pool of these and dispatches file paths via stdin,
-//! collecting JSONL results on stdout. If a worker crashes (stack
-//! overflow, SIGABRT, etc.) only the parent's per-worker manager
-//! thread sees it; the parent respawns and moves on.
+//! One instance processes many test files, but each file is evaluated
+//! in a fresh bootstrapped interpreter. The parent harness
+//! (`test_emacs_all_files_run`) maintains a pool of these workers and
+//! dispatches file paths via stdin, collecting JSONL results on stdout.
+//! If a worker crashes (stack overflow, SIGABRT, etc.) only the
+//! parent's per-worker manager thread sees it; the parent respawns and
+//! moves on.
 //!
 //! Protocol (line-oriented, stdin/stdout):
 //!
@@ -101,19 +102,15 @@ fn print_usage() {
     );
 }
 
-fn process_file<W: Write>(
-    interp: &rele_elisp::Interpreter,
-    path: &str,
-    per_test_ms: u64,
-    out: &mut W,
-) -> std::io::Result<()> {
+fn process_file<W: Write>(path: &str, per_test_ms: u64, out: &mut W) -> std::io::Result<()> {
     // Catch panics from RefCell re-entrant borrow violations (former
     // deadlocks, now exposed by SyncRefCell). The file is recorded as
     // having 0 tests with a "panic" marker so the parent doesn't
     // think the worker crashed.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let load = probe_emacs_file(interp, path);
-        let (stats, results) = run_rele_ert_tests_detailed_with_timeout(interp, per_test_ms);
+        let interp = make_isolated_test_interp();
+        let load = probe_emacs_file(&interp, path);
+        let (stats, results) = run_rele_ert_tests_detailed_with_timeout(&interp, per_test_ms);
         (load, stats, results)
     }));
 
@@ -150,6 +147,17 @@ fn process_file<W: Write>(
     out.flush()
 }
 
+fn make_isolated_test_interp() -> rele_elisp::Interpreter {
+    rele_elisp::buffer::reset();
+    let interp = make_stdlib_interp();
+    load_full_bootstrap(&interp);
+    // Load cl-lib chain: cl-macs, cl-extra, cl-seq, cl-print.
+    // Each test file gets its own registrations and obarray state so
+    // ERT totals cannot leak across files in one worker process.
+    load_cl_lib(&interp);
+    interp
+}
+
 fn main() {
     let cfg = match parse_args() {
         Ok(c) => c,
@@ -180,13 +188,6 @@ fn worker_main(cfg: Config) {
         std::process::exit(2);
     }
 
-    let interp = make_stdlib_interp();
-    load_full_bootstrap(&interp);
-    // Load cl-lib chain: cl-macs, cl-extra, cl-seq, cl-print.
-    // With periodic GC in eval_load (Step 3 fix) and .el preference
-    // over .elc, this no longer OOMs or deadlocks.
-    load_cl_lib(&interp);
-
     // Signal readiness to the parent.
     eprintln!("__READY__");
 
@@ -202,7 +203,7 @@ fn worker_main(cfg: Config) {
                 if path.is_empty() {
                     continue;
                 }
-                if process_file(&interp, path, cfg.per_test_ms, &mut out).is_err() {
+                if process_file(path, cfg.per_test_ms, &mut out).is_err() {
                     return; // Parent closed stdout — exit cleanly.
                 }
             }
@@ -229,7 +230,7 @@ fn worker_main(cfg: Config) {
                 if path.is_empty() || path.starts_with('#') {
                     continue;
                 }
-                if process_file(&interp, path, cfg.per_test_ms, &mut out).is_err() {
+                if process_file(path, cfg.per_test_ms, &mut out).is_err() {
                     return;
                 }
             }

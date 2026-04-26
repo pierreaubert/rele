@@ -24,6 +24,8 @@ struct CommonKeys {
     key_fn: Option<LispObject>,
     test_fn: Option<LispObject>,
     test_not_fn: Option<LispObject>,
+    if_fn: Option<LispObject>,
+    if_not_fn: Option<LispObject>,
     start: Option<i64>,
     end: Option<i64>,
     from_end: bool,
@@ -58,6 +60,8 @@ fn split_keys(args: &LispObject, positional_count: usize) -> (Vec<LispObject>, C
             Some(":key") => keys.key_fn = Some(v),
             Some(":test") => keys.test_fn = Some(v),
             Some(":test-not") => keys.test_not_fn = Some(v),
+            Some(":if") => keys.if_fn = Some(v),
+            Some(":if-not") => keys.if_not_fn = Some(v),
             Some(":start") => keys.start = v.as_integer(),
             Some(":end") => keys.end = v.as_integer(),
             Some(":from-end") => keys.from_end = !matches!(v, LispObject::Nil),
@@ -702,6 +706,76 @@ pub fn cl_remove_if(
     Ok(from_slice(&out))
 }
 
+pub fn cl_remove(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let (pos, keys) = split_keys(args, 2);
+    let item = pos.first().cloned().unwrap_or(LispObject::nil());
+    let list = pos.get(1).cloned().unwrap_or(LispObject::nil());
+    let items = to_vec(&list);
+    let mut remove_at = vec![false; items.len()];
+    let mut matched = 0i64;
+
+    let indices: Box<dyn Iterator<Item = usize>> = if keys.from_end {
+        Box::new((0..items.len()).rev())
+    } else {
+        Box::new(0..items.len())
+    };
+
+    for idx in indices {
+        if !range_contains(&items, &keys, idx) {
+            continue;
+        }
+        if keys.count.is_some_and(|count| matched >= count) {
+            break;
+        }
+        let keyed_item = keyed(&keys, items[idx].clone(), env, editor, macros, state)?;
+        let should_remove = if let Some(pred) = &keys.if_fn {
+            truthy(&call1(pred, keyed_item, env, editor, macros, state)?)
+        } else if let Some(pred) = &keys.if_not_fn {
+            !truthy(&call1(pred, keyed_item, env, editor, macros, state)?)
+        } else if let Some(test) = &keys.test_fn {
+            truthy(&call2(
+                test,
+                item.clone(),
+                keyed_item,
+                env,
+                editor,
+                macros,
+                state,
+            )?)
+        } else if let Some(test_not) = &keys.test_not_fn {
+            !truthy(&call2(
+                test_not,
+                item.clone(),
+                keyed_item,
+                env,
+                editor,
+                macros,
+                state,
+            )?)
+        } else {
+            keyed_item == item
+        };
+
+        if should_remove {
+            remove_at[idx] = true;
+            matched += 1;
+        }
+    }
+
+    let kept: Vec<LispObject> = items
+        .into_iter()
+        .enumerate()
+        .filter_map(|(idx, item)| (!remove_at[idx]).then_some(item))
+        .collect();
+    Ok(from_slice(&kept))
+}
+
 pub fn cl_remove_if_not(
     args: &LispObject,
     env: &Arc<RwLock<Environment>>,
@@ -1318,6 +1392,7 @@ pub fn call_stateful_cl(
         "cl-mapl" => cl_mapl(args, env, editor, macros, state),
         "cl-mapcon" => cl_mapcon(args, env, editor, macros, state),
         "cl-map" => cl_map(args, env, editor, macros, state),
+        "cl-remove" | "cl-delete" => cl_remove(args, env, editor, macros, state),
         "cl-remove-if" => cl_remove_if(args, env, editor, macros, state),
         "cl-remove-if-not" => cl_remove_if_not(args, env, editor, macros, state),
         "cl-delete-if" => cl_remove_if(args, env, editor, macros, state),
@@ -1372,6 +1447,8 @@ pub const STATEFUL_CL_NAMES: &[&str] = &[
     "cl-mapl",
     "cl-mapcon",
     "cl-map",
+    "cl-remove",
+    "cl-delete",
     "cl-remove-if",
     "cl-remove-if-not",
     "cl-delete-if",

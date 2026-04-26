@@ -1025,6 +1025,7 @@ impl Reader {
     fn read_string(&mut self) -> ElispResult<LispObject> {
         let mut s = String::new();
         let mut escaped = false;
+        let mut saw_raw_byte_escape = false;
 
         while let Some(c) = self.advance() {
             if escaped {
@@ -1057,10 +1058,45 @@ impl Reader {
                             let code = u32::from_str_radix(&hex, 16).map_err(|_| {
                                 ElispError::ReaderError(format!("invalid hex escape: \\x{}", hex))
                             })?;
+                            if code > 0x7f && code <= 0xff {
+                                saw_raw_byte_escape = true;
+                                if let Some(ch) = char::from_u32(0xE000 + code) {
+                                    s.push(ch);
+                                }
+                                escaped = false;
+                                continue;
+                            }
                             // Emacs allows hex escapes > U+10FFFF (they
                             // map to raw bytes in unibyte strings). We
                             // substitute the replacement character for
                             // out-of-range values rather than erroring.
+                            let ch = char::from_u32(code).unwrap_or('\u{FFFD}');
+                            s.push(ch);
+                        }
+                    }
+                    'u' | 'U' => {
+                        let width = if c == 'u' { 4 } else { 8 };
+                        let mut hex = String::new();
+                        for _ in 0..width {
+                            if let Some(h) = self.peek()
+                                && h.is_ascii_hexdigit()
+                            {
+                                hex.push(h);
+                                self.advance();
+                                continue;
+                            }
+                            break;
+                        }
+                        if hex.len() != width {
+                            s.push('\\');
+                            s.push(c);
+                            s.push_str(&hex);
+                        } else {
+                            let code = u32::from_str_radix(&hex, 16).map_err(|_| {
+                                ElispError::ReaderError(format!(
+                                    "invalid unicode escape: \\{c}{hex}"
+                                ))
+                            })?;
                             let ch = char::from_u32(code).unwrap_or('\u{FFFD}');
                             s.push(ch);
                         }
@@ -1080,6 +1116,14 @@ impl Reader {
                             }
                         }
                         let code = u32::from_str_radix(&oct, 8).unwrap_or(0);
+                        if code > 0x7f && code <= 0xff {
+                            saw_raw_byte_escape = true;
+                            if let Some(ch) = char::from_u32(0xE000 + code) {
+                                s.push(ch);
+                            }
+                            escaped = false;
+                            continue;
+                        }
                         if let Some(ch) = char::from_u32(code) {
                             s.push(ch);
                         }
@@ -1097,6 +1141,9 @@ impl Reader {
                 continue;
             }
             if c == '"' {
+                if saw_raw_byte_escape {
+                    crate::object::mark_string_multibyte(&s, false);
+                }
                 return Ok(LispObject::string(&s));
             }
             s.push(c);
