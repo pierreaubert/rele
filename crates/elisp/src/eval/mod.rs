@@ -80,13 +80,13 @@ use error_forms::{
     eval_catch, eval_condition_case, eval_error_fn, eval_signal, eval_throw, eval_unwind_protect,
     eval_user_error_fn,
 };
+pub(crate) use functions::{SetOperation, assign_symbol_value, set_function_cell_checked};
 use functions::{apply_lambda, eval_apply, eval_funcall, eval_funcall_form};
 use special_forms::{
     eval_and, eval_cond, eval_defalias, eval_defconst, eval_defmacro, eval_defun, eval_defvar,
     eval_dlet, eval_if, eval_let, eval_let_star, eval_loop, eval_macroexpand,
     eval_make_local_variable, eval_make_variable_buffer_local, eval_or, eval_prog1, eval_prog2,
     eval_progn, eval_setq, eval_setq_local, eval_unless, eval_when, eval_while, expand_macro,
-    reject_cyclic_function_indirection,
 };
 
 // Re-export pub(crate) functions that vm.rs needs
@@ -2274,9 +2274,7 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let sym_id = sym
-                        .as_symbol_id()
-                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    let sym_id = symbol_id_including_constants(&sym)?;
                     let name = crate::obarray::symbol_name(sym_id);
                     if matches!(
                         name.as_str(),
@@ -3845,11 +3843,8 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let sym_id = sym
-                        .as_symbol_id()
-                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-                    reject_cyclic_function_indirection(sym_id, &def, state)?;
-                    state.set_function_cell(sym_id, def.clone());
+                    let sym_id = symbol_id_including_constants(&sym)?;
+                    let def = set_function_cell_checked(sym_id, def, state)?;
                     Ok(obj_to_value(def))
                 }
                 "purecopy" => {
@@ -3919,31 +3914,15 @@ pub(super) fn eval_inner(
                     let sym_id = sym
                         .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-                    let name = crate::obarray::symbol_name(sym_id);
-                    let has_local = crate::buffer::with_registry(|registry| {
-                        registry
-                            .get(registry.current_id())
-                            .is_some_and(|buffer| buffer.locals.contains_key(&name))
-                    });
-                    let auto_local = {
-                        let key = crate::obarray::intern("variable-buffer-local");
-                        !state.get_plist(sym_id, key).is_nil()
-                    };
-                    if has_local || auto_local {
-                        crate::buffer::with_registry_mut(|registry| {
-                            let current = registry.current_id();
-                            if let Some(buffer) = registry.get_mut(current) {
-                                buffer.locals.insert(name, val.clone());
-                            }
-                        });
-                    } else if env.read().get_id_local(sym_id).is_some()
-                        && !Arc::ptr_eq(env, &state.global_env)
-                    {
-                        env.write().set_id(sym_id, val.clone());
-                    } else {
-                        state.set_value_cell(sym_id, val.clone());
-                        state.global_env.write().set_id(sym_id, val.clone());
-                    }
+                    let val = assign_symbol_value(
+                        sym_id,
+                        val,
+                        env,
+                        editor,
+                        macros,
+                        state,
+                        SetOperation::Set,
+                    )?;
                     Ok(obj_to_value(val))
                 }
                 "boundp" => {
@@ -4774,19 +4753,22 @@ pub(super) fn eval_inner(
                     state,
                 ),
                 "unibyte-string" => {
-                    let mut bytes = Vec::new();
+                    let mut vals = Vec::new();
                     let mut cur = cdr.clone();
                     while let Some((arg, rest)) = cur.destructure_cons() {
                         let val =
                             value_to_obj(eval(obj_to_value(arg), env, editor, macros, state)?);
-                        if let Some(n) = val.as_integer() {
-                            bytes.push(n as u8);
-                        }
+                        vals.push(val);
                         cur = rest;
                     }
-                    Ok(obj_to_value(LispObject::string(&String::from_utf8_lossy(
-                        &bytes,
-                    ))))
+                    let mut args = LispObject::nil();
+                    for val in vals.into_iter().rev() {
+                        args = LispObject::cons(val, args);
+                    }
+                    Ok(obj_to_value(crate::primitives::call_primitive(
+                        "unibyte-string",
+                        &args,
+                    )?))
                 }
                 "locale-coding-system" => Ok(Value::nil()),
                 "set-language-environment"
@@ -5282,7 +5264,7 @@ pub(super) fn symbol_macrolet_walk_list(
         _ => symbol_macrolet_walk(form, subs),
     }
 }
-pub(super) fn symbol_id_including_constants(
+pub(crate) fn symbol_id_including_constants(
     obj: &LispObject,
 ) -> ElispResult<crate::obarray::SymbolId> {
     match obj {
@@ -5292,7 +5274,7 @@ pub(super) fn symbol_id_including_constants(
         _ => Err(ElispError::WrongTypeArgument("symbol".to_string())),
     }
 }
-pub(super) fn symbol_name_including_constants(obj: &LispObject) -> ElispResult<String> {
+pub(crate) fn symbol_name_including_constants(obj: &LispObject) -> ElispResult<String> {
     Ok(crate::obarray::symbol_name(symbol_id_including_constants(
         obj,
     )?))

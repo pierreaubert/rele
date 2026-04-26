@@ -702,6 +702,11 @@ pub fn prim_cl_gentemp(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_cl_type_of(args: &LispObject) -> ElispResult<LispObject> {
     let v = args.first().unwrap_or(LispObject::nil());
+    if let Some(class_name) = crate::primitives_eieio::object_class_name(&v)
+        && crate::primitives_eieio::get_class(&class_name).is_some()
+    {
+        return Ok(LispObject::symbol(&class_name));
+    }
     let name = match v {
         LispObject::Nil => "null",
         LispObject::T => "boolean",

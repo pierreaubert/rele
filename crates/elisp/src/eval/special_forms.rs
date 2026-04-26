@@ -8,6 +8,7 @@ use crate::value::{Value, obj_to_value, value_to_obj};
 use std::sync::Arc;
 
 use super::dynamic::unwind_specpdl;
+use super::functions::{SetOperation, assign_symbol_value, set_function_cell_checked};
 use super::{Environment, InterpreterState, Macro, MacroTable, eval};
 
 pub(super) fn eval_if(
@@ -49,38 +50,10 @@ pub(super) fn eval_setq(
             .as_symbol_id()
             .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
         let val_expr = rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
-        let value_val = eval(obj_to_value(val_expr), env, editor, macros, state)?;
-        let mut value = value_to_obj(value_val);
-        let name = crate::obarray::symbol_name(id);
-        if is_constant_symbol(&name) && value != LispObject::Symbol(id) {
-            return Err(ElispError::Signal(Box::new(crate::error::SignalData {
-                symbol: LispObject::symbol("setting-constant"),
-                data: LispObject::cons(LispObject::Symbol(id), LispObject::nil()),
-            })));
-        }
-        if name == "gc-cons-threshold"
-            && !matches!(value, LispObject::Integer(_) | LispObject::BigInt(_))
-        {
-            return Err(ElispError::WrongTypeArgument("integer".to_string()));
-        }
-        if name == "display-hourglass" {
-            value = LispObject::from(!value.is_nil());
-        }
-        if state.special_vars.read().contains(&id) {
-            if env.read().get_id_local(id).is_some() && !Arc::ptr_eq(env, &state.global_env) {
-                env.write().set_id(id, value.clone());
-            }
-            state.global_env.write().set_id(id, value);
-        } else if env.read().get_id_local(id).is_some() && !Arc::ptr_eq(env, &state.global_env) {
-            env.write().set_id(id, value);
-        } else if has_current_buffer_local(&name) || is_automatic_buffer_local(id, state) {
-            set_current_buffer_local(&name, value);
-        } else {
-            env.write().set_id(id, value.clone());
-            state.global_env.write().set_id(id, value.clone());
-            state.set_value_cell(id, value);
-        }
-        result = value_val;
+        let value = value_to_obj(eval(obj_to_value(val_expr), env, editor, macros, state)?);
+        let assigned =
+            assign_symbol_value(id, value, env, editor, macros, state, SetOperation::Setq)?;
+        result = obj_to_value(assigned);
         current = rest.rest().unwrap_or(LispObject::nil());
     }
     Ok(result)
@@ -101,11 +74,17 @@ pub(super) fn eval_setq_local(
             .as_symbol_id()
             .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
         let val_expr = rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
-        let value_val = eval(obj_to_value(val_expr), env, editor, macros, state)?;
-        let value = value_to_obj(value_val);
-        let name = crate::obarray::symbol_name(id);
-        set_current_buffer_local(&name, value);
-        result = value_val;
+        let value = value_to_obj(eval(obj_to_value(val_expr), env, editor, macros, state)?);
+        let assigned = assign_symbol_value(
+            id,
+            value,
+            env,
+            editor,
+            macros,
+            state,
+            SetOperation::SetqLocal,
+        )?;
+        result = obj_to_value(assigned);
         current = rest.rest().unwrap_or(LispObject::nil());
     }
     Ok(result)
@@ -177,17 +156,6 @@ fn set_current_buffer_local(name: &str, value: LispObject) {
     });
 }
 
-fn is_automatic_buffer_local(id: crate::obarray::SymbolId, state: &InterpreterState) -> bool {
-    let key = crate::obarray::intern("variable-buffer-local");
-    !state.get_plist(id, key).is_nil()
-}
-
-fn is_constant_symbol(name: &str) -> bool {
-    matches!(
-        name,
-        "nil" | "t" | "most-positive-fixnum" | "most-negative-fixnum"
-    ) || name.starts_with(':')
-}
 pub(super) fn eval_defun(
     args: Value,
     _env: &Arc<RwLock<Environment>>,
@@ -1064,9 +1032,8 @@ pub(super) fn eval_defalias(
     let definition = args_obj.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
 
     let name = value_to_obj(eval(obj_to_value(name_expr), env, editor, macros, state)?);
-    let name = name
-        .as_symbol()
-        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let id = super::symbol_id_including_constants(&name)?;
+    let name = crate::obarray::symbol_name(id);
     let value = value_to_obj(eval(obj_to_value(definition), env, editor, macros, state)?);
 
     if let Some((car, rest)) = value.destructure_cons() {
@@ -1089,33 +1056,6 @@ pub(super) fn eval_defalias(
     }
 
     // defalias writes the function cell — value is a function definition.
-    let id = crate::obarray::intern(&name);
-    reject_cyclic_function_indirection(id, &value, state)?;
-    state.set_function_cell(id, value);
+    set_function_cell_checked(id, value, state)?;
     Ok(obj_to_value(LispObject::Symbol(id)))
-}
-
-pub(super) fn reject_cyclic_function_indirection(
-    name: crate::obarray::SymbolId,
-    def: &LispObject,
-    state: &InterpreterState,
-) -> ElispResult<()> {
-    let mut current = match def {
-        LispObject::Symbol(id) => *id,
-        _ => return Ok(()),
-    };
-    let mut seen = std::collections::HashSet::new();
-    while seen.insert(current) {
-        if current == name {
-            return Err(ElispError::Signal(Box::new(crate::error::SignalData {
-                symbol: LispObject::symbol("cyclic-function-indirection"),
-                data: LispObject::cons(LispObject::Symbol(name), LispObject::nil()),
-            })));
-        }
-        match state.get_function_cell(current) {
-            Some(LispObject::Symbol(next)) => current = next,
-            _ => return Ok(()),
-        }
-    }
-    Ok(())
 }

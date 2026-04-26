@@ -278,6 +278,10 @@ fn instance_class(items: &[LispObject]) -> Option<String> {
     items.get(1)?.as_symbol()
 }
 
+pub fn object_class_name(obj: &LispObject) -> Option<String> {
+    as_items(obj).and_then(|items| instance_class(&items))
+}
+
 /// Helper: clone out the items of an instance vector, or None. Does
 /// not validate the instance tag — callers that need type safety
 /// combine this with [`instance_class`].

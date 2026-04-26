@@ -68,6 +68,80 @@ fn test_with_memoization_short_circuits_gv_expansion() {
         })
         .unwrap();
 }
+
+#[test]
+fn test_remaining_pre_jit_semantics_batch() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+
+    let cases = [
+        (
+            "(let ((a (bool-vector t))
+                   (target (bool-vector t)))
+               (eq (bool-vector-union a a target) target))",
+            "t",
+        ),
+        (
+            "(progn
+               (defvar watched-var 0)
+               (defvar watched-log nil)
+               (add-variable-watcher
+                'watched-var
+                (lambda (sym new op where)
+                  (setq watched-log
+                        (cons (list sym new op (stringp where)) watched-log))))
+               (setq watched-var 1)
+               (setq-local watched-var 2)
+               (reverse watched-log))",
+            "((watched-var 1 set t) (watched-var 2 set t))",
+        ),
+        (
+            "(condition-case err
+                 (fset nil #'ignore)
+               (setting-constant 'setting-constant))",
+            "setting-constant",
+        ),
+        (
+            "(condition-case err
+                 (setq :immutable 1)
+               (setting-constant 'setting-constant))",
+            "setting-constant",
+        ),
+        (
+            "(progn
+               (defclass prejit-parent () ())
+               (defclass prejit-child (prejit-parent) ())
+               (cl-type-of (make-instance 'prejit-child)))",
+            "prejit-child",
+        ),
+        (
+            "(condition-case err
+                 (aref \"\u{e9}x\" 2)
+               (error 'range-error))",
+            "range-error",
+        ),
+        ("(aset \"abc\" 1 ?x)", "120"),
+        (
+            "(condition-case err
+                 (unibyte-string 65 'x)
+               (wrong-type-argument 'wrong-type-argument))",
+            "wrong-type-argument",
+        ),
+        (
+            "(condition-case err
+                 (local-variable-p 1)
+               (wrong-type-argument 'wrong-type-argument))",
+            "wrong-type-argument",
+        ),
+    ];
+
+    for (source, expected) in cases {
+        let value = interp
+            .eval_source(source)
+            .unwrap_or_else(|err| panic!("{source} failed: {err:?}"));
+        assert_eq!(value.princ_to_string(), expected, "{source}");
+    }
+}
 #[test]
 fn test_sparse_char_table_aref_aset_and_ranges() {
     let mut interp = Interpreter::new();

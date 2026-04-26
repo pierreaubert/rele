@@ -351,7 +351,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     }
 
     // data.c stubs
-    interp.define("cl-type-of", LispObject::primitive("type-of"));
+    interp.define("cl-type-of", LispObject::primitive("cl-type-of"));
 
     // fns.c higher-order (dispatched through stateful path)
     interp.define("maphash", LispObject::primitive("maphash"));

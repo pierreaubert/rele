@@ -78,8 +78,9 @@ pub fn prim_aref(args: &LispObject) -> ElispResult<LispObject> {
                 .unwrap_or_else(LispObject::nil))
         }
         LispObject::String(s) => {
-            let idx = if idx < 0 { s.len() as i64 + idx } else { idx };
-            if idx < 0 || (idx as usize) >= s.len() {
+            let len = s.chars().count();
+            let idx = if idx < 0 { len as i64 + idx } else { idx };
+            if idx < 0 || (idx as usize) >= len {
                 return Err(ElispError::EvalError(
                     "aref: index out of range".to_string(),
                 ));
@@ -128,6 +129,18 @@ pub fn prim_aset(args: &LispObject) -> ElispResult<LispObject> {
         }
         LispObject::HashTable(h) if is_char_table(&vec) => {
             h.lock().data.insert(HashKey::Integer(idx), val.clone());
+            Ok(val)
+        }
+        LispObject::String(s) => {
+            let len = s.chars().count();
+            let idx = if idx < 0 { len as i64 + idx } else { idx };
+            if idx < 0 || (idx as usize) >= len {
+                return Err(ElispError::EvalError(
+                    "aset: index out of range".to_string(),
+                ));
+            }
+            val.as_integer()
+                .ok_or_else(|| ElispError::WrongTypeArgument("character".to_string()))?;
             Ok(val)
         }
         _ => Err(ElispError::WrongTypeArgument("array".to_string())),
@@ -286,18 +299,12 @@ fn bool_vector_binop(
         if bool_vector_len(&target).unwrap_or(0) != len {
             return Err(ElispError::WrongTypeArgument("bool-vector".to_string()));
         }
-        let mut changed = false;
         for (idx, bit) in bits.into_iter().enumerate() {
             if bool_vector_bit(&target, idx) != bit {
                 bool_vector_set(&target, idx, bit);
-                changed = true;
             }
         }
-        if changed {
-            Ok(target)
-        } else {
-            Ok(LispObject::nil())
-        }
+        Ok(target)
     } else {
         Ok(bool_vector_from_bits(bits))
     }

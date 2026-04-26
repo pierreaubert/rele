@@ -551,22 +551,8 @@ impl<'a> Vm<'a> {
             72 => {
                 let idx = self.pop_obj()?;
                 let array = self.pop_obj()?;
-                let i = idx.as_integer().unwrap_or(0) as usize;
-                let val = match &array {
-                    LispObject::Vector(v) => v.lock().get(i).cloned().unwrap_or(LispObject::nil()),
-                    LispObject::HashTable(_) if crate::primitives::core::is_bool_vector(&array) => {
-                        let args = LispObject::cons(
-                            array.clone(),
-                            LispObject::cons(LispObject::integer(i as i64), LispObject::nil()),
-                        );
-                        crate::primitives::call_primitive("aref", &args)?
-                    }
-                    LispObject::String(s) => {
-                        let ch = s.chars().nth(i).map(|c| c as i64).unwrap_or(0);
-                        LispObject::integer(ch)
-                    }
-                    _ => LispObject::nil(),
-                };
+                let args = LispObject::cons(array, LispObject::cons(idx, LispObject::nil()));
+                let val = crate::primitives::call_primitive("aref", &args)?;
                 self.push_obj(val);
             }
 
@@ -575,22 +561,11 @@ impl<'a> Vm<'a> {
                 let val = self.pop_obj()?;
                 let idx = self.pop_obj()?;
                 let array = self.pop_obj()?;
-                let i = idx.as_integer().unwrap_or(0) as usize;
-                if let LispObject::Vector(v) = &array {
-                    let mut v = v.lock();
-                    if i < v.len() {
-                        v[i] = val.clone();
-                    }
-                } else if crate::primitives::core::is_bool_vector(&array) {
-                    let args = LispObject::cons(
-                        array.clone(),
-                        LispObject::cons(
-                            LispObject::integer(i as i64),
-                            LispObject::cons(val.clone(), LispObject::nil()),
-                        ),
-                    );
-                    let _ = crate::primitives::call_primitive("aset", &args)?;
-                }
+                let args = LispObject::cons(
+                    array,
+                    LispObject::cons(idx, LispObject::cons(val.clone(), LispObject::nil())),
+                );
+                let _ = crate::primitives::call_primitive("aset", &args)?;
                 self.push_obj(val);
             }
 
@@ -620,20 +595,32 @@ impl<'a> Vm<'a> {
             76 => {
                 let val = self.pop_obj()?;
                 let sym = self.pop_obj()?;
-                if let Some(name) = sym.as_symbol() {
-                    self.env.write().set(&name, val.clone());
+                if let Ok(sym_id) = crate::eval::symbol_id_including_constants(&sym) {
+                    let val = crate::eval::assign_symbol_value(
+                        sym_id,
+                        val,
+                        self.env,
+                        self.editor,
+                        self.macros,
+                        self.state,
+                        crate::eval::SetOperation::Set,
+                    )?;
+                    self.push_obj(val);
+                } else {
+                    self.push_obj(val);
                 }
-                self.push_obj(val);
             }
 
             // fset (77)
             77 => {
                 let def = self.pop_obj()?;
                 let sym = self.pop_obj()?;
-                if let Some(name) = sym.as_symbol() {
-                    self.env.write().define(&name, def.clone());
+                if let Ok(sym_id) = crate::eval::symbol_id_including_constants(&sym) {
+                    let def = crate::eval::set_function_cell_checked(sym_id, def, self.state)?;
+                    self.push_obj(def);
+                } else {
+                    self.push_obj(def);
                 }
-                self.push_obj(def);
             }
 
             // get (78)
@@ -804,42 +791,16 @@ impl<'a> Vm<'a> {
             93 => {
                 let b = self.pop_obj()?;
                 let a = self.pop_obj()?;
-                match (&a, &b) {
-                    (LispObject::Integer(x), LispObject::Integer(y)) => {
-                        self.push_obj(if x >= y { a } else { b });
-                    }
-                    _ => {
-                        let fa = get_number(&a);
-                        let fb = get_number(&b);
-                        match (fa, fb) {
-                            (Some(x), Some(y)) => {
-                                self.push_obj(if x >= y { a } else { b });
-                            }
-                            _ => return Err(ElispError::WrongTypeArgument("number".to_string())),
-                        }
-                    }
-                }
+                let args = LispObject::cons(a, LispObject::cons(b, LispObject::nil()));
+                self.push_obj(crate::primitives::call_primitive("max", &args)?);
             }
 
             // min (94)
             94 => {
                 let b = self.pop_obj()?;
                 let a = self.pop_obj()?;
-                match (&a, &b) {
-                    (LispObject::Integer(x), LispObject::Integer(y)) => {
-                        self.push_obj(if x <= y { a } else { b });
-                    }
-                    _ => {
-                        let fa = get_number(&a);
-                        let fb = get_number(&b);
-                        match (fa, fb) {
-                            (Some(x), Some(y)) => {
-                                self.push_obj(if x <= y { a } else { b });
-                            }
-                            _ => return Err(ElispError::WrongTypeArgument("number".to_string())),
-                        }
-                    }
-                }
+                let args = LispObject::cons(a, LispObject::cons(b, LispObject::nil()));
+                self.push_obj(crate::primitives::call_primitive("min", &args)?);
             }
 
             // mult (95)
