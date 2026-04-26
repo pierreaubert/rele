@@ -224,6 +224,36 @@ pub fn call_function(
 ) -> ElispResult<Value> {
     call_function_inner(func, args, env, editor, macros, state, None)
 }
+
+fn sync_closure_captures(captured_alist: &LispObject, closure_env: &Arc<RwLock<Environment>>) {
+    let mut cur = captured_alist.clone();
+    while let Some((pair, rest)) = cur.destructure_cons() {
+        if let Some((key, _old_value)) = pair.destructure_cons()
+            && let Some(id) = key.as_symbol_id()
+            && let Some(value) = closure_env.read().get_id_local(id)
+        {
+            pair.set_cdr(value);
+        }
+        cur = rest;
+    }
+}
+
+fn sync_closure_captures_to_caller(
+    captured_alist: &LispObject,
+    caller_env: &Arc<RwLock<Environment>>,
+) {
+    let mut cur = captured_alist.clone();
+    while let Some((pair, rest)) = cur.destructure_cons() {
+        if let Some((key, value)) = pair.destructure_cons()
+            && let Some(id) = key.as_symbol_id()
+            && caller_env.read().get_id_local(id).is_some()
+        {
+            caller_env.write().set_id(id, value);
+        }
+        cur = rest;
+    }
+}
+
 /// Inner dispatch with an optional caller symbol for JIT version tracking.
 ///
 /// When a function is called through a named symbol (`(foo ...)`), the
@@ -283,7 +313,7 @@ fn call_function_inner(
                     let body = rest.rest().ok_or(ElispError::WrongNumberOfArguments)?;
                     let global_snapshot = Arc::new(state.global_env.read().clone());
                     let mut captured_env = Environment::with_parent(global_snapshot);
-                    let mut cur = captured_alist;
+                    let mut cur = captured_alist.clone();
                     while let Some((pair, rest_alist)) = cur.destructure_cons() {
                         if let Some((k, v)) = pair.destructure_cons() {
                             if let Some(id) = k.as_symbol_id() {
@@ -293,7 +323,11 @@ fn call_function_inner(
                         cur = rest_alist;
                     }
                     let closure_env = Arc::new(RwLock::new(captured_env));
-                    return apply_lambda(&params, &body, args, &closure_env, editor, macros, state);
+                    let result =
+                        apply_lambda(&params, &body, args, &closure_env, editor, macros, state);
+                    sync_closure_captures(&captured_alist, &closure_env);
+                    sync_closure_captures_to_caller(&captured_alist, env);
+                    return result;
                 }
             }
             Err(ElispError::WrongTypeArgument("function".to_string()))

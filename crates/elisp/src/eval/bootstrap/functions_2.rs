@@ -7,8 +7,8 @@ use crate::eval::Interpreter;
 use crate::object::LispObject;
 use crate::read;
 
-use super::emacs_lisp_dir;
 use super::functions::STDLIB_DIR;
+use super::{emacs_lisp_dir, emacs_source_root};
 
 pub fn make_stdlib_interp() -> Interpreter {
     let mut interp = Interpreter::new();
@@ -572,18 +572,28 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("eolp", LispObject::primitive("eolp"));
     interp.define("bobp", LispObject::primitive("bobp"));
     interp.define("eobp", LispObject::primitive("eobp"));
-    interp.define("following-char", LispObject::primitive("ignore"));
-    interp.define("preceding-char", LispObject::primitive("ignore"));
-    interp.define("delete-region", LispObject::primitive("ignore"));
-    interp.define("buffer-substring", LispObject::primitive("ignore"));
+    interp.define("following-char", LispObject::primitive("following-char"));
+    interp.define("preceding-char", LispObject::primitive("preceding-char"));
+    interp.define("delete-region", LispObject::primitive("delete-region"));
+    interp.define(
+        "buffer-substring",
+        LispObject::primitive("buffer-substring"),
+    );
     interp.define(
         "buffer-substring-no-properties",
-        LispObject::primitive("ignore"),
+        LispObject::primitive("buffer-substring-no-properties"),
     );
     interp.define("indent-to", LispObject::primitive("ignore"));
     if let Some(emacs_lisp_dir) = emacs_lisp_dir() {
         let mut path = LispObject::nil();
+        if let Some(source_root) = emacs_source_root() {
+            for subdir in &["lisp/calendar", "lisp/emacs-lisp", "lisp"] {
+                path =
+                    LispObject::cons(LispObject::string(&format!("{source_root}/{subdir}")), path);
+            }
+        }
         for subdir in &[
+            "calendar",
             "emacs-lisp",
             "international",
             "language",

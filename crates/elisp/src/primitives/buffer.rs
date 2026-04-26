@@ -248,6 +248,13 @@ pub fn prim_buffer_string(_args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::string(&s))
 }
 
+pub fn prim_buffer_substring(args: &LispObject) -> ElispResult<LispObject> {
+    let start = int_arg(args, 0, 1) as usize;
+    let end = int_arg(args, 1, 1) as usize;
+    let s = buffer::with_current(|b| b.substring(start, end));
+    Ok(LispObject::string(&s))
+}
+
 pub fn prim_buffer_file_name(args: &LispObject) -> ElispResult<LispObject> {
     let id = args
         .first()
@@ -488,6 +495,31 @@ pub fn prim_char_before(args: &LispObject) -> ElispResult<LispObject> {
     let c = buffer::with_current(|b| b.char_at(pos - 1));
     Ok(c.map(|ch| LispObject::integer(ch as i64))
         .unwrap_or(LispObject::nil()))
+}
+
+pub fn prim_following_char(_args: &LispObject) -> ElispResult<LispObject> {
+    let c = buffer::with_current(|b| b.char_at(b.point));
+    Ok(c.map(|ch| LispObject::integer(ch as i64))
+        .unwrap_or_else(|| LispObject::integer(0)))
+}
+
+pub fn prim_preceding_char(_args: &LispObject) -> ElispResult<LispObject> {
+    let c = buffer::with_current(|b| {
+        if b.point <= b.point_min() {
+            None
+        } else {
+            b.char_at(b.point - 1)
+        }
+    });
+    Ok(c.map(|ch| LispObject::integer(ch as i64))
+        .unwrap_or_else(|| LispObject::integer(0)))
+}
+
+pub fn prim_delete_region(args: &LispObject) -> ElispResult<LispObject> {
+    let start = int_arg(args, 0, 1) as usize;
+    let end = int_arg(args, 1, 1) as usize;
+    buffer::with_current_mut(|b| b.delete_region(start, end));
+    Ok(LispObject::nil())
 }
 
 pub fn prim_delete_char(args: &LispObject) -> ElispResult<LispObject> {
@@ -1983,6 +2015,7 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "buffer-modified-tick" => prim_buffer_modified_tick(args),
         "buffer-size" => prim_buffer_size(args),
         "buffer-string" => prim_buffer_string(args),
+        "buffer-substring" | "buffer-substring-no-properties" => prim_buffer_substring(args),
         "buffer-file-name" => prim_buffer_file_name(args),
         "buffer-enable-undo" => prim_buffer_enable_undo(args),
         "buffer-disable-undo" => prim_buffer_disable_undo(args),
@@ -2009,6 +2042,9 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "buffer-narrowed-p" => prim_buffer_narrowed_p(args),
         "char-after" => prim_char_after(args),
         "char-before" => prim_char_before(args),
+        "following-char" => prim_following_char(args),
+        "preceding-char" => prim_preceding_char(args),
+        "delete-region" => prim_delete_region(args),
         "delete-char" => prim_delete_char(args),
         "insert-char" => prim_insert_char(args),
         "skip-chars-forward" => prim_skip_chars_forward(args),
@@ -2091,6 +2127,8 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "buffer-modified-tick",
     "buffer-size",
     "buffer-string",
+    "buffer-substring",
+    "buffer-substring-no-properties",
     "buffer-file-name",
     "buffer-enable-undo",
     "buffer-disable-undo",
@@ -2119,6 +2157,9 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "buffer-narrowed-p",
     "char-after",
     "char-before",
+    "following-char",
+    "preceding-char",
+    "delete-region",
     "delete-char",
     "insert-char",
     "skip-chars-forward",

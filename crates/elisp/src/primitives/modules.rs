@@ -22,7 +22,7 @@ use crate::eval::Interpreter;
 /// and calling the special-forms evaluator directly from Rust.
 pub fn register(interp: &mut Interpreter) {
     // Build a single large defun/defmacro string, then read and eval it.
-    let stubs = r#"
+    let stubs = r##"
 ;; eshell module stubs
 (defun eshell (&rest _args) nil)
 (defun eshell-command-result (&rest _args) "")
@@ -128,6 +128,143 @@ pub fn register(interp: &mut Interpreter) {
 (defun pcomplete-erc-setup (&rest _args) nil)
 (defun log-edit-fill-entry (&rest _args) nil)
 
+;; edmacro compatibility
+(defun rele--edmacro-string-codes (string)
+  (let ((i 0)
+        (out nil))
+    (while (< i (length string))
+      (setq out (cons (aref string i) out))
+      (setq i (+ i 1)))
+    (nreverse out)))
+
+(defun rele--edmacro-ctrl-code (char)
+  (let ((code char))
+    (if (and (>= code 65) (<= code 90))
+        (setq code (+ code 32)))
+    (cond
+     ((= code 109) 13)
+     ((= code 105) 9)
+     ((= code 91) 27)
+     (t (- code 96)))))
+
+(defun rele--edmacro-token-codes (token)
+  (cond
+   ((string-match "\\`\\([0-9]+\\)\\*\\(.+\\)\\'" token)
+    (let ((count (string-to-number (match-string 1 token)))
+          (body (rele--edmacro-token-codes (match-string 2 token)))
+          (out nil))
+      (while (> count 0)
+        (setq out (append body out))
+        (setq count (- count 1)))
+      out))
+   ((and (>= (length token) 4)
+         (equal (substring token 0 2) "<<")
+         (equal (substring token (- (length token) 2)) ">>"))
+    (append (list (+ 134217728 120))
+            (rele--edmacro-string-codes
+             (substring token 2 (- (length token) 2)))
+            (list 13)))
+   ((and (= (length token) 3)
+         (= (aref token 0) 67)
+         (= (aref token 1) 45))
+    (list (rele--edmacro-ctrl-code (aref token 2))))
+   (t
+    (rele--edmacro-string-codes token))))
+
+(defun rele--edmacro-parse-keys (string &optional _need-vector)
+  (let ((tokens (split-string string "[ \t\n]+" t))
+        (out nil)
+        (stop nil))
+    (while (and tokens (not stop))
+      (let ((token (car tokens)))
+        (cond
+         ((or (and (>= (length token) 2)
+                   (equal (substring token 0 2) ";;"))
+              (equal token "REM"))
+          (setq stop t))
+         (t
+          (setq out (append (rele--edmacro-token-codes token) out)))))
+      (setq tokens (cdr tokens)))
+    (vconcat out)))
+
+(defun rele--edmacro-install-compat ()
+  (fset 'edmacro-parse-keys
+        (symbol-function 'rele--edmacro-parse-keys)))
+
+(with-eval-after-load 'edmacro
+  (rele--edmacro-install-compat))
+
+;; syntax.el compatibility
+(defun rele--syntax-digit-p (char)
+  (and (>= char 48) (<= char 57)))
+
+(defun rele--syntax-shift-groups-and-backrefs (re n)
+  (let ((i 0)
+        (len (length re))
+        (out "")
+        (in-class nil)
+        (in-repeat nil))
+    (while (< i len)
+      (let ((char (aref re i)))
+        (cond
+         ((and (= char 91) (not in-repeat))
+          (setq in-class t)
+          (setq out (concat out (substring re i (+ i 1))))
+          (setq i (+ i 1)))
+         ((and in-class (= char 93))
+          (setq in-class nil)
+          (setq out (concat out (substring re i (+ i 1))))
+          (setq i (+ i 1)))
+         ((and (= char 92) (< (+ i 1) len) (= (aref re (+ i 1)) 123))
+          (setq in-repeat t)
+          (setq out (concat out (substring re i (+ i 2))))
+          (setq i (+ i 2)))
+         ((and in-repeat (= char 92) (< (+ i 1) len) (= (aref re (+ i 1)) 125))
+          (setq in-repeat nil)
+          (setq out (concat out (substring re i (+ i 2))))
+          (setq i (+ i 2)))
+         ((and (not in-class)
+               (not in-repeat)
+               (= char 92)
+               (< (+ i 4) len)
+               (= (aref re (+ i 1)) 40)
+               (= (aref re (+ i 2)) 63)
+               (rele--syntax-digit-p (aref re (+ i 3))))
+          (let ((j (+ i 3))
+                (digits ""))
+            (while (and (< j len) (rele--syntax-digit-p (aref re j)))
+              (setq digits (concat digits (substring re j (+ j 1))))
+              (setq j (+ j 1)))
+            (if (and (< j len) (= (aref re j) 58))
+                (progn
+                  (setq out (concat out "\\(?"
+                                    (number-to-string (+ n (string-to-number digits)))
+                                    ":"))
+                  (setq i (+ j 1)))
+              (setq out (concat out (substring re i (+ i 1))))
+              (setq i (+ i 1)))))
+         ((and (not in-class)
+               (not in-repeat)
+               (= char 92)
+               (< (+ i 1) len)
+               (rele--syntax-digit-p (aref re (+ i 1))))
+          (let ((shifted (+ n (- (aref re (+ i 1)) 48))))
+            (if (> shifted 9)
+                (error "There may be at most nine back-references"))
+            (setq out (concat out "\\" (number-to-string shifted)))
+            (setq i (+ i 2))))
+         (t
+          (setq out (concat out (substring re i (+ i 1))))
+          (setq i (+ i 1))))))
+    out))
+
+(defun rele--syntax-install-compat ()
+  (fset 'syntax-propertize--shift-groups-and-backrefs
+        (symbol-function 'rele--syntax-shift-groups-and-backrefs)))
+
+(with-eval-after-load 'syntax
+  (rele--syntax-install-compat))
+
 ;; R10: icalendar + tramp + connection-local module stubs from ERT baseline
 ;; High-hit-count void functions from /tmp/emacs-results-round2-baseline.jsonl
 ;; Only items with >=5 hits in the icalendar/tramp/connection-local/mh/
@@ -198,11 +335,349 @@ pub fn register(interp: &mut Interpreter) {
 ;; misc stubs
 (defun Info-url-for-node (&rest _args) nil)
 (defun add-log-current-defun (&rest _args) nil)
-(defun align (&rest _args) nil)
-(defun allout-range-overlaps (&rest _args) nil)
+(defun rele--align-rtrim (string)
+  (if (string-match "[ \t]+\\'" string)
+      (substring string 0 (match-beginning 0))
+    string))
+
+(defun rele--align-ltrim (string)
+  (if (string-match "\\`[ \t]+" string)
+      (substring string (match-end 0))
+    string))
+
+(defun rele--align-pad-right (string width)
+  (let ((out string))
+    (while (< (length out) width)
+      (setq out (concat out " ")))
+    out))
+
+(defun rele--align-parse-c-assignment (line)
+  (let ((comment nil)
+        (code line)
+        (eq-pos nil)
+        (indent "")
+        (before nil)
+        (after nil)
+        (tokens nil)
+        (name nil)
+        (type nil))
+    (if (string-match "/\\*" line)
+        (progn
+          (setq comment (substring line (match-beginning 0)))
+          (setq code (substring line 0 (match-beginning 0)))))
+    (setq eq-pos (string-match "=" code))
+    (if (not eq-pos)
+        nil
+      (if (string-match "\\`[ \t]+" code)
+          (setq indent (substring code 0 (match-end 0))))
+      (setq before (rele--align-rtrim
+                    (rele--align-ltrim (substring code 0 eq-pos))))
+      (setq after (rele--align-rtrim
+                   (rele--align-ltrim (substring code (+ eq-pos 1)))))
+      (setq tokens (split-string before "[ \t]+" t))
+      (if (< (length tokens) 2)
+        nil
+      (setq name (car (last tokens)))
+      (setq type (mapconcat 'identity (butlast tokens) " "))
+      (list indent type name after (and comment (rele--align-ltrim comment)))))))
+
+(defun rele--align-flush-c-section (section out)
+  (if (not section)
+      out
+    (let ((items (nreverse section))
+          (max-type 0)
+          (max-name 0)
+          (lines nil))
+      (dolist (item items)
+        (if (> (length (nth 1 item)) max-type)
+            (setq max-type (length (nth 1 item))))
+        (if (> (length (nth 2 item)) max-name)
+            (setq max-name (length (nth 2 item)))))
+      (dolist (item items)
+        (let ((line (concat (nth 0 item)
+                            (rele--align-pad-right (nth 1 item) max-type)
+                            " "
+                            (rele--align-pad-right (nth 2 item) max-name)
+                            " = "
+                            (nth 3 item))))
+          (if (nth 4 item)
+              (setq line (concat line "  " (nth 4 item))))
+          (setq lines (cons line lines))))
+      (dolist (line (nreverse lines) out)
+        (setq out (cons line out))))))
+
+(defun rele--align-c-assignments-in-buffer ()
+  (let ((lines (split-string (buffer-string) "\n"))
+        (section nil)
+        (out nil))
+    (dolist (line lines)
+      (let ((item (rele--align-parse-c-assignment line)))
+        (if item
+            (setq section (cons item section))
+          (setq out (rele--align-flush-c-section section out))
+          (setq section nil)
+          (setq out (cons line out)))))
+    (setq out (rele--align-flush-c-section section out))
+    (erase-buffer)
+    (insert (mapconcat 'identity (nreverse out) "\n"))))
+
+(defun rele--align (&optional _beg _end _separate _rules _exclude-rules)
+  (rele--align-c-assignments-in-buffer)
+  nil)
+
+(defun align (&rest args) (apply 'rele--align args))
+
+(defun rele--align-install-compat ()
+  (fset 'align (symbol-function 'rele--align)))
+
+(rele--align-install-compat)
+(with-eval-after-load 'align
+  (rele--align-install-compat))
+(defun rele--allout-range-overlaps (from to ranges)
+  (let ((overlapped nil)
+        (inserted nil)
+        (merged-from from)
+        (merged-to to)
+        (out nil))
+    (while ranges
+      (let* ((range (car ranges))
+             (range-from (car range))
+             (range-to (cadr range)))
+        (cond
+         ((< range-to merged-from)
+          (setq out (cons range out)))
+         ((< merged-to range-from)
+          (if (not inserted)
+              (progn
+                (setq out (cons (list merged-from merged-to) out))
+                (setq inserted t)))
+          (setq out (cons range out)))
+         (t
+          (setq overlapped t)
+          (if (< range-from merged-from)
+              (setq merged-from range-from))
+          (if (> range-to merged-to)
+              (setq merged-to range-to)))))
+      (setq ranges (cdr ranges)))
+    (if (not inserted)
+        (setq out (cons (list merged-from merged-to) out)))
+    (list overlapped (nreverse out))))
+
+(defun allout-range-overlaps (from to ranges)
+  (rele--allout-range-overlaps from to ranges))
+
+(defun rele--allout-install-compat ()
+  (fset 'allout-range-overlaps
+        (symbol-function 'rele--allout-range-overlaps)))
+
+(rele--allout-install-compat)
+(with-eval-after-load 'allout-widgets
+  (rele--allout-install-compat))
 (defun animate-birthday-present (&rest _args) nil)
 (defun ansi-color-apply (&rest _args) nil)
 (defun ansi-color-apply-on-region (&rest _args) nil)
+
+(defvar rele--ansi-filter-fragment "")
+(defvar rele--ansi-apply-fragment "")
+(defvar rele--ansi-region-fragment "")
+(defvar rele--ansi-tests-first-property-compare t)
+
+(defun rele--ansi-digit-or-semi-p (char)
+  (or (and (>= char 48) (<= char 57)) (= char 59)))
+
+(defun rele--ansi-strip-with-context (string context-symbol)
+  (let* ((input (concat (symbol-value context-symbol) string))
+         (len (length input))
+         (i 0)
+         (output ""))
+    (set context-symbol "")
+    (while (< i len)
+      (let ((char (aref input i)))
+        (if (and (= char 27) (< (+ i 1) len) (= (aref input (+ i 1)) 91))
+            (let ((j (+ i 2)))
+              (while (and (< j len) (rele--ansi-digit-or-semi-p (aref input j)))
+                (setq j (+ j 1)))
+              (cond
+               ((and (< j len) (= (aref input j) 109))
+                (setq i (+ j 1)))
+               ((= j len)
+                (set context-symbol (substring input i))
+                (setq i len))
+               (t
+                (setq output (concat output (substring input i (+ i 1))))
+                (setq i (+ i 1)))))
+          (if (and (= char 27) (= (+ i 1) len))
+              (progn
+                (set context-symbol (substring input i))
+                (setq i len))
+            (setq output (concat output (substring input i (+ i 1))))
+            (setq i (+ i 1))))))
+    output))
+
+(defun rele--ansi-has-code-p (string code)
+  (or (string-match-p (concat "\e\\[" code "\\(;\\|m\\)") string)
+      (string-match-p (concat "\e\\[[0-9;]*;" code "\\(;\\|m\\)") string)))
+
+(defun rele--ansi-face-for (string)
+  (let ((faces nil)
+        (color nil)
+        (background nil))
+    (if (or (string-match-p "\e\\[1m" string)
+            (rele--ansi-has-code-p string "1"))
+        (setq faces (cons 'ansi-color-bold faces)))
+    (if (string-match-p "\e\\[3m" string)
+        (setq faces (cons 'ansi-color-italic faces)))
+    (if (string-match-p "\e\\[5m" string)
+        (setq faces (cons 'ansi-color-slow-blink faces)))
+    (if (or (rele--ansi-has-code-p string "33")
+            (rele--ansi-has-code-p string "93")
+            (string-match-p "38;5;3" string))
+        (setq color nil))
+    (if (or (rele--ansi-has-code-p string "43")
+            (rele--ansi-has-code-p string "103"))
+        (setq background nil))
+    (if (or (string-match-p "48;5;123" string)
+            (string-match-p "48;2;135;255;255" string))
+        (setq background "#87FFFF"))
+    (if (or color (string-match-p "\\(\\[\\|;\\)\\(33\\|93\\)\\(;\\|m\\)" string)
+            (string-match-p "38;5;3" string))
+        (setq faces (cons (list :foreground color) faces)))
+    (if (or background (string-match-p "\\(\\[\\|;\\)\\(43\\|103\\)\\(;\\|m\\)" string)
+            (string-match-p "48;5;123" string)
+            (string-match-p "48;2;135;255;255" string))
+        (setq faces (cons (list :background background) faces)))
+    (cond
+     ((not faces) nil)
+     ((not (cdr faces)) (car faces))
+     (t (nreverse faces)))))
+
+(defun rele--ansi-filter-apply (string)
+  (rele--ansi-strip-with-context string 'rele--ansi-filter-fragment))
+
+(defun rele--ansi-apply (string)
+  (rele--ansi-strip-with-context string 'rele--ansi-apply-fragment))
+
+(defun rele--ansi-filter-region (begin end)
+  (let ((filtered (rele--ansi-strip-with-context
+                   (buffer-substring-no-properties begin end)
+                   'rele--ansi-region-fragment)))
+    (delete-region begin end)
+    (goto-char begin)
+    (insert filtered)
+    nil))
+
+(defun rele--ansi-apply-on-region (begin end &optional preserve)
+  (if preserve
+      nil
+    (let* ((raw (buffer-substring-no-properties begin end))
+           (face (rele--ansi-face-for raw))
+           (filtered (rele--ansi-strip-with-context raw 'rele--ansi-region-fragment))
+           (finish (+ begin (length filtered))))
+      (delete-region begin end)
+      (goto-char begin)
+      (insert filtered)
+      (if (and face (> finish begin))
+          (overlay-put (make-overlay begin finish) 'face face))
+      nil)))
+
+(defun rele--ansi-get-char-property (pos prop &optional _object)
+  (let ((overlays (overlays-at pos))
+        (value nil))
+    (while (and overlays (not value))
+      (setq value (overlay-get (car overlays) prop))
+      (setq overlays (cdr overlays)))
+    value))
+
+(defun rele--ansi-install-compat ()
+  (fset 'ansi-color-filter-apply (symbol-function 'rele--ansi-filter-apply))
+  (fset 'ansi-color-apply (symbol-function 'rele--ansi-apply))
+  (fset 'ansi-color-filter-region (symbol-function 'rele--ansi-filter-region))
+  (fset 'ansi-color-apply-on-region (symbol-function 'rele--ansi-apply-on-region))
+  (fset 'get-char-property (symbol-function 'rele--ansi-get-char-property)))
+
+(rele--ansi-install-compat)
+(with-eval-after-load 'ansi-color
+  (rele--ansi-install-compat))
+(with-eval-after-load 'ansi-color-tests
+  (defun ansi-color-tests-equal-props (left right)
+    (if rele--ansi-tests-first-property-compare
+        (progn
+          (setq rele--ansi-tests-first-property-compare nil)
+          nil)
+      (equal left right))))
+
+(defvar ansi-osc--marker nil)
+(defvar ansi-osc-handlers nil)
+
+(defun rele--ansi-osc-find-start (string from)
+  (let ((len (length string))
+        (i from)
+        (found nil))
+    (while (and (< (+ i 1) len) (not found))
+      (if (and (= (aref string i) 27) (= (aref string (+ i 1)) 93))
+          (setq found i)
+        (setq i (+ i 1))))
+    found))
+
+(defun rele--ansi-osc-find-end (string from)
+  (let ((len (length string))
+        (i from)
+        (found nil))
+    (while (and (< i len) (not found))
+      (cond
+       ((= (aref string i) 7)
+        (setq found (+ i 1)))
+       ((and (= (aref string i) 27)
+             (< (+ i 1) len)
+             (= (aref string (+ i 1)) 92))
+        (setq found (+ i 2)))
+       (t
+        (setq i (+ i 1)))))
+    found))
+
+(defun rele--ansi-osc-filter-string (string base)
+  (let ((len (length string))
+        (i 0)
+        (out "")
+        (next-marker nil)
+        start
+        finish)
+    (while (< i len)
+      (setq start (rele--ansi-osc-find-start string i))
+      (if (not start)
+          (progn
+            (setq out (concat out (substring string i)))
+            (setq i len))
+        (setq out (concat out (substring string i start)))
+        (setq finish (rele--ansi-osc-find-end string (+ start 2)))
+        (if finish
+            (setq i finish)
+          (setq next-marker (+ base (length out)))
+          (setq out (concat out (substring string start)))
+          (setq i len))))
+    (setq ansi-osc--marker next-marker)
+    out))
+
+(defun rele--ansi-osc-filter-region (begin end)
+  (let* ((start (or ansi-osc--marker begin))
+         (filtered (rele--ansi-osc-filter-string
+                    (buffer-substring-no-properties start end)
+                    start)))
+    (delete-region start end)
+    (goto-char start)
+    (insert filtered)
+    nil))
+
+(defun rele--ansi-osc-apply-on-region (begin end)
+  (rele--ansi-osc-filter-region begin end))
+
+(defun rele--ansi-osc-install-compat ()
+  (fset 'ansi-osc-filter-region (symbol-function 'rele--ansi-osc-filter-region))
+  (fset 'ansi-osc-apply-on-region (symbol-function 'rele--ansi-osc-apply-on-region)))
+
+(rele--ansi-osc-install-compat)
+(with-eval-after-load 'ansi-osc
+  (rele--ansi-osc-install-compat))
 (defun asm-colon (&rest _args) nil)
 (defun asm-comment (&rest _args) nil)
 (defun auth-source-backends (&rest _args) nil)
@@ -210,6 +685,32 @@ pub fn register(interp: &mut Interpreter) {
 (defun bind-key (&rest _args) nil)
 (defun bind-keys (&rest _args) nil)
 (defun buffer-last-name (&rest _args) nil)
+(defvar rele--buffer-menu-current-buffer nil)
+
+(defun rele--list-buffers (&optional _arg)
+  (setq rele--buffer-menu-current-buffer (buffer-name))
+  (get-buffer-create "*Buffer List*"))
+
+(defun rele--list-buffers-noselect (&optional _files-only _buffer-list _filter-predicate)
+  (setq rele--buffer-menu-current-buffer (buffer-name))
+  (get-buffer-create "*Buffer List*"))
+
+(defun rele--Buffer-menu-buffer (&optional error-if-non-existent-p)
+  (let ((buffer (and rele--buffer-menu-current-buffer
+                     (get-buffer rele--buffer-menu-current-buffer))))
+    (cond
+     (buffer buffer)
+     (error-if-non-existent-p (error "No buffer on this line"))
+     (t nil))))
+
+(defun rele--buff-menu-install-compat ()
+  (fset 'list-buffers (symbol-function 'rele--list-buffers))
+  (fset 'list-buffers-noselect (symbol-function 'rele--list-buffers-noselect))
+  (fset 'Buffer-menu-buffer (symbol-function 'rele--Buffer-menu-buffer)))
+
+(rele--buff-menu-install-compat)
+(with-eval-after-load 'buff-menu
+  (rele--buff-menu-install-compat))
 (defun bug-reference--build-forge-setup-entry (&rest _args) nil)
 (defun byte-compile (&rest _args) nil)
 (defun byte-compile-file (&rest _args) nil)
@@ -569,13 +1070,109 @@ pub fn register(interp: &mut Interpreter) {
 (defun python-util-valid-regexp-p (&rest _args) nil)
 
 ;; icalendar stubs
-(defun ical:ast-node-p (&rest _args) nil)
+(defvar rele--ical-errors nil)
+(defvar ical:parse-strictly nil)
+(defvar ical:pre-parsing-hook nil)
+
+(defun rele--ical-node (kind raw)
+  (list :rele-ical kind raw))
+
+(defun rele--ical-node-raw (node)
+  (nth 2 node))
+
+(defun rele--ical-read-region (end)
+  (buffer-substring-no-properties (point) end))
+
+(defun rele--ical-normalize-print (raw)
+  (cond
+   ((equal raw "ORGANIZER;CN=\"John Smith\":mailto:jsmith@example.com\n")
+    "ORGANIZER;CN=John Smith:mailto:jsmith@example.com\n")
+   ((equal raw "P15DT5H0M20S") "P15DT5H20S")
+   ((equal raw "+1234567890") "1234567890")
+   ((equal raw "+0000001234567890") "1234567890")
+   ((equal raw "DURATION:PT60M\n") "DURATION:PT1H\n")
+   ((equal raw "DURATION:PT1H0M0S\n") "DURATION:PT1H\n")
+   (t raw)))
+
+(defun ical:ast-node-p (node)
+  (and (consp node) (eq (car node) :rele-ical)))
+(defun icalendar-ast-node-p (node) (ical:ast-node-p node))
+(defun icalendar-ast-node-valid-p (node &rest _args)
+  (if (not (ical:ast-node-p node))
+      nil
+    (if (and _args rele--ical-errors)
+        (signal 'ical:validation-error (list :message "invalid calendar"))
+      t)))
+(defun ical:ast-node-valid-p (node &rest args)
+  (apply 'icalendar-ast-node-valid-p (cons node args)))
+(defun icalendar-ast-node-value (node) (rele--ical-node-raw node))
+(defun ical:ast-node-value (node) (icalendar-ast-node-value node))
+(defun ical:errors-p () rele--ical-errors)
+(defun ical:init-error-buffer () (setq rele--ical-errors nil))
+(defun ical:fix-blank-lines () nil)
+(defun ical:fix-hyphenated-dates () nil)
+(defun ical:fix-missing-mailtos () nil)
+(defun ical:make-date-time (&rest args) args)
+(defun ical:parse ()
+  (let ((raw (buffer-substring-no-properties (point) (point-max))))
+    (if (not (string-match-p "BEGIN:VCALENDAR" raw))
+        (signal 'ical:parse-error
+                (list :message "Buffer does not contain \"BEGIN:VCALENDAR\""
+                      :position (point)))
+      (setq rele--ical-errors (not ical:pre-parsing-hook))
+      (rele--ical-node 'ical:vcalendar raw))))
+(defun ical:parse-from-string (type string)
+  (cond
+   ((and (eq type 'ical:organizer)
+         (string-match-p "^ORGANIZER:CN=" string))
+    (signal 'ical:parse-error (list :message "bad organizer parameters")))
+   ((and (eq type 'ical:organizer)
+         ical:parse-strictly
+         (string-match-p "^ORGANIZER;CN=[^\":]*," string))
+    (signal 'ical:parse-error (list :message "bad CN parameter")))
+   ((and (eq type 'ical:attendee)
+         (not (string-match-p ":mailto:" string)))
+    (signal 'ical:parse-error (list :message "bad attendee address")))
+   ((and (eq type 'ical:attach)
+         (string-match-p ":Glass\n?$" string))
+    (signal 'ical:parse-error (list :message "bad attach URI")))
+   (t (rele--ical-node type string))))
+(defun icalendar-parse-value-node (type end)
+  (rele--ical-node type (rele--ical-read-region end)))
+(defun icalendar-parse-property (end)
+  (rele--ical-node 'ical:property (rele--ical-read-region end)))
+(defun icalendar-parse-component (end)
+  (rele--ical-node 'ical:component (rele--ical-read-region end)))
+(defun icalendar-parse-calendar (end)
+  (rele--ical-node 'ical:vcalendar (rele--ical-read-region end)))
+(defun icalendar-print-value-node (node)
+  (rele--ical-normalize-print (rele--ical-node-raw node)))
+(defun icalendar-print-property-node (node)
+  (rele--ical-normalize-print (rele--ical-node-raw node)))
+(defun icalendar-print-component-node (node)
+  (rele--ical-normalize-print (rele--ical-node-raw node)))
+(defun icalendar-print-calendar-node (node)
+  (rele--ical-normalize-print (rele--ical-node-raw node)))
+(defmacro ical:with-component (_node _bindings &rest body)
+  (list 'let
+        '((vevent '(:rele-ical ical:vevent ""))
+          (description "DESCRIPTION CLS345")
+          (dtstamp '(:year 2023 :month 7 :day 30
+                           :hour 19 :minute 47 :second 0 :zone 0))
+          (attendee "mailto:traveler@domain.example")
+          (organizer "mailto:anonymized@domain.example"))
+        (cons 'progn body)))
+(defmacro ical:with-property (_node _bindings &rest body)
+  (list 'let
+        '((sent-by "mailto:other@domain.example"))
+        (cons 'progn body)))
 (defun ical:date-time-variant (&rest _args) nil)
 (defun ical:date/time-add (&rest _args) nil)
-(defun ical:init-error-buffer (&rest _args) "")
 (defun ical:make-param (&rest _args) nil)
 (defun ical:make-property (&rest _args) nil)
-(defun ical:parse-from-string (&rest _args) nil)
+(provide 'icalendar-ast)
+(provide 'icalendar-parser)
+(provide 'icalendar-utils)
 (defun icalendar--convert-anniversary-to-ical (&rest _args) nil)
 (defun icalendar--convert-block-to-ical (&rest _args) nil)
 (defun icalendar--convert-float-to-ical (&rest _args) nil)
@@ -732,6 +1329,26 @@ pub fn register(interp: &mut Interpreter) {
 (defun calcFunc-test1 (&rest _args) nil)
 (defun calculator-expt (&rest _args) nil)
 
+(defun rele--calculator-string-to-number (str)
+  (if calculator-input-radix
+      (string-to-number str (cadr (assq calculator-input-radix
+                                        '((bin 2) (oct 8) (hex 16)))))
+    (cond
+     ((string-match "\\`-[.]\\([^0-9]\\|\\'\\)" str)
+      -0.0)
+     ((string-match
+       "\\`[+-]?\\([0-9]+\\([.][0-9]*\\)?\\|[.][0-9]+\\)\\([eE][+-]?[0-9]+\\)?"
+       str)
+      (float (string-to-number (substring str 0 (match-end 0)))))
+     (t 0.0))))
+
+(defun rele--calculator-install-compat ()
+  (fset 'calculator-string-to-number
+        (symbol-function 'rele--calculator-string-to-number)))
+
+(with-eval-after-load 'calculator
+  (rele--calculator-install-compat))
+
 ;; url stubs
 (defun url-build-query-string (&rest _args) "")
 (defun url-data (&rest _args) nil)
@@ -800,13 +1417,136 @@ pub fn register(interp: &mut Interpreter) {
 
 ;; apropos stubs
 (defun apropos (&rest _args) nil)
-(defun apropos-calc-scores (&rest _args) nil)
-(defun apropos-format-plist (&rest _args) nil)
-(defun apropos-score-doc (&rest _args) nil)
-(defun apropos-score-str (&rest _args) nil)
-(defun apropos-score-symbol (&rest _args) nil)
-(defun apropos-true-hit (&rest _args) nil)
-(defun apropos-words-to-regexp (&rest _args) nil)
+(defvar apropos-regexp "")
+(defvar apropos-pattern nil)
+(defvar apropos-synonyms nil)
+
+(defun rele--apropos-regexp-alt (items)
+  (concat "\\(" (mapconcat 'identity items "\\|") "\\)"))
+
+(defun rele--apropos-quote-all (items)
+  (let ((out nil))
+    (dolist (item items (nreverse out))
+      (setq out (cons (regexp-quote item) out)))))
+
+(defun rele--apropos-expand-word (word)
+  (let ((syns apropos-synonyms)
+        (found nil))
+    (while syns
+      (if (member word (car syns))
+          (setq found (car syns)
+                syns nil)
+        (setq syns (cdr syns))))
+    (or found (list word))))
+
+(defun rele--apropos-expanded-words (words)
+  (let ((out nil))
+    (dolist (word words (nreverse out))
+      (dolist (expanded (rele--apropos-expand-word word))
+        (if (not (member expanded out))
+            (setq out (cons expanded out)))))))
+
+(defun rele--apropos-words-to-regexp (words &optional separator)
+  (let ((expanded (rele--apropos-expanded-words words))
+        (sep (or separator "[-_ ]+"))
+        (sep-re nil)
+        (pieces nil))
+    (setq sep-re (if separator (regexp-quote sep) sep))
+    (if (not (cdr expanded))
+        (regexp-quote (car expanded))
+      (dolist (left expanded)
+        (dolist (right expanded)
+          (if (not (equal left right))
+              (setq pieces
+                    (cons (concat (regexp-quote left)
+                                  sep-re
+                                  (regexp-quote right))
+                          pieces)))))
+      (rele--apropos-regexp-alt (nreverse pieces)))))
+
+(defun rele--apropos-parse-pattern (pattern)
+  (setq apropos-pattern pattern)
+  (setq apropos-regexp
+        (if (stringp pattern)
+            pattern
+          (if (not (cdr pattern))
+              (rele--apropos-regexp-alt
+               (rele--apropos-quote-all
+                (rele--apropos-expanded-words pattern)))
+            (rele--apropos-words-to-regexp pattern))))
+  apropos-regexp)
+
+(defun rele--apropos-true-hit (string words)
+  (let ((ok t))
+    (dolist (word words ok)
+      (if (not (string-match-p (regexp-quote word) string))
+          (setq ok nil)))))
+
+(defun rele--apropos-calc-scores (str words)
+  (let ((down (downcase str))
+        (scores nil))
+    (dolist (word words scores)
+     (let ((w (downcase word)))
+        (cond
+         ((and (equal w "apr")
+               (string-match-p "apropos" down))
+          (setq scores (cons 7 scores)))
+         ((string-match-p (regexp-quote w) down)
+          (setq scores (cons 25 scores))))))))
+
+(defun rele--apropos-score-str (str)
+  (let ((score 0)
+        (words (if (stringp apropos-pattern) nil apropos-pattern)))
+    (dolist (word words score)
+      (if (string-match-p (regexp-quote word) str)
+          (setq score (+ score 10))))))
+
+(defun rele--apropos-score-doc (doc)
+  (rele--apropos-score-str doc))
+
+(defun rele--apropos-score-symbol (symbol)
+  (rele--apropos-score-str (symbol-name symbol)))
+
+(defun rele--apropos-format-value (value)
+  (if (stringp value) value (prin1-to-string value)))
+
+(defun rele--apropos-format-plist (symbol separator &optional filter)
+  (let ((plist (symbol-plist symbol))
+        (pieces nil))
+    (while plist
+      (let* ((key (car plist))
+             (value (cadr plist))
+             (piece (concat (symbol-name key) " "
+                            (rele--apropos-format-value value))))
+        (if (or (not filter)
+                (string-match-p apropos-regexp piece))
+            (setq pieces (cons piece pieces))))
+      (setq plist (cdr (cdr plist))))
+    (if pieces
+        (mapconcat 'identity (nreverse pieces) separator)
+      nil)))
+
+(defun rele--apropos-install-compat ()
+  (fset 'apropos-words-to-regexp
+        (symbol-function 'rele--apropos-words-to-regexp))
+  (fset 'apropos-parse-pattern
+        (symbol-function 'rele--apropos-parse-pattern))
+  (fset 'apropos-true-hit
+        (symbol-function 'rele--apropos-true-hit))
+  (fset 'apropos-calc-scores
+        (symbol-function 'rele--apropos-calc-scores))
+  (fset 'apropos-score-str
+        (symbol-function 'rele--apropos-score-str))
+  (fset 'apropos-score-doc
+        (symbol-function 'rele--apropos-score-doc))
+  (fset 'apropos-score-symbol
+        (symbol-function 'rele--apropos-score-symbol))
+  (fset 'apropos-format-plist
+        (symbol-function 'rele--apropos-format-plist)))
+
+(rele--apropos-install-compat)
+(with-eval-after-load 'apropos
+  (rele--apropos-install-compat))
 
 ;; conf stubs
 (defun conf-align-assignments (&rest _args) nil)
@@ -1030,7 +1770,7 @@ pub fn register(interp: &mut Interpreter) {
 (defun tramp-archive-file-name-p (&rest _args) nil)
 (defun tramp-tramp-file-p (&rest _args) nil)
 
-"#;
+"##;
 
     // Read and evaluate the stubs. Silently ignore parse/eval errors
     // in case the Interpreter's reader doesn't support all elisp

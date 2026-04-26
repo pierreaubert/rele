@@ -437,6 +437,33 @@ fn function_form_captures_lexical_env() {
         .unwrap();
     assert_eq!(r, LispObject::integer(15));
 }
+
+#[test]
+fn lexical_closure_setq_persists_across_calls() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(
+            read(
+                "(let ((x 0))
+                   (let ((f (function (lambda () (setq x (+ x 1)) x))))
+                     (list (funcall f) (funcall f) x)))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        r,
+        LispObject::cons(
+            LispObject::integer(1),
+            LispObject::cons(
+                LispObject::integer(2),
+                LispObject::cons(LispObject::integer(2), LispObject::nil()),
+            ),
+        )
+    );
+}
+
 #[test]
 fn cl_typep_recognizes_common_types() {
     let mut interp = Interpreter::new();

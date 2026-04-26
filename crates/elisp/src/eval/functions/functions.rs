@@ -410,6 +410,37 @@ pub(crate) fn resolve_variable_alias(
     }
 }
 
+fn update_closure_capture(obj: &LispObject, sym_id: crate::obarray::SymbolId, value: &LispObject) {
+    let Some((head, rest)) = obj.destructure_cons() else {
+        return;
+    };
+    if head.as_symbol().as_deref() != Some("closure") {
+        return;
+    }
+    let Some(captured_alist) = rest.first() else {
+        return;
+    };
+    let mut cur = captured_alist;
+    while let Some((pair, next)) = cur.destructure_cons() {
+        if let Some((key, _old_value)) = pair.destructure_cons()
+            && key.as_symbol_id() == Some(sym_id)
+        {
+            pair.set_cdr(value.clone());
+        }
+        cur = next;
+    }
+}
+
+fn sync_lexical_assignment_to_closures(
+    sym_id: crate::obarray::SymbolId,
+    value: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+) {
+    for (_id, binding) in env.read().local_binding_entries() {
+        update_closure_capture(&binding, sym_id, value);
+    }
+}
+
 pub(crate) fn assign_symbol_value(
     mut sym_id: crate::obarray::SymbolId,
     mut value: LispObject,
@@ -434,6 +465,7 @@ pub(crate) fn assign_symbol_value(
                 if env.read().get_id_local(sym_id).is_some() && !Arc::ptr_eq(env, &state.global_env)
                 {
                     env.write().set_id(sym_id, value.clone());
+                    sync_lexical_assignment_to_closures(sym_id, &value, env);
                 }
                 state.global_env.write().set_id(sym_id, value.clone());
                 state.set_value_cell(sym_id, value.clone());
@@ -443,6 +475,7 @@ pub(crate) fn assign_symbol_value(
         }
         SetOperation::SetDefault => {
             env.write().set_id(sym_id, value.clone());
+            sync_lexical_assignment_to_closures(sym_id, &value, env);
             state.global_env.write().set_id(sym_id, value.clone());
             state.set_value_cell(sym_id, value.clone());
         }
@@ -465,6 +498,7 @@ pub(crate) fn assign_symbol_value(
                             && !Arc::ptr_eq(env, &state.global_env)
                         {
                             env.write().set_id(sym_id, value.clone());
+                            sync_lexical_assignment_to_closures(sym_id, &value, env);
                         }
                         state.global_env.write().set_id(sym_id, value.clone());
                         state.set_value_cell(sym_id, value.clone());
@@ -480,6 +514,7 @@ pub(crate) fn assign_symbol_value(
                         && !Arc::ptr_eq(env, &state.global_env)
                     {
                         env.write().set_id(sym_id, value.clone());
+                        sync_lexical_assignment_to_closures(sym_id, &value, env);
                     }
                     state.global_env.write().set_id(sym_id, value.clone());
                     state.set_value_cell(sym_id, value.clone());
@@ -488,10 +523,12 @@ pub(crate) fn assign_symbol_value(
                 && !Arc::ptr_eq(env, &state.global_env)
             {
                 env.write().set_id(sym_id, value.clone());
+                sync_lexical_assignment_to_closures(sym_id, &value, env);
             } else if has_current_buffer_local(&name) || is_automatic_buffer_local(sym_id, state) {
                 set_current_buffer_local(&name, value.clone());
             } else {
                 env.write().set_id(sym_id, value.clone());
+                sync_lexical_assignment_to_closures(sym_id, &value, env);
                 state.global_env.write().set_id(sym_id, value.clone());
                 state.set_value_cell(sym_id, value.clone());
             }

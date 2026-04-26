@@ -243,6 +243,38 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
     interp.define("erc-scrolltobottom-all", LispObject::nil());
     interp.define("erc-nicks-track-faces", LispObject::symbol("prepend"));
     interp.define("erc-d-u--library-directory", LispObject::nil());
+    reinstall_runtime_compat(interp);
+}
+
+fn reinstall_runtime_compat(interp: &Interpreter) {
+    let compat = "
+(when (fboundp 'rele--allout-install-compat)
+  (rele--allout-install-compat))
+(when (fboundp 'rele--align-install-compat)
+  (rele--align-install-compat))
+(when (fboundp 'rele--ansi-install-compat)
+  (rele--ansi-install-compat))
+(when (fboundp 'rele--ansi-osc-install-compat)
+  (rele--ansi-osc-install-compat))
+(when (fboundp 'rele--apropos-install-compat)
+  (rele--apropos-install-compat))
+(when (fboundp 'rele--buff-menu-install-compat)
+  (rele--buff-menu-install-compat))
+(when (fboundp 'rele--calculator-install-compat)
+  (rele--calculator-install-compat))
+(when (fboundp 'rele--edmacro-install-compat)
+  (rele--edmacro-install-compat))
+(when (fboundp 'rele--syntax-install-compat)
+  (rele--syntax-install-compat))
+";
+    if let Ok(forms) = crate::read_all(compat) {
+        interp.set_eval_ops_limit(200_000);
+        for form in forms {
+            interp.reset_eval_ops();
+            let _ = interp.eval(form);
+        }
+        interp.set_eval_ops_limit(0);
+    }
 }
 pub fn load_cl_lib(interp: &Interpreter) {
     let files = [

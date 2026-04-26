@@ -1284,11 +1284,16 @@ pub(super) fn eval_inner(
                     Ok(obj_to_value(result))
                 }
                 "buffer-name" => {
-                    let result = crate::primitives_buffer::call_buffer_primitive(
-                        "buffer-name",
-                        &LispObject::nil(),
-                    )
-                    .ok_or_else(|| ElispError::VoidFunction("buffer-name".to_string()))??;
+                    let args = if let Some(arg) = cdr.first() {
+                        let buffer =
+                            value_to_obj(eval(obj_to_value(arg), env, editor, macros, state)?);
+                        LispObject::cons(buffer, LispObject::nil())
+                    } else {
+                        LispObject::nil()
+                    };
+                    let result =
+                        crate::primitives_buffer::call_buffer_primitive("buffer-name", &args)
+                            .ok_or_else(|| ElispError::VoidFunction("buffer-name".to_string()))??;
                     Ok(obj_to_value(result))
                 }
                 "get-buffer" => {

@@ -110,9 +110,17 @@ pub(super) fn eval_provide(
     let name = feature
         .as_symbol()
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-    let mut features = state.features.write();
-    if !features.contains(&name) {
-        features.push(name);
+    let newly_provided = {
+        let mut features = state.features.write();
+        if features.contains(&name) {
+            false
+        } else {
+            features.push(name.clone());
+            true
+        }
+    };
+    if newly_provided {
+        run_after_load_hooks(&name, &name, env, editor, macros, state)?;
     }
     Ok(obj_to_value(feature))
 }
