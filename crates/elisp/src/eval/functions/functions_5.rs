@@ -101,6 +101,17 @@ pub(super) fn stateful_buffer_local_value(
         .first()
         .and_then(|a| a.as_symbol_id())
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let name = crate::obarray::symbol_name(sym);
+    if let Some(buffer_arg) = args.nth(1)
+        && let Some(buffer_id) = crate::primitives_buffer::resolve_buffer(&buffer_arg)
+        && let Some(value) = crate::buffer::with_registry(|registry| {
+            registry
+                .get(buffer_id)
+                .and_then(|buffer| buffer.locals.get(&name).cloned())
+        })
+    {
+        return Ok(value);
+    }
     Ok(state.get_value_cell(sym).unwrap_or_else(LispObject::nil))
 }
 pub(super) fn stateful_ert_get_test(

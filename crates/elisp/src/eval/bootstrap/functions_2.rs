@@ -700,8 +700,14 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("overlay-end", LispObject::primitive("overlay-end"));
     interp.define("overlays-at", LispObject::primitive("overlays-at"));
     interp.define("overlays-in", LispObject::primitive("overlays-in"));
-    interp.define("next-overlay-change", LispObject::primitive("ignore"));
-    interp.define("previous-overlay-change", LispObject::primitive("ignore"));
+    interp.define(
+        "next-overlay-change",
+        LispObject::primitive("next-overlay-change"),
+    );
+    interp.define(
+        "previous-overlay-change",
+        LispObject::primitive("previous-overlay-change"),
+    );
     interp.define("remove-overlays", LispObject::primitive("remove-overlays"));
     interp.define(
         "overlay-properties",

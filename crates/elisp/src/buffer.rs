@@ -113,7 +113,12 @@ pub struct StubBuffer {
     pub mark: Option<usize>,
     pub mark_active: bool,
     pub name: String,
+    /// Previous visible name, updated by `rename-buffer`.
+    pub last_name: Option<String>,
+    /// Base buffer for indirect buffers. `None` for ordinary buffers.
+    pub base_buffer: Option<BufferId>,
     pub modified: bool,
+    pub modified_status: Option<crate::object::LispObject>,
     /// Bumped on every mutating edit. Real Emacs's buffer-modified-tick.
     pub modified_tick: u64,
     /// Narrowing: if `Some((a, b))` then point-min = a and point-max = b
@@ -129,6 +134,11 @@ pub struct StubBuffer {
 impl StubBuffer {
     fn new_raw(name: String) -> Self {
         let id = NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed);
+        let mut locals = HashMap::new();
+        locals.insert(
+            "buffer-undo-list".to_string(),
+            crate::object::LispObject::nil(),
+        );
         Self {
             id,
             text: String::new(),
@@ -136,11 +146,14 @@ impl StubBuffer {
             mark: None,
             mark_active: false,
             name,
+            last_name: None,
+            base_buffer: None,
             modified: false,
+            modified_status: None,
             modified_tick: 0,
             restriction: None,
             file_name: None,
-            locals: HashMap::new(),
+            locals,
         }
     }
 
@@ -272,6 +285,7 @@ impl StubBuffer {
 
     pub fn bump_modified(&mut self) {
         self.modified = true;
+        self.modified_status = Some(crate::object::LispObject::t());
         self.modified_tick = self.modified_tick.wrapping_add(1);
     }
 
@@ -397,6 +411,46 @@ impl Registry {
         id
     }
 
+    pub fn generate_new_name(&self, base: &str) -> String {
+        if !self.by_name.contains_key(base) {
+            return base.to_string();
+        }
+        let mut n = 2;
+        loop {
+            let candidate = format!("{base}<{n}>");
+            if !self.by_name.contains_key(&candidate) {
+                return candidate;
+            }
+            n += 1;
+        }
+    }
+
+    pub fn create_unique(&mut self, base: &str) -> BufferId {
+        let name = self.generate_new_name(base);
+        self.create(&name)
+    }
+
+    pub fn make_indirect(&mut self, base: BufferId, name: &str) -> Option<BufferId> {
+        let base_buf = self.buffers.get(&base)?.clone();
+        let unique_name = self.generate_new_name(name);
+        let mut buf = StubBuffer::new(unique_name.clone());
+        buf.text = base_buf.text;
+        buf.point = base_buf.point;
+        buf.mark = base_buf.mark;
+        buf.mark_active = base_buf.mark_active;
+        buf.modified = base_buf.modified;
+        buf.modified_status = base_buf.modified_status;
+        buf.modified_tick = base_buf.modified_tick;
+        buf.restriction = base_buf.restriction;
+        buf.file_name = base_buf.file_name;
+        buf.locals = base_buf.locals;
+        buf.base_buffer = Some(base);
+        let id = buf.id;
+        self.buffers.insert(id, buf);
+        self.by_name.insert(unique_name, id);
+        Some(id)
+    }
+
     pub fn rename(&mut self, id: BufferId, new_name: &str) -> bool {
         let old_name = match self.buffers.get(&id) {
             Some(b) => b.name.clone(),
@@ -408,6 +462,7 @@ impl Registry {
         self.by_name.remove(&old_name);
         self.by_name.insert(new_name.to_string(), id);
         if let Some(b) = self.buffers.get_mut(&id) {
+            b.last_name = Some(old_name);
             b.name = new_name.to_string();
         }
         true
@@ -429,6 +484,12 @@ impl Registry {
         for m in self.markers.values_mut() {
             if m.buffer == id {
                 m.position = None;
+            }
+        }
+        for ov in self.overlays.values_mut() {
+            if ov.buffer == id {
+                ov.start = None;
+                ov.end = None;
             }
         }
         true
@@ -521,6 +582,125 @@ impl Registry {
         self.overlays.get_mut(&id)
     }
 
+    pub fn insert_current(&mut self, text: &str, before_markers: bool) {
+        let buffer = self.current_id();
+        let Some(pos) = self.get(buffer).map(|b| b.point) else {
+            return;
+        };
+        let len = text.chars().count();
+        if len == 0 {
+            return;
+        }
+        if let Some(buf) = self.get_mut(buffer) {
+            buf.insert(text);
+        }
+        self.relocate_overlays_after_insert(buffer, pos, len, before_markers);
+    }
+
+    pub fn delete_current_region(&mut self, start: usize, end: usize) {
+        let buffer = self.current_id();
+        let Some((a, b)) = self.get(buffer).map(|buf| {
+            let (a, b) = if start <= end {
+                (start, end)
+            } else {
+                (end, start)
+            };
+            let pmin = buf.point_min();
+            let pmax = buf.point_max();
+            (a.clamp(pmin, pmax), b.clamp(pmin, pmax))
+        }) else {
+            return;
+        };
+        if a == b {
+            return;
+        }
+        if let Some(buf) = self.get_mut(buffer) {
+            buf.delete_region(a, b);
+        }
+        self.relocate_overlays_after_delete(buffer, a, b);
+    }
+
+    fn relocate_overlays_after_insert(
+        &mut self,
+        buffer: BufferId,
+        pos: usize,
+        len: usize,
+        before_markers: bool,
+    ) {
+        fn move_boundary(
+            boundary: usize,
+            pos: usize,
+            len: usize,
+            advances_at_pos: bool,
+            before_markers: bool,
+        ) -> usize {
+            if boundary > pos || (boundary == pos && (advances_at_pos || before_markers)) {
+                boundary + len
+            } else {
+                boundary
+            }
+        }
+
+        for ov in self.overlays.values_mut() {
+            if ov.buffer != buffer {
+                continue;
+            }
+            let (Some(start), Some(end)) = (ov.start, ov.end) else {
+                continue;
+            };
+            if start == end && start == pos && !before_markers {
+                match (ov.front_advance, ov.rear_advance) {
+                    (true, true) => {
+                        ov.start = Some(start + len);
+                        ov.end = Some(end + len);
+                    }
+                    (false, true) => {
+                        ov.end = Some(end + len);
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            ov.start = Some(move_boundary(
+                start,
+                pos,
+                len,
+                ov.front_advance,
+                before_markers,
+            ));
+            ov.end = Some(move_boundary(
+                end,
+                pos,
+                len,
+                ov.rear_advance,
+                before_markers,
+            ));
+        }
+    }
+
+    fn relocate_overlays_after_delete(&mut self, buffer: BufferId, start: usize, end: usize) {
+        fn move_boundary(boundary: usize, start: usize, end: usize) -> usize {
+            if boundary < start {
+                boundary
+            } else if boundary >= end {
+                boundary - (end - start)
+            } else {
+                start
+            }
+        }
+
+        for ov in self.overlays.values_mut() {
+            if ov.buffer != buffer {
+                continue;
+            }
+            let (Some(ov_start), Some(ov_end)) = (ov.start, ov.end) else {
+                continue;
+            };
+            ov.start = Some(move_boundary(ov_start, start, end));
+            ov.end = Some(move_boundary(ov_end, start, end));
+        }
+    }
+
     /// Collect every *live* overlay in `buffer` that covers position
     /// `pos`. Emacs semantics: an overlay `[S, E)` covers `P` iff
     /// `S <= P < E`. A zero-length overlay (`S == E`) covers `P` iff
@@ -538,11 +718,7 @@ impl Registry {
             }
             let Some(s) = ov.start else { continue };
             let Some(e) = ov.end else { continue };
-            let covers = if s == e {
-                pos == s
-            } else {
-                pos >= s && pos < e
-            };
+            let covers = s != e && pos >= s && pos < e;
             if covers {
                 out.push(ov.id);
             }
@@ -556,6 +732,10 @@ impl Registry {
     /// overlays exactly at `beg` or `end` also count.
     pub fn overlays_in(&self, buffer: BufferId, beg: usize, end: usize) -> Vec<OverlayId> {
         let (b, e) = if beg <= end { (beg, end) } else { (end, beg) };
+        let (real_point_max, narrowed) = self
+            .get(buffer)
+            .map(|buf| (buf.buffer_size() + 1, buf.restriction.is_some()))
+            .unwrap_or((1, false));
         let mut out = Vec::new();
         for ov in self.overlays.values() {
             if ov.buffer != buffer {
@@ -563,14 +743,10 @@ impl Registry {
             }
             let Some(s) = ov.start else { continue };
             let Some(ee) = ov.end else { continue };
-            let overlaps = if s == ee {
-                // Zero-length overlay: lies in [b, e] inclusive.
-                s >= b && s <= e
-            } else if b == e {
-                // Zero-length query range: include any overlay whose
-                // span contains b (inclusive of the end boundary too,
-                // matching real Emacs at the edge case).
-                b >= s && b <= ee
+            let overlaps = if b == e {
+                if s == ee { s == b } else { s < b && b < ee }
+            } else if s == ee {
+                s >= b && (s < e || (s == e && !narrowed && e == real_point_max))
             } else {
                 s < e && ee > b
             };
@@ -640,7 +816,16 @@ pub fn push_temp_buffer() {
 
 /// Pop the current buffer if it's not the bottom-of-stack scratch.
 pub fn pop_buffer() {
-    with_registry_mut(|r| r.pop_stack());
+    with_registry_mut(|r| {
+        let popped = if r.stack.len() > 1 {
+            r.stack.pop()
+        } else {
+            None
+        };
+        if let Some(id) = popped {
+            r.kill(id);
+        }
+    });
 }
 
 /// Reset the registry to just a fresh `*scratch*`. Used by tests that

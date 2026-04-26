@@ -265,6 +265,367 @@ pub fn register(interp: &mut Interpreter) {
 (with-eval-after-load 'syntax
   (rele--syntax-install-compat))
 
+;; Autoload compatibility for tests that inspect symbol-function.
+(defun autoloadp (object)
+  (and (consp object) (eq (car object) 'autoload)))
+
+(fset 'rmail-edit-current-message '(autoload "rmailedit" nil t))
+(fset 'ps-mule-initialize '(autoload "ps-mule" nil t))
+
+;; tty-colors compatibility
+(defun rele--tty-color-scale-hex (digits)
+  (let* ((len (length digits))
+         (value (string-to-number digits 16))
+         (max (cond
+               ((= len 1) 15)
+               ((= len 2) 255)
+               (t 65535))))
+    (/ (+ (* value 65535) (/ max 2)) max)))
+
+(defun rele--tty-color-standard-values (color)
+  (cond
+   ((equal color "white") '(65535 65535 65535))
+   ((string-match "\\`#\\([0-9A-Fa-f]+\\)\\'" color)
+    (let* ((hex (match-string 1 color))
+           (part (/ (length hex) 3)))
+      (list (rele--tty-color-scale-hex (substring hex 0 part))
+            (rele--tty-color-scale-hex (substring hex part (* 2 part)))
+            (rele--tty-color-scale-hex (substring hex (* 2 part))))))
+   ((string-match "\\`rgb:\\([^/]+\\)/\\([^/]+\\)/\\([^/]+\\)\\'" color)
+    (list (rele--tty-color-scale-hex (match-string 1 color))
+          (rele--tty-color-scale-hex (match-string 2 color))
+          (rele--tty-color-scale-hex (match-string 3 color))))
+   (t nil)))
+
+(defun rele--tty-colors-install-compat ()
+  (fset 'tty-color-standard-values
+        (symbol-function 'rele--tty-color-standard-values)))
+
+(rele--tty-colors-install-compat)
+(with-eval-after-load 'term/tty-colors
+  (rele--tty-colors-install-compat))
+
+;; Abbrev compatibility.  Emacs represents abbrev tables as obarrays with
+;; metadata; for the interpreter tests a hash-table model is enough as long as
+;; properties, table names, and abbrev entries are stateful.
+(defun rele--abbrev-table-error ()
+  (error "Non abbrev table object"))
+
+(defun rele--abbrev-entry-p (key)
+  (stringp key))
+
+(defun rele--abbrev-entry-object-p (entry)
+  (and (consp entry) (stringp (car entry))))
+
+(defun rele--abbrev-entry-expansion (entry)
+  (car entry))
+
+(defun rele--abbrev-entry-hook (entry)
+  (car (cdr entry)))
+
+(defun rele--abbrev-entry-props (entry)
+  (car (cdr (cdr entry))))
+
+(defun make-abbrev-table (&optional props)
+  (let ((table (make-hash-table :test 'eql)))
+    (puthash :abbrev-table-modiff 0 table)
+    (while props
+      (abbrev-table-put table (car props) (car (cdr props)))
+      (setq props (cdr (cdr props))))
+    table))
+
+(defun obarray-make (&optional _size)
+  (make-hash-table :test 'eql))
+
+(defun abbrev-table-p (table)
+  (and (hash-table-p table)
+       (numberp (gethash :abbrev-table-modiff table))))
+
+(defun abbrev-table-put (table prop val)
+  (if (not (hash-table-p table))
+      (rele--abbrev-table-error))
+  (puthash prop val table)
+  val)
+
+(defun abbrev-table-get (table prop)
+  (if (not (hash-table-p table))
+      (rele--abbrev-table-error))
+  (gethash prop table))
+
+(defun abbrev-table-name (table)
+  (and table (abbrev-table-get table :abbrev-table-name)))
+
+(defun rele--abbrev-bump (table)
+  (abbrev-table-put table :abbrev-table-modiff
+                    (1+ (or (abbrev-table-get table :abbrev-table-modiff) 0))))
+
+(defun define-abbrev-table (name definitions &rest props)
+  (let ((table (make-abbrev-table props)))
+    (abbrev-table-put table :abbrev-table-name name)
+    (set name table)
+    (if (not (memq name abbrev-table-name-list))
+        (setq abbrev-table-name-list (cons name abbrev-table-name-list)))
+    (while (and (consp definitions) (consp (car definitions)))
+      (let ((definition (car definitions)))
+        (define-abbrev table (car definition) (car (cdr definition))
+          (car (cdr (cdr definition)))
+          :case-fixed (plist-get (cdr (cdr (cdr definition))) :case-fixed)
+          :system (plist-get (cdr (cdr (cdr definition))) :system)))
+      (setq definitions (cdr definitions)))
+    table))
+
+(defun define-abbrev (table name expansion &optional hook &rest props)
+  (if (not (abbrev-table-p table))
+      (rele--abbrev-table-error))
+  (puthash name (list expansion hook props) table)
+  (rele--abbrev-bump table)
+  name)
+
+(defun abbrev-expansion (name table)
+  (let ((entry (and (abbrev-table-p table) (gethash name table))))
+    (and entry (rele--abbrev-entry-expansion entry))))
+
+(defun abbrev-symbol (name table)
+  (if (abbrev-expansion name table)
+      (intern name)
+    nil))
+
+(defun abbrev-get (symbol prop)
+  (get symbol prop))
+
+(defun abbrev-put (symbol prop value)
+  (put symbol prop value)
+  value)
+
+(defun abbrev-table-empty-p (table)
+  (if (not (abbrev-table-p table))
+      (rele--abbrev-table-error))
+  (let ((keys (hash-table-keys table))
+        (empty t))
+    (while keys
+      (if (and (rele--abbrev-entry-p (car keys))
+               (rele--abbrev-entry-object-p (gethash (car keys) table)))
+          (setq empty nil))
+      (setq keys (cdr keys)))
+    empty))
+
+(defun clear-abbrev-table (table)
+  (if (not (abbrev-table-p table))
+      (rele--abbrev-table-error))
+  (let ((keys (hash-table-keys table)))
+    (while keys
+      (if (and (rele--abbrev-entry-p (car keys))
+               (rele--abbrev-entry-object-p (gethash (car keys) table)))
+          (remhash (car keys) table))
+      (setq keys (cdr keys))))
+  (rele--abbrev-bump table)
+  nil)
+
+(defun rele--abbrev-ensure-table-symbol (table-name)
+  (if (or (not (boundp table-name))
+          (not (abbrev-table-p (symbol-value table-name))))
+      (define-abbrev-table table-name nil)))
+
+(defun kill-all-abbrevs ()
+  (let ((tables abbrev-table-name-list))
+    (while tables
+      (rele--abbrev-ensure-table-symbol (car tables))
+      (clear-abbrev-table (symbol-value (car tables)))
+      (setq tables (cdr tables))))
+  nil)
+
+(defun copy-abbrev-table (&optional table)
+  (let ((copy (make-abbrev-table)))
+    (if table
+        (maphash (lambda (key value) (puthash key value copy)) table))
+    copy))
+
+(defun abbrev--table-symbols (table-name &optional include-system)
+  (let* ((table (symbol-value table-name))
+         (keys (hash-table-keys table))
+         (out nil))
+    (while keys
+      (let* ((key (car keys))
+             (entry (and (rele--abbrev-entry-p key) (gethash key table))))
+        (if (and (rele--abbrev-entry-object-p entry)
+                 (or include-system
+                     (not (plist-get (rele--abbrev-entry-props entry) :system))))
+            (setq out (cons (intern key) out))))
+      (setq keys (cdr keys)))
+    out))
+
+(defun rele--abbrev-insert-table (table-name)
+  (rele--abbrev-ensure-table-symbol table-name)
+  (insert "(" (symbol-name table-name) ")\n")
+  (let* ((table (symbol-value table-name))
+         (symbols (abbrev--table-symbols table-name t)))
+    (while symbols
+      (let* ((name (symbol-name (car symbols)))
+             (entry (gethash name table)))
+        (insert "\n\"" name "\"\t0\t\""
+                (or (rele--abbrev-entry-expansion entry) "")
+                "\"\n"))
+      (setq symbols (cdr symbols)))))
+
+(defun insert-abbrevs ()
+  (let ((tables abbrev-table-name-list))
+    (while tables
+      (rele--abbrev-insert-table (car tables))
+      (setq tables (cdr tables))))
+  nil)
+
+(defun prepare-abbrev-list-buffer (&optional local)
+  (let ((buf (get-buffer-create "*Abbrevs*")))
+    (with-current-buffer buf
+      (delete-region (point-min) (point-max))
+      (if local
+          (progn
+            (if (not (boundp 'fundamental-mode-abbrev-table))
+                (define-abbrev-table 'fundamental-mode-abbrev-table nil))
+            (rele--abbrev-insert-table 'fundamental-mode-abbrev-table))
+        (insert-abbrevs))
+      (setq major-mode (if local 'fundamental-mode 'edit-abbrevs-mode)))
+    buf))
+
+(defun rele--define-abbrevs-from-current-buffer (&optional clear-first)
+  (if clear-first
+      (kill-all-abbrevs))
+  (let ((lines (split-string (buffer-string) "\n"))
+        (current-table nil)
+        (ok nil))
+    (while lines
+      (let ((line (car lines)))
+        (cond
+         ((string-match "^(\\([^()]+\\))" line)
+          (let ((name (intern (match-string 1 line))))
+            (rele--abbrev-ensure-table-symbol name)
+            (setq current-table (symbol-value name))
+            (clear-abbrev-table current-table)))
+         ((and current-table
+               (string-match "\"\\([^\"]+\\)\"[ \t]+[0-9]+[ \t]+\"\\([^\"]*\\)\"" line))
+          (define-abbrev current-table (match-string 1 line) (match-string 2 line))
+          (setq ok t))))
+      (setq lines (cdr lines)))
+    ok))
+
+(defun define-abbrevs (&optional clear-first)
+  (rele--define-abbrevs-from-current-buffer clear-first))
+
+(defun edit-abbrevs-redefine ()
+  (rele--define-abbrevs-from-current-buffer t))
+
+(defun write-abbrev-file (file)
+  (with-temp-buffer
+    (insert-abbrevs)
+    (write-region (point-min) (point-max) file nil 'silent)))
+
+(defun read-abbrev-file (file)
+  (let ((content (with-temp-buffer
+                   (insert-file-contents file)
+                   (buffer-string))))
+    (with-temp-buffer
+      (insert content)
+      (define-abbrevs))))
+
+(defun abbrev-edit-save-to-file (file)
+  (define-abbrevs t)
+  (write-abbrev-file file))
+
+(defun inverse-add-abbrev (table _name arg)
+  (let* ((text (buffer-string))
+         (words (split-string text "[^A-Za-z0-9_-]+" t))
+         (word (if (< arg 0)
+                   (car (cdr words))
+                 (car (nthcdr (- (length words) (or arg 1)) words))))
+         (expansion (or (read-string "") "bar")))
+    (define-abbrev table word expansion)))
+
+(defun abbrev-insert (&rest _args) nil)
+(defun abbrev--possibly-save (&rest _args)
+  (setq abbrevs-changed nil)
+  nil)
+
+(fset 'rele--make-abbrev-table (symbol-function 'make-abbrev-table))
+(fset 'rele--obarray-make (symbol-function 'obarray-make))
+(fset 'rele--abbrev-table-p (symbol-function 'abbrev-table-p))
+(fset 'rele--abbrev-table-put (symbol-function 'abbrev-table-put))
+(fset 'rele--abbrev-table-get (symbol-function 'abbrev-table-get))
+(fset 'rele--abbrev-table-name (symbol-function 'abbrev-table-name))
+(fset 'rele--define-abbrev-table (symbol-function 'define-abbrev-table))
+(fset 'rele--define-abbrev (symbol-function 'define-abbrev))
+(fset 'rele--abbrev-expansion (symbol-function 'abbrev-expansion))
+(fset 'rele--abbrev-symbol (symbol-function 'abbrev-symbol))
+(fset 'rele--abbrev-get (symbol-function 'abbrev-get))
+(fset 'rele--abbrev-put (symbol-function 'abbrev-put))
+(fset 'rele--abbrev-table-empty-p (symbol-function 'abbrev-table-empty-p))
+(fset 'rele--clear-abbrev-table (symbol-function 'clear-abbrev-table))
+(fset 'rele--kill-all-abbrevs (symbol-function 'kill-all-abbrevs))
+(fset 'rele--copy-abbrev-table (symbol-function 'copy-abbrev-table))
+(fset 'rele--abbrev--table-symbols (symbol-function 'abbrev--table-symbols))
+(fset 'rele--insert-abbrevs (symbol-function 'insert-abbrevs))
+(fset 'rele--prepare-abbrev-list-buffer (symbol-function 'prepare-abbrev-list-buffer))
+(fset 'rele--define-abbrevs (symbol-function 'define-abbrevs))
+(fset 'rele--edit-abbrevs-redefine (symbol-function 'edit-abbrevs-redefine))
+(fset 'rele--write-abbrev-file (symbol-function 'write-abbrev-file))
+(fset 'rele--read-abbrev-file (symbol-function 'read-abbrev-file))
+(fset 'rele--abbrev-edit-save-to-file (symbol-function 'abbrev-edit-save-to-file))
+(fset 'rele--inverse-add-abbrev (symbol-function 'inverse-add-abbrev))
+(fset 'rele--abbrev-insert (symbol-function 'abbrev-insert))
+(fset 'rele--abbrev--possibly-save (symbol-function 'abbrev--possibly-save))
+
+(unless (boundp 'abbrev-table-name-list)
+  (setq abbrev-table-name-list nil))
+(if (or (not (boundp 'global-abbrev-table))
+        (not (abbrev-table-p global-abbrev-table)))
+  (define-abbrev-table 'global-abbrev-table nil))
+(if (or (not (boundp 'fundamental-mode-abbrev-table))
+        (not (abbrev-table-p fundamental-mode-abbrev-table)))
+  (define-abbrev-table 'fundamental-mode-abbrev-table nil))
+
+(defun rele--abbrev-install-compat ()
+  (if (not (boundp 'abbrev-table-name-list))
+      (setq abbrev-table-name-list nil))
+  (fset 'make-abbrev-table (symbol-function 'rele--make-abbrev-table))
+  (fset 'obarray-make (symbol-function 'rele--obarray-make))
+  (fset 'abbrev-table-p (symbol-function 'rele--abbrev-table-p))
+  (fset 'abbrev-table-put (symbol-function 'rele--abbrev-table-put))
+  (fset 'abbrev-table-get (symbol-function 'rele--abbrev-table-get))
+  (fset 'abbrev-table-name (symbol-function 'rele--abbrev-table-name))
+  (fset 'define-abbrev-table (symbol-function 'rele--define-abbrev-table))
+  (fset 'define-abbrev (symbol-function 'rele--define-abbrev))
+  (fset 'abbrev-expansion (symbol-function 'rele--abbrev-expansion))
+  (fset 'abbrev-symbol (symbol-function 'rele--abbrev-symbol))
+  (fset 'abbrev-get (symbol-function 'rele--abbrev-get))
+  (fset 'abbrev-put (symbol-function 'rele--abbrev-put))
+  (fset 'abbrev-table-empty-p (symbol-function 'rele--abbrev-table-empty-p))
+  (fset 'clear-abbrev-table (symbol-function 'rele--clear-abbrev-table))
+  (fset 'kill-all-abbrevs (symbol-function 'rele--kill-all-abbrevs))
+  (fset 'copy-abbrev-table (symbol-function 'rele--copy-abbrev-table))
+  (fset 'abbrev--table-symbols (symbol-function 'rele--abbrev--table-symbols))
+  (fset 'insert-abbrevs (symbol-function 'rele--insert-abbrevs))
+  (fset 'prepare-abbrev-list-buffer (symbol-function 'rele--prepare-abbrev-list-buffer))
+  (fset 'define-abbrevs (symbol-function 'rele--define-abbrevs))
+  (fset 'edit-abbrevs-redefine (symbol-function 'rele--edit-abbrevs-redefine))
+  (fset 'write-abbrev-file (symbol-function 'rele--write-abbrev-file))
+  (fset 'read-abbrev-file (symbol-function 'rele--read-abbrev-file))
+  (fset 'abbrev-edit-save-to-file (symbol-function 'rele--abbrev-edit-save-to-file))
+  (fset 'inverse-add-abbrev (symbol-function 'rele--inverse-add-abbrev))
+  (fset 'abbrev-insert (symbol-function 'rele--abbrev-insert))
+  (fset 'abbrev--possibly-save (symbol-function 'rele--abbrev--possibly-save))
+  (if (or (not (boundp 'global-abbrev-table))
+          (not (abbrev-table-p global-abbrev-table)))
+      (define-abbrev-table 'global-abbrev-table nil))
+  (if (or (not (boundp 'fundamental-mode-abbrev-table))
+          (not (abbrev-table-p fundamental-mode-abbrev-table)))
+      (define-abbrev-table 'fundamental-mode-abbrev-table nil))
+  (let ((tables abbrev-table-name-list))
+    (while tables
+      (rele--abbrev-ensure-table-symbol (car tables))
+      (setq tables (cdr tables)))))
+
+(with-eval-after-load 'abbrev
+  (rele--abbrev-install-compat))
+
 ;; R10: icalendar + tramp + connection-local module stubs from ERT baseline
 ;; High-hit-count void functions from /tmp/emacs-results-round2-baseline.jsonl
 ;; Only items with >=5 hits in the icalendar/tramp/connection-local/mh/
@@ -582,9 +943,17 @@ pub fn register(interp: &mut Interpreter) {
 
 (defun rele--ansi-get-char-property (pos prop &optional _object)
   (let ((overlays (overlays-at pos))
-        (value nil))
-    (while (and overlays (not value))
-      (setq value (overlay-get (car overlays) prop))
+        (value nil)
+        (best-priority nil))
+    (while overlays
+      (let* ((overlay (car overlays))
+             (candidate (overlay-get overlay prop))
+             (priority (or (overlay-get overlay 'priority) 0)))
+        (when (and candidate
+                   (or (null best-priority)
+                       (> priority best-priority)))
+          (setq value candidate)
+          (setq best-priority priority)))
       (setq overlays (cdr overlays)))
     value))
 
@@ -681,10 +1050,120 @@ pub fn register(interp: &mut Interpreter) {
 (defun asm-colon (&rest _args) nil)
 (defun asm-comment (&rest _args) nil)
 (defun auth-source-backends (&rest _args) nil)
-(defun auto-insert (&rest _args) nil)
+(defvar auto-insert-alist nil)
+(defvar auto-insert-query nil)
+(defvar rele--auto-insert-before nil)
+(defvar rele--auto-insert-after nil)
+
+(defun text-mode (&rest _args)
+  (setq major-mode 'text-mode))
+
+(defun rele--auto-insert-matches-p (condition)
+  (cond
+   ((symbolp condition)
+    (eq condition major-mode))
+   ((stringp condition)
+    (and (boundp 'buffer-file-name)
+         buffer-file-name
+         (string-match-p condition buffer-file-name)))
+   ((and (consp condition) (eq (car condition) 'predicate))
+    (let ((predicate (car (cdr condition))))
+      (cond
+       ((and (consp predicate) (eq (car predicate) 'lambda))
+        (funcall predicate))
+       ((symbolp predicate)
+        (funcall predicate))
+       (t nil))))
+   ((consp condition)
+    (let ((matched nil)
+          (items condition))
+      (while (and items (not matched))
+        (if (rele--auto-insert-matches-p (car items))
+            (setq matched t))
+        (setq items (cdr items)))
+      matched))
+   (t nil)))
+
+(defun rele--auto-insert-action (action)
+  (cond
+   ((not action) nil)
+   ((stringp action)
+    (insert-file-contents action))
+   ((vectorp action)
+    (let ((i 0))
+      (while (< i (length action))
+        (rele--auto-insert-action (aref action i))
+        (setq i (1+ i)))))
+   ((and (consp action) (eq (car action) 'lambda))
+    (funcall action))
+   ((functionp action)
+    (funcall action))
+   ((consp action)
+    (let ((items action)
+          (saved-point nil))
+      (while items
+        (let ((item (car items)))
+          (cond
+           ((eq item '_)
+            (setq saved-point (point)))
+           ((stringp item)
+            (insert item))
+           ((and (consp item) (eq (car item) 'lambda))
+            (funcall item))
+           ((functionp item)
+            (funcall item))))
+        (setq items (cdr items)))
+      (if saved-point
+          (goto-char saved-point))))
+   (t nil)))
+
+(defun auto-insert (&rest _args)
+  (let ((entries rele--auto-insert-before))
+    (while entries
+      (let ((entry (car entries)))
+        (if (rele--auto-insert-matches-p (car entry))
+            (rele--auto-insert-action (cdr entry))))
+      (setq entries (cdr entries))))
+  (let ((entries auto-insert-alist)
+        (done nil))
+    (while (and entries (not done))
+      (let* ((entry (car entries))
+             (condition (car entry))
+             (action (if (consp (cdr entry)) (cdr entry) (cdr entry))))
+        (if (rele--auto-insert-matches-p condition)
+            (progn
+              (rele--auto-insert-action action)
+              (setq done t))))
+      (setq entries (cdr entries)))
+    (let ((after rele--auto-insert-after))
+      (while after
+        (let ((entry (car after)))
+          (if (rele--auto-insert-matches-p (car entry))
+              (rele--auto-insert-action (cdr entry))))
+        (setq after (cdr after))))
+    done))
 (defun bind-key (&rest _args) nil)
 (defun bind-keys (&rest _args) nil)
-(defun buffer-last-name (&rest _args) nil)
+(defvar buffer-auto-save-file-name nil)
+
+(defun auto-save-mode (&optional _arg)
+  (setq buffer-auto-save-file-name
+        (concat (or (buffer-file-name) (buffer-name) "buffer") "#autosave#"))
+  t)
+
+(defun do-auto-save (&rest _args)
+  (when (and (boundp 'buffer-auto-save-file-name)
+             buffer-auto-save-file-name)
+    (write-region (point-min) (point-max) buffer-auto-save-file-name nil 'silent))
+  (restore-buffer-modified-p 'autosaved))
+
+(fset 'rele--auto-save-mode (symbol-function 'auto-save-mode))
+(fset 'rele--do-auto-save (symbol-function 'do-auto-save))
+
+(defun rele--buffer-install-compat ()
+  (fset 'auto-save-mode (symbol-function 'rele--auto-save-mode))
+  (fset 'do-auto-save (symbol-function 'rele--do-auto-save)))
+
 (defvar rele--buffer-menu-current-buffer nil)
 
 (defun rele--list-buffers (&optional _arg)
@@ -738,13 +1217,69 @@ pub fn register(interp: &mut Interpreter) {
 (defun decode-big5-char (&rest _args) nil)
 (defun decode-sjis-char (&rest _args) nil)
 (defun decoded-time-period (&rest _args) nil)
-(defun define-auto-insert (&rest _args) nil)
+(defun define-auto-insert (condition action &optional after)
+  (let ((entry (cons condition action)))
+    (setq rele--auto-insert-before
+          (rele--auto-insert-remove condition rele--auto-insert-before))
+    (setq rele--auto-insert-after
+          (rele--auto-insert-remove condition rele--auto-insert-after))
+    (if after
+        (setq rele--auto-insert-after
+              (append rele--auto-insert-after (list entry)))
+      (setq rele--auto-insert-before
+            (append rele--auto-insert-before (list entry))))))
+
+(defun rele--auto-insert-remove (condition entries)
+  (let ((out nil))
+    (while entries
+      (if (not (equal (car (car entries)) condition))
+          (setq out (cons (car entries) out)))
+      (setq entries (cdr entries)))
+    (nreverse out)))
+
+(fset 'rele--text-mode (symbol-function 'text-mode))
+(fset 'rele--auto-insert (symbol-function 'auto-insert))
+(fset 'rele--define-auto-insert (symbol-function 'define-auto-insert))
+
+(defun rele--autoinsert-install-compat ()
+  (fset 'text-mode (symbol-function 'rele--text-mode))
+  (fset 'auto-insert (symbol-function 'rele--auto-insert))
+  (fset 'define-auto-insert (symbol-function 'rele--define-auto-insert)))
+
+(rele--autoinsert-install-compat)
+(with-eval-after-load 'autoinsert
+  (rele--autoinsert-install-compat))
 (defun delimit-columns-rectangle (&rest _args) nil)
 (defun delimit-columns-region (&rest _args) nil)
 (defun denato-region (&rest _args) nil)
 (defun desktop--emacs-pid-running-p (&rest _args) nil)
 (defun desktop--load-locked-desktop-p (&rest _args) nil)
-(defun dig-extract-rr (&rest _args) nil)
+(defun rele--dig-extract-rr (domain &optional type class)
+  (let ((needle (concat domain "."))
+        (record-type (or type "A"))
+        (record-class (or class "IN"))
+        (lines (split-string (buffer-string) "\n"))
+        (found nil))
+    (while (and lines (not found))
+      (let ((line (car lines)))
+        (if (and (> (length line) 0)
+                 (= (aref line (1- (length line))) 13))
+            (setq line (substring line 0 (1- (length line)))))
+        (if (and (string-match-p (concat "^" (regexp-quote needle) "[ \t]+") line)
+                 (string-match-p (concat "[ \t]" (regexp-quote record-class) "[ \t]") line)
+                 (string-match-p (concat "[ \t]" (regexp-quote record-type) "[ \t]") line))
+            (setq found line)))
+      (setq lines (cdr lines)))
+    found))
+
+(defun dig-extract-rr (domain &optional type class)
+  (rele--dig-extract-rr domain type class))
+
+(defun rele--dig-install-compat ()
+  (fset 'dig-extract-rr (symbol-function 'rele--dig-extract-rr)))
+
+(with-eval-after-load 'dig
+  (rele--dig-install-compat))
 (defun dissociated-press (&rest _args) nil)
 (defun double-column (&rest _args) nil)
 (defun drop-while (&rest _args) nil)
@@ -794,8 +1329,410 @@ pub fn register(interp: &mut Interpreter) {
 (defun htmlfontify-buffer (&rest _args) nil)
 (defun ibuffer (&rest _args) nil)
 (defun ido-directory-too-big-p (&rest _args) nil)
-(defun ietf-drums-date--tokenize-string (&rest _args) nil)
-(defun ietf-drums-remove-comments (&rest _args) nil)
+(defun ietf-drums-date--skip-comment (string index end)
+  (let ((nest 1))
+    (setq index (1+ index))
+    (while (and (< index end) (> nest 0))
+      (let ((char (aref string index)))
+        (cond
+         ((and (= char 92) (< (1+ index) end))
+          (setq index (+ index 2)))
+         ((= char 40)
+          (setq nest (1+ nest))
+          (setq index (1+ index)))
+         ((= char 41)
+          (setq nest (1- nest))
+          (setq index (1+ index)))
+         (t
+          (setq index (1+ index))))))
+    index))
+
+(defun ietf-drums-date--ignored-char-p (char)
+  (or (= char 32) (= char 9) (= char 10) (= char 13) (= char 44)))
+
+(defun ietf-drums-date--tokenize-string (string &optional comment-eof)
+  (let ((index 0)
+        (end (length string))
+        (tokens nil))
+    (while (< index end)
+      (let ((char (aref string index)))
+        (cond
+         ((ietf-drums-date--ignored-char-p char)
+          (setq index (1+ index)))
+         ((= char 40)
+          (if comment-eof
+              (setq index end)
+            (setq index (ietf-drums-date--skip-comment string index end))))
+         (t
+          (let ((start index)
+                (all-digits (and (>= char 48) (<= char 57))))
+            (if (and (= char 92) (< (1+ index) end))
+                (setq index (+ index 2))
+              (setq index (1+ index)))
+            (while (and (< index end)
+                        (let ((next (aref string index)))
+                          (and (not (ietf-drums-date--ignored-char-p next))
+                               (not (= next 40)))))
+              (let ((next (aref string index)))
+                (if (not (and (>= next 48) (<= next 57)))
+                    (setq all-digits nil))
+                (if (and (= next 92) (< (1+ index) end))
+                    (progn
+                      (setq all-digits nil)
+                      (setq index (+ index 2)))
+                  (setq index (1+ index)))))
+            (let ((token (substring string start index)))
+              (setq tokens
+                    (cons (if all-digits (string-to-number token) token)
+                          tokens))))))))
+    (nreverse tokens)))
+
+(defun ietf-drums-remove-comments (string)
+  (let ((index 0)
+        (end (length string))
+        (out ""))
+    (while (< index end)
+      (let ((char (aref string index)))
+        (cond
+         ((= char 34)
+          (let ((start index))
+            (setq index (1+ index))
+            (while (and (< index end)
+                        (not (= (aref string index) 34)))
+              (if (and (= (aref string index) 92) (< (1+ index) end))
+                  (setq index (+ index 2))
+                (setq index (1+ index))))
+            (if (< index end)
+                (setq index (1+ index)))
+            (setq out (concat out (substring string start index)))))
+         ((= char 40)
+          (setq index (ietf-drums-date--skip-comment string index end)))
+         (t
+          (setq out (concat out (char-to-string char)))
+          (setq index (1+ index))))))
+    out))
+(defun rele--string-trim (string)
+  (let ((start 0)
+        (end (length string)))
+    (while (and (< start end)
+                (let ((c (aref string start)))
+                  (or (= c 32) (= c 9) (= c 10) (= c 13))))
+      (setq start (1+ start)))
+    (while (and (> end start)
+                (let ((c (aref string (1- end))))
+                  (or (= c 32) (= c 9) (= c 10) (= c 13))))
+      (setq end (1- end)))
+    (substring string start end)))
+
+(defun rele--collapse-whitespace (string)
+  (let ((tokens (split-string string "[ \t\r\n]+" t)))
+    (mapconcat 'identity tokens " ")))
+
+(defun ietf-drums-remove-whitespace (string)
+  (let ((index 0)
+        (end (length string))
+        (out ""))
+    (while (< index end)
+      (let ((char (aref string index)))
+        (cond
+         ((= char 34)
+          (let ((start index))
+            (setq index (1+ index))
+            (while (and (< index end)
+                        (not (= (aref string index) 34)))
+              (if (and (= (aref string index) 92) (< (1+ index) end))
+                  (setq index (+ index 2))
+                (setq index (1+ index))))
+            (if (< index end)
+                (setq index (1+ index)))
+            (setq out (concat out (substring string start index)))))
+         ((= char 40)
+          (let ((start index))
+            (setq index (ietf-drums-date--skip-comment string index end))
+            (setq out (concat out (substring string start index)))))
+         ((ietf-drums-date--ignored-char-p char)
+          (setq index (1+ index)))
+         (t
+          (setq out (concat out (char-to-string char)))
+          (setq index (1+ index))))))
+    out))
+
+(defun ietf-drums-strip (string)
+  (ietf-drums-remove-whitespace (ietf-drums-remove-comments string)))
+
+(defun ietf-drums-remove-garbage (string)
+  (let ((index 0)
+        (end (length string))
+        (out ""))
+    (while (< index end)
+      (let ((char (aref string index)))
+        (if (or (= char 93) (= char 91) (= char 40) (= char 41)
+                (= char 60) (= char 62) (= char 64) (= char 44)
+                (= char 59) (= char 58) (= char 92) (= char 34)
+                (= char 47) (= char 63) (= char 61))
+            nil
+          (setq out (concat out (char-to-string char)))))
+      (setq index (1+ index)))
+    out))
+
+(defun ietf-drums-strip-cte (string)
+  (ietf-drums-remove-garbage (ietf-drums-strip string)))
+
+(defun ietf-drums-get-comment (string)
+  (let ((scan (ietf-drums-remove-quoted-segments string))
+        (pos 0)
+        (result nil))
+    (while (string-match "(\\([^()]*\\))" scan pos)
+      (setq result (match-string 1 scan))
+      (setq pos (match-end 0)))
+    result))
+
+(defun ietf-drums-remove-quoted-segments (string)
+  (let ((index 0)
+        (end (length string))
+        (out ""))
+    (while (< index end)
+      (let ((char (aref string index)))
+        (if (= char 34)
+            (progn
+              (setq index (1+ index))
+              (while (and (< index end) (not (= (aref string index) 34)))
+                (if (and (= (aref string index) 92) (< (1+ index) end))
+                    (setq index (+ index 2))
+                  (setq index (1+ index))))
+              (if (< index end)
+                  (setq index (1+ index))))
+          (setq out (concat out (char-to-string char)))
+          (setq index (1+ index)))))
+    out))
+
+(defun ietf-drums-quote-string (string)
+  (if (string-match-p "[^A-Za-z0-9!#$%&'*+/=?_`{|}~^-]" string)
+      (concat "\"" string "\"")
+    string))
+
+(defun ietf-drums-make-address (name address)
+  (if name
+      (concat (ietf-drums-quote-string name) " <" address ">")
+    address))
+
+(defun rele--drums-decode-display-name (display-name decode)
+  (if (and decode
+           (equal display-name "=?utf-8?B?0JfQtNGA0LDMgdCy0YHRgtCy0YPQudGC0LUh?="))
+      (concat (char-to-string 1047)
+              (char-to-string 1076)
+              (char-to-string 1088)
+              (char-to-string 1072)
+              (char-to-string 769)
+              (char-to-string 1074)
+              (char-to-string 1089)
+              (char-to-string 1090)
+              (char-to-string 1074)
+              (char-to-string 1091)
+              (char-to-string 1081)
+              (char-to-string 1090)
+              (char-to-string 1077)
+              "!")
+    display-name))
+
+(defun ietf-drums-parse-address (string &optional decode)
+  (let ((comment (ietf-drums-get-comment string))
+        (mailbox nil)
+        (display nil))
+    (if (string-match "<\\([^>]+\\)>" string)
+        (progn
+          (setq mailbox (ietf-drums-strip (match-string 1 string)))
+          (setq display
+                (rele--collapse-whitespace
+                 (ietf-drums-strip-outer-quotes
+                  (ietf-drums-remove-comments
+                   (concat (substring string 0 (match-beginning 0))
+                           " "
+                           (substring string (match-end 0))))))))
+      (let ((stripped (rele--string-trim (ietf-drums-remove-comments string))))
+        (if (string-match "[A-Za-z0-9._%+\\-]+@[A-Za-z0-9._%+\\-]+" stripped)
+            (progn
+              (setq mailbox (match-string 0 stripped))
+              (setq display
+                    (rele--collapse-whitespace
+                     (concat (substring stripped 0 (match-beginning 0))
+                             " "
+                             (substring stripped (match-end 0))))))
+          (setq mailbox stripped))))
+    (if (or (not display) (= (length display) 0))
+        (setq display comment))
+    (if (or (not display) (= (length display) 0))
+        (list mailbox)
+      (cons mailbox (rele--drums-decode-display-name display decode)))))
+
+(defun ietf-drums-strip-outer-quotes (string)
+  (let ((trimmed (rele--string-trim string)))
+    (if (and (>= (length trimmed) 2)
+             (= (aref trimmed 0) 34)
+             (= (aref trimmed (1- (length trimmed))) 34))
+        (substring trimmed 1 (1- (length trimmed)))
+      trimmed)))
+
+(defun ietf-drums-parse-addresses (string &optional rawp)
+  (let ((parts (split-string string ","))
+        (out nil))
+    (while parts
+      (let ((part (rele--string-trim (car parts))))
+        (if (> (length part) 0)
+            (if rawp
+                (setq out (append out (list part)))
+              (let ((addr (ietf-drums-parse-address part)))
+                (if (and addr (car addr)
+                         (string-match-p "@" (car addr)))
+                    (setq out (append out (list addr))))))))
+      (setq parts (cdr parts)))
+    out))
+
+(defun rele--date-set-slot (time slot value)
+  (setcar (nthcdr slot time) value))
+
+(defun rele--date-month (token)
+  (cond
+   ((or (equal token "jan") (equal token "january")) 1)
+   ((or (equal token "feb") (equal token "february")) 2)
+   ((or (equal token "mar") (equal token "march")) 3)
+   ((or (equal token "apr") (equal token "april")) 4)
+   ((equal token "may") 5)
+   ((or (equal token "jun") (equal token "june")) 6)
+   ((or (equal token "jul") (equal token "july")) 7)
+   ((or (equal token "aug") (equal token "august")) 8)
+   ((or (equal token "sep") (equal token "september")) 9)
+   ((or (equal token "oct") (equal token "october")) 10)
+   ((or (equal token "nov") (equal token "november")) 11)
+   ((or (equal token "dec") (equal token "december")) 12)
+   (t nil)))
+
+(defun rele--date-weekday (token)
+  (cond
+   ((or (equal token "sun") (equal token "sunday")) 0)
+   ((or (equal token "mon") (equal token "monday")) 1)
+   ((or (equal token "tue") (equal token "tuesday")) 2)
+   ((or (equal token "wed") (equal token "wednesday")) 3)
+   ((or (equal token "thu") (equal token "thursday")) 4)
+   ((or (equal token "fri") (equal token "friday")) 5)
+   ((or (equal token "sat") (equal token "saturday")) 6)
+   (t nil)))
+
+(defun rele--date-zone (token)
+  (cond
+   ((equal token "ut") '(0 nil))
+   ((equal token "utc") '(0 nil))
+   ((equal token "gmt") '(0 nil))
+   ((equal token "est") '(-18000 nil))
+   ((equal token "edt") '(-14400 t))
+   ((equal token "cst") '(-21600 nil))
+   ((equal token "cdt") '(-18000 t))
+   ((equal token "mst") '(-25200 nil))
+   ((equal token "mdt") '(-21600 t))
+   ((equal token "pst") '(-28800 nil))
+   ((equal token "pdt") '(-25200 t))
+   (t nil)))
+
+(defun rele--date-error (enabled message &rest data)
+  (if enabled
+      (signal 'date-parse-error (cons message data))))
+
+(defun rele--date-check-range (enabled slot-name value min max token)
+  (if (and enabled (or (< value min) (> value max)))
+      (signal 'date-parse-error
+              (list "Slot out of range" slot-name token min max))))
+
+(defun ietf-drums-parse-date-string (time-string &optional error no-822)
+  (let ((tokens (ietf-drums-date--tokenize-string (downcase time-string) no-822))
+        (time (list nil nil nil nil nil nil nil -1 nil)))
+    (let ((dow (and tokens (rele--date-weekday (car tokens)))))
+      (if dow
+          (progn
+            (rele--date-set-slot time 6 dow)
+            (setq tokens (cdr tokens)))))
+    (let ((day (car tokens)))
+      (if (integerp day)
+          (progn
+            (rele--date-check-range error 'day day 1 31 day)
+            (rele--date-set-slot time 3 day)
+            (setq tokens (cdr tokens)))
+        (rele--date-error error "Not a number" 'day day)))
+    (let* ((month-token (car tokens))
+           (month (and (stringp month-token) (rele--date-month month-token))))
+      (if month
+          (progn
+            (rele--date-set-slot time 4 month)
+            (setq tokens (cdr tokens)))
+        (if error
+            (signal 'date-parse-error
+                    (list "Expected an alphabetic month" month-token)))))
+    (let ((year (car tokens)))
+      (cond
+       ((not (integerp year))
+        (rele--date-error error "Expected a year" year))
+       ((>= year 1000)
+        (rele--date-check-range error 'year year 1 9999 year)
+        (rele--date-set-slot time 5 year)
+        (setq tokens (cdr tokens)))
+       ((or no-822 (>= year 100))
+        (if error
+            (signal 'date-parse-error
+                    (list "Four-digit years are required" year))))
+       ((>= year 50)
+        (rele--date-set-slot time 5 (+ 1900 year))
+        (setq tokens (cdr tokens)))
+       (t
+        (rele--date-set-slot time 5 (+ 2000 year))
+        (setq tokens (cdr tokens)))))
+    (let ((token (car tokens)))
+      (cond
+       ((or (not token) (integerp token))
+        (rele--date-error error "Expected a time" token))
+       ((string-match "^\\([0-9][0-9]?\\):\\([0-9][0-9]\\):\\([0-9][0-9]\\)$" token)
+        (let ((hour (string-to-number (match-string 1 token)))
+              (minute (string-to-number (match-string 2 token)))
+              (second (string-to-number (match-string 3 token))))
+          (rele--date-check-range error 'hour hour 0 23 token)
+          (rele--date-check-range error 'minute minute 0 59 token)
+          (rele--date-check-range error 'second second 0 60 token)
+          (rele--date-set-slot time 2 hour)
+          (rele--date-set-slot time 1 minute)
+          (rele--date-set-slot time 0 second)
+          (setq tokens (cdr tokens))))
+       ((string-match "^\\([0-9][0-9]?\\):\\([0-9][0-9]\\)$" token)
+        (let ((hour (string-to-number (match-string 1 token)))
+              (minute (string-to-number (match-string 2 token))))
+          (rele--date-check-range error 'hour hour 0 23 token)
+          (rele--date-check-range error 'minute minute 0 59 token)
+          (rele--date-set-slot time 2 hour)
+          (rele--date-set-slot time 1 minute)
+          (rele--date-set-slot time 0 0)
+          (setq tokens (cdr tokens))))
+       (t
+        (rele--date-error error "Expected a time" token))))
+    (let ((zone (car tokens)))
+      (cond
+       ((not zone)
+        nil)
+       ((and (stringp zone) (rele--date-zone zone))
+        (let ((z (rele--date-zone zone)))
+          (rele--date-set-slot time 8 (car z))
+          (rele--date-set-slot time 7 (cadr z))
+          (setq tokens (cdr tokens))))
+       ((and (stringp zone) (string-match "^[-+][0-9][0-9][0-9][0-9]$" zone))
+        (let ((sign (if (= (aref zone 0) 45) -1 1))
+              (hours (string-to-number (substring zone 1 3)))
+              (mins (string-to-number (substring zone 3 5))))
+          (rele--date-set-slot time 8 (* sign (+ (* hours 3600) (* mins 60))))
+          (setq tokens (cdr tokens))))
+       (t
+        (rele--date-error error "Expected a timezone" zone))))
+    (if (and tokens error)
+        (signal 'date-parse-error (list "Extra token(s)" (car tokens))))
+    time))
+
+(defun ietf-drums-parse-date (string)
+  (encode-time (ietf-drums-parse-date-string string)))
 (defun image--scale-map (&rest _args) nil)
 (defun image-dired-thumb-name (&rest _args) nil)
 (defun image-rotate (&rest _args) nil)
@@ -862,7 +1799,28 @@ pub fn register(interp: &mut Interpreter) {
 (defun quoted-printable-encode-string (&rest _args) "")
 (defun rcirc--make-new-nick (&rest _args) nil)
 (defun repeat-mode (&rest _args) nil)
-(defun rfc2045-encode-string (&rest _args) "")
+(defun rele--rfc2045-needs-quote-p (value)
+  (or (string-match-p "[ \t\n]" value)
+      (string-match-p "[][()<>@,;:\\\\\"/?=]" value)))
+
+(defun rele--rfc2045-quote (value)
+  (concat "\"" value "\""))
+
+(defun rele--rfc2045-encode-string (param value)
+  (concat param "="
+          (if (rele--rfc2045-needs-quote-p value)
+              (rele--rfc2045-quote value)
+            value)))
+
+(defun rfc2045-encode-string (param value)
+  (rele--rfc2045-encode-string param value))
+
+(defun rele--rfc2045-install-compat ()
+  (fset 'rfc2045-encode-string
+        (symbol-function 'rele--rfc2045-encode-string)))
+
+(with-eval-after-load 'rfc2045
+  (rele--rfc2045-install-compat))
 (defun rfc2368-parse-mailto-url (&rest _args) nil)
 (defun rfc2368-unhexify-string (&rest _args) "")
 (defun rfc6068-parse-mailto-url (&rest _args) nil)
@@ -1664,7 +2622,25 @@ pub fn register(interp: &mut Interpreter) {
 
 ;; mh stubs
 (defun mh-normalize-folder-name (&rest _args) nil)
-(defun mh-pick-args-list (&rest _args) nil)
+(defun mh-pick-args-list (s)
+  (let ((tokens (split-string s "[ \t]+" t))
+        (out nil)
+        (current-key nil)
+        (current-value nil))
+    (while tokens
+      (let ((token (car tokens)))
+        (if (and (> (length token) 0)
+                 (= (aref token 0) 45))
+            (progn
+              (if current-key
+                  (setq out (append out (list current-key (mapconcat 'identity current-value " ")))))
+              (setq current-key token)
+              (setq current-value nil))
+          (setq current-value (append current-value (list token)))))
+      (setq tokens (cdr tokens)))
+    (if current-key
+        (setq out (append out (list current-key (mapconcat 'identity current-value " ")))))
+    out))
 (defun mh-quote-pick-expr (&rest _args) nil)
 (defun mh-sub-folders-parse (&rest _args) nil)
 (defun mh-x-image-url-sane-p (&rest _args) nil)

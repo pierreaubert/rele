@@ -253,14 +253,16 @@ pub fn prim_switch_to_buffer(args: &LispObject) -> ElispResult<LispObject> {
             let n = crate::obarray::symbol_name(*sym);
             Some(buffer::with_registry_mut(|r| r.create(&n)))
         }
+        LispObject::Cons(_) => crate::primitives_buffer::buffer_object_id(&a)
+            .filter(|id| buffer::with_registry(|r| r.get(*id).is_some())),
         _ => None,
     };
     if let Some(id) = id {
         buffer::with_registry_mut(|r| r.set_current(id));
     }
-    let name = buffer::with_registry(|r| r.get(r.current_id()).map(|b| b.name.clone()));
-    Ok(name
-        .map(|n| LispObject::string(&n))
+    let id = buffer::with_registry(|r| r.current_id());
+    Ok(Some(id)
+        .map(crate::primitives_buffer::make_buffer_object)
         .unwrap_or(LispObject::nil()))
 }
 
@@ -272,11 +274,13 @@ pub fn prim_set_buffer(args: &LispObject) -> ElispResult<LispObject> {
             let n = crate::obarray::symbol_name(*sym);
             buffer::with_registry(|r| r.lookup_by_name(&n))
         }
+        LispObject::Cons(_) => crate::primitives_buffer::buffer_object_id(&a)
+            .filter(|id| buffer::with_registry(|r| r.get(*id).is_some())),
         _ => None,
     };
     if let Some(id) = id {
         buffer::with_registry_mut(|r| r.set_current(id));
-        Ok(a)
+        Ok(crate::primitives_buffer::make_buffer_object(id))
     } else {
         Ok(LispObject::nil())
     }

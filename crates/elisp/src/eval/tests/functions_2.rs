@@ -582,7 +582,7 @@ fn test_batched_defun_stubs_resolve_round4() {
         ("(mapatoms #'ignore)", "nil"),
         ("(unintern 'foo)", "nil"),
         ("(add-to-list 'tl4 'a)", "(a)"),
-        ("(buffer-list)", "(\"*scratch*\")"),
+        ("(mapcar #'buffer-name (buffer-list))", "(\"*scratch*\")"),
         ("(buffer-modified-p)", "nil"),
         ("(window-buffer)", "*scratch*"),
         ("(window-pixel-width)", "80"),

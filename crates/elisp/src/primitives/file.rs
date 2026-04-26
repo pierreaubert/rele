@@ -493,14 +493,18 @@ pub fn prim_insert_file_contents(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_write_region(args: &LispObject) -> ElispResult<LispObject> {
-    let start = int_arg(args, 0, 1) as usize;
-    let end = int_arg(args, 1, 1) as usize;
     let file = str_arg(args, 2).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
     let append = args
         .nth(3)
         .map(|a| !matches!(a, LispObject::Nil))
         .unwrap_or(false);
-    let text = buffer::with_current(|b| b.substring(start, end));
+    let text = if let Some(text) = str_arg(args, 0) {
+        text
+    } else {
+        let start = int_arg(args, 0, 1) as usize;
+        let end = int_arg(args, 1, 1) as usize;
+        buffer::with_current(|b| b.substring(start, end))
+    };
     use std::io::Write;
     let r = if append {
         std::fs::OpenOptions::new()
@@ -525,12 +529,13 @@ pub fn prim_find_file_noselect(args: &LispObject) -> ElispResult<LispObject> {
     // Check if a buffer already visits this file.
     let existing = buffer::with_registry(|r| {
         r.buffers
-            .values()
-            .find(|b| b.file_name.as_deref() == Some(&s))
-            .map(|b| b.name.clone())
+            .iter()
+            .find(|(_, b)| b.file_name.as_deref() == Some(&s))
+            .map(|(&id, _)| id)
     });
-    if let Some(name) = existing {
-        return Ok(LispObject::string(&name));
+    if let Some(id) = existing {
+        buffer::with_registry_mut(|r| r.set_current(id));
+        return Ok(crate::primitives_buffer::make_buffer_object(id));
     }
     // Create a fresh buffer named after the basename.
     let base = std::path::Path::new(&s)
@@ -538,18 +543,20 @@ pub fn prim_find_file_noselect(args: &LispObject) -> ElispResult<LispObject> {
         .and_then(|b| b.to_str())
         .unwrap_or("file")
         .to_string();
-    let id = buffer::with_registry_mut(|r| r.create(&base));
-    if let Ok(text) = std::fs::read_to_string(&s) {
-        buffer::with_registry_mut(|r| {
-            if let Some(b) = r.get_mut(id) {
-                b.text = text;
-                b.point = 1;
-                b.modified = false;
-                b.file_name = Some(s.clone());
-            }
-        });
-    }
-    Ok(LispObject::string(&base))
+    let id = buffer::with_registry_mut(|r| r.create_unique(&base));
+    let text = std::fs::read_to_string(&s).unwrap_or_default();
+    buffer::with_registry_mut(|r| {
+        if let Some(b) = r.get_mut(id) {
+            b.text = text;
+            b.point = 1;
+            b.modified = false;
+            b.modified_status = None;
+            b.modified_tick = 1;
+            b.file_name = Some(s.clone());
+        }
+        r.set_current(id);
+    });
+    Ok(crate::primitives_buffer::make_buffer_object(id))
 }
 
 // ---- Utility ----------------------------------------------------------

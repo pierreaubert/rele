@@ -20,7 +20,19 @@ use crate::object::LispObject;
 /// to a BufferId. A `LispObject::String("<name>")` is treated as a
 /// buffer name; a `LispObject::Nil` means "current buffer".
 /// Returns None if the named buffer doesn't exist.
-fn resolve_buffer(arg: &LispObject) -> Option<BufferId> {
+pub fn make_buffer_object(id: BufferId) -> LispObject {
+    LispObject::cons(LispObject::symbol("buffer"), LispObject::integer(id as i64))
+}
+
+pub fn buffer_object_id(obj: &LispObject) -> Option<BufferId> {
+    let (car, cdr) = obj.destructure_cons()?;
+    if car.as_symbol().as_deref() != Some("buffer") {
+        return None;
+    }
+    cdr.as_integer().map(|n| n as BufferId)
+}
+
+pub fn resolve_buffer(arg: &LispObject) -> Option<BufferId> {
     match arg {
         LispObject::Nil => Some(buffer::with_registry(|r| r.current_id())),
         LispObject::String(name) => buffer::with_registry(|r| r.lookup_by_name(name)),
@@ -28,6 +40,10 @@ fn resolve_buffer(arg: &LispObject) -> Option<BufferId> {
         LispObject::Symbol(id) => {
             let name = crate::obarray::symbol_name(*id);
             buffer::with_registry(|r| r.lookup_by_name(&name))
+        }
+        LispObject::Cons(_) => {
+            let id = buffer_object_id(arg)?;
+            buffer::with_registry(|r| r.get(id).map(|_| id))
         }
         _ => None,
     }
@@ -46,11 +62,7 @@ fn string_arg(args: &LispObject, n: usize) -> Option<String> {
 
 pub fn prim_bufferp(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().unwrap_or(LispObject::nil());
-    // A "buffer" here is a string that names an existing buffer.
-    let is_buf = match a {
-        LispObject::String(name) => buffer::with_registry(|r| r.lookup_by_name(&name).is_some()),
-        _ => false,
-    };
+    let is_buf = resolve_buffer(&a).is_some();
     Ok(LispObject::from(is_buf))
 }
 
@@ -75,23 +87,15 @@ pub fn prim_buffer_name(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_current_buffer(_args: &LispObject) -> ElispResult<LispObject> {
-    let name = buffer::with_registry(|r| {
-        let id = r.current_id();
-        r.get(id).map(|b| b.name.clone())
-    });
-    Ok(LispObject::string(&name.unwrap_or_default()))
+    let id = buffer::with_registry(|r| r.current_id());
+    Ok(make_buffer_object(id))
 }
 
 pub fn prim_buffer_list(_args: &LispObject) -> ElispResult<LispObject> {
-    let names = buffer::with_registry(|r| {
-        r.list()
-            .into_iter()
-            .filter_map(|id| r.get(id).map(|b| b.name.clone()))
-            .collect::<Vec<_>>()
-    });
+    let ids = buffer::with_registry(|r| r.list());
     let mut out = LispObject::nil();
-    for n in names.into_iter().rev() {
-        out = LispObject::cons(LispObject::string(&n), out);
+    for id in ids.into_iter().rev() {
+        out = LispObject::cons(make_buffer_object(id), out);
     }
     Ok(out)
 }
@@ -100,10 +104,11 @@ pub fn prim_get_buffer(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     match resolve_buffer(&a) {
         Some(id) => {
-            let name = buffer::with_registry(|r| r.get(id).map(|b| b.name.clone()));
-            Ok(name
-                .map(|n| LispObject::string(&n))
-                .unwrap_or(LispObject::nil()))
+            if buffer::with_registry(|r| r.get(id).is_some()) {
+                Ok(make_buffer_object(id))
+            } else {
+                Ok(LispObject::nil())
+            }
         }
         None => Ok(LispObject::nil()),
     }
@@ -116,10 +121,31 @@ pub fn prim_get_buffer_create(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
         _ => return Err(ElispError::WrongTypeArgument("string".into())),
     };
-    buffer::with_registry_mut(|r| {
-        r.create(&name);
-    });
-    Ok(LispObject::string(&name))
+    let id = buffer::with_registry_mut(|r| r.create(&name));
+    Ok(make_buffer_object(id))
+}
+
+pub fn prim_generate_new_buffer(args: &LispObject) -> ElispResult<LispObject> {
+    let name = string_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let id = buffer::with_registry_mut(|r| r.create_unique(&name));
+    Ok(make_buffer_object(id))
+}
+
+pub fn prim_generate_new_buffer_name(args: &LispObject) -> ElispResult<LispObject> {
+    let name = string_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let unique = buffer::with_registry(|r| r.generate_new_name(&name));
+    Ok(LispObject::string(&unique))
+}
+
+pub fn prim_make_indirect_buffer(args: &LispObject) -> ElispResult<LispObject> {
+    let base = args
+        .first()
+        .and_then(|a| resolve_buffer(&a))
+        .ok_or_else(|| ElispError::WrongTypeArgument("buffer".into()))?;
+    let name = string_arg(args, 1).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let id = buffer::with_registry_mut(|r| r.make_indirect(base, &name))
+        .ok_or_else(|| ElispError::WrongTypeArgument("buffer".into()))?;
+    Ok(make_buffer_object(id))
 }
 
 pub fn prim_rename_buffer(args: &LispObject) -> ElispResult<LispObject> {
@@ -167,17 +193,15 @@ pub fn prim_kill_buffer(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_other_buffer(_args: &LispObject) -> ElispResult<LispObject> {
     // Return the first buffer that isn't the current one. If there's
     // none, fall back to the current buffer.
-    let name = buffer::with_registry(|r| {
+    let id = buffer::with_registry(|r| {
         let cur = r.current_id();
         r.buffers
             .iter()
             .find(|&(&id, _)| id != cur)
-            .map(|(_, b)| b.name.clone())
-            .or_else(|| r.get(cur).map(|b| b.name.clone()))
+            .map(|(&id, _)| id)
+            .or_else(|| r.get(cur).map(|_| cur))
     });
-    Ok(name
-        .map(|n| LispObject::string(&n))
-        .unwrap_or(LispObject::nil()))
+    Ok(id.map(make_buffer_object).unwrap_or(LispObject::nil()))
 }
 
 pub fn prim_get_file_buffer(args: &LispObject) -> ElispResult<LispObject> {
@@ -187,13 +211,11 @@ pub fn prim_get_file_buffer(args: &LispObject) -> ElispResult<LispObject> {
     };
     let found = buffer::with_registry(|r| {
         r.buffers
-            .values()
-            .find(|b| b.file_name.as_deref() == Some(&path))
-            .map(|b| b.name.clone())
+            .iter()
+            .find(|(_, b)| b.file_name.as_deref() == Some(&path))
+            .map(|(&id, _)| id)
     });
-    Ok(found
-        .map(|n| LispObject::string(&n))
-        .unwrap_or(LispObject::nil()))
+    Ok(found.map(make_buffer_object).unwrap_or(LispObject::nil()))
 }
 
 pub fn prim_buffer_modified_p(args: &LispObject) -> ElispResult<LispObject> {
@@ -203,19 +225,24 @@ pub fn prim_buffer_modified_p(args: &LispObject) -> ElispResult<LispObject> {
         .or_else(|| Some(buffer::with_registry(|r| r.current_id())));
     let modified = buffer::with_registry(|r| {
         id.and_then(|id| r.get(id))
-            .map(|b| b.modified)
-            .unwrap_or(false)
+            .and_then(|b| b.modified_status.clone())
+            .unwrap_or_else(LispObject::nil)
     });
-    Ok(LispObject::from(modified))
+    Ok(modified)
 }
 
 pub fn prim_set_buffer_modified_p(args: &LispObject) -> ElispResult<LispObject> {
-    let flag = args
-        .first()
-        .map(|a| !matches!(a, LispObject::Nil))
-        .unwrap_or(false);
-    buffer::with_current_mut(|b| b.modified = flag);
-    Ok(LispObject::from(flag))
+    let value = args.first().unwrap_or(LispObject::nil());
+    let status = if matches!(value, LispObject::Nil) {
+        None
+    } else {
+        Some(value.clone())
+    };
+    buffer::with_current_mut(|b| {
+        b.modified = status.is_some();
+        b.modified_status = status;
+    });
+    Ok(value)
 }
 
 pub fn prim_buffer_modified_tick(_args: &LispObject) -> ElispResult<LispObject> {
@@ -235,12 +262,28 @@ pub fn prim_buffer_size(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_buffer_enable_undo(_args: &LispObject) -> ElispResult<LispObject> {
-    // We don't track undo state — succeed silently.
+    buffer::with_current_mut(|b| {
+        b.locals
+            .entry("buffer-undo-list".to_string())
+            .or_insert_with(LispObject::nil);
+    });
     Ok(LispObject::nil())
 }
 
 pub fn prim_buffer_disable_undo(_args: &LispObject) -> ElispResult<LispObject> {
+    buffer::with_current_mut(|b| {
+        b.locals.remove("buffer-undo-list");
+    });
     Ok(LispObject::nil())
+}
+
+pub fn prim_buffer_local_variables(_args: &LispObject) -> ElispResult<LispObject> {
+    let locals = buffer::with_current(|b| b.locals.clone());
+    let mut out = LispObject::nil();
+    for (name, value) in locals {
+        out = LispObject::cons(LispObject::cons(LispObject::symbol(&name), value), out);
+    }
+    Ok(out)
 }
 
 pub fn prim_buffer_string(_args: &LispObject) -> ElispResult<LispObject> {
@@ -263,6 +306,16 @@ pub fn prim_buffer_file_name(args: &LispObject) -> ElispResult<LispObject> {
     let f = buffer::with_registry(|r| r.get(id).and_then(|b| b.file_name.clone()));
     Ok(f.map(|s| LispObject::string(&s))
         .unwrap_or(LispObject::nil()))
+}
+
+pub fn prim_set_visited_file_name(args: &LispObject) -> ElispResult<LispObject> {
+    let file = args.first().and_then(|arg| arg.as_string().cloned());
+    buffer::with_current_mut(|b| {
+        b.file_name = file.clone();
+    });
+    Ok(file
+        .map(|path| LispObject::string(&path))
+        .unwrap_or_else(LispObject::nil))
 }
 
 // ---- Point / positions ------------------------------------------------
@@ -518,21 +571,22 @@ pub fn prim_preceding_char(_args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_delete_region(args: &LispObject) -> ElispResult<LispObject> {
     let start = int_arg(args, 0, 1) as usize;
     let end = int_arg(args, 1, 1) as usize;
-    buffer::with_current_mut(|b| b.delete_region(start, end));
+    buffer::with_registry_mut(|r| r.delete_current_region(start, end));
     Ok(LispObject::nil())
 }
 
 pub fn prim_delete_char(args: &LispObject) -> ElispResult<LispObject> {
     let n = int_arg(args, 0, 1);
-    buffer::with_current_mut(|b| {
+    let (start, end) = buffer::with_current(|b| {
         if n >= 0 {
             let end = (b.point as i64 + n).min(b.point_max() as i64) as usize;
-            b.delete_region(b.point, end);
+            (b.point, end)
         } else {
             let start = (b.point as i64 + n).max(b.point_min() as i64) as usize;
-            b.delete_region(start, b.point);
+            (start, b.point)
         }
     });
+    buffer::with_registry_mut(|r| r.delete_current_region(start, end));
     Ok(LispObject::nil())
 }
 
@@ -544,7 +598,7 @@ pub fn prim_insert_char(args: &LispObject) -> ElispResult<LispObject> {
     let count = int_arg(args, 1, 1) as usize;
     if let Some(c) = char::from_u32(ch as u32) {
         let s: String = std::iter::repeat(c).take(count).collect();
-        buffer::with_current_mut(|b| b.insert(&s));
+        buffer::with_registry_mut(|r| r.insert_current(&s, false));
     }
     Ok(LispObject::nil())
 }
@@ -841,13 +895,13 @@ pub fn prim_marker_position(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_marker_buffer(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().unwrap_or(LispObject::nil());
     if let Some(id) = marker_id(&a) {
-        let name = buffer::with_registry(|r| {
+        let buffer_id = buffer::with_registry(|r| {
             r.markers
                 .get(&id)
-                .and_then(|m| r.get(m.buffer).map(|b| b.name.clone()))
+                .and_then(|m| r.get(m.buffer).map(|_| m.buffer))
         });
-        return Ok(name
-            .map(|n| LispObject::string(&n))
+        return Ok(buffer_id
+            .map(make_buffer_object)
             .unwrap_or(LispObject::nil()));
     }
     Ok(LispObject::nil())
@@ -1536,24 +1590,123 @@ pub fn prim_text_property_not_all(args: &LispObject) -> ElispResult<LispObject> 
     }
 }
 
+pub fn prim_get_char_property(args: &LispObject, include_empty: bool) -> ElispResult<LispObject> {
+    let pos = args
+        .first()
+        .and_then(|a| a.as_integer())
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer".into()))?;
+    let prop = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    if pos < 1 {
+        return Ok(LispObject::nil());
+    }
+
+    let value = buffer::with_registry(|r| {
+        let buf = r.current_id();
+        let mut best: Option<(i64, buffer::OverlayId, LispObject)> = None;
+        for ov in r.overlays.values() {
+            if ov.buffer != buf {
+                continue;
+            }
+            let (Some(start), Some(end)) = (ov.start, ov.end) else {
+                continue;
+            };
+            let pos = pos as usize;
+            let covers = if start == end {
+                include_empty && pos == start
+            } else {
+                pos >= start && pos < end
+            };
+            if !covers {
+                continue;
+            }
+            let Some((_, val)) = ov.plist.iter().find(|(key, _)| *key == prop) else {
+                continue;
+            };
+            let priority = ov
+                .plist
+                .iter()
+                .find(|(key, _)| key.as_symbol().as_deref() == Some("priority"))
+                .and_then(|(_, value)| value.as_integer())
+                .unwrap_or(0);
+            let replace = best.as_ref().is_none_or(|(best_priority, best_id, _)| {
+                priority > *best_priority || (priority == *best_priority && ov.id > *best_id)
+            });
+            if replace {
+                best = Some((priority, ov.id, val.clone()));
+            }
+        }
+        best.map(|(_, _, value)| value)
+    });
+    Ok(value.unwrap_or_else(LispObject::nil))
+}
+
 pub fn prim_marker_insertion_type(args: &LispObject) -> ElispResult<LispObject> {
     let _marker = args.first().unwrap_or(LispObject::nil());
     Ok(LispObject::nil())
 }
 
 pub fn prim_buffer_swap_text(args: &LispObject) -> ElispResult<LispObject> {
-    let _ = args;
-    Err(ElispError::Signal(Box::new(crate::error::SignalData {
-        symbol: LispObject::symbol("error"),
-        data: LispObject::cons(
-            LispObject::string("buffer-swap-text not supported"),
-            LispObject::nil(),
-        ),
-    })))
+    let other = args
+        .first()
+        .and_then(|a| resolve_buffer(&a))
+        .ok_or_else(|| ElispError::WrongTypeArgument("buffer".into()))?;
+    buffer::with_registry_mut(|r| {
+        let current = r.current_id();
+        if current == other {
+            return;
+        }
+        let Some(mut current_buf) = r.buffers.remove(&current) else {
+            return;
+        };
+        let Some(mut other_buf) = r.buffers.remove(&other) else {
+            r.buffers.insert(current, current_buf);
+            return;
+        };
+
+        std::mem::swap(&mut current_buf.text, &mut other_buf.text);
+        std::mem::swap(&mut current_buf.point, &mut other_buf.point);
+        std::mem::swap(&mut current_buf.mark, &mut other_buf.mark);
+        std::mem::swap(&mut current_buf.mark_active, &mut other_buf.mark_active);
+        std::mem::swap(&mut current_buf.modified, &mut other_buf.modified);
+        std::mem::swap(
+            &mut current_buf.modified_status,
+            &mut other_buf.modified_status,
+        );
+        std::mem::swap(&mut current_buf.modified_tick, &mut other_buf.modified_tick);
+        std::mem::swap(&mut current_buf.restriction, &mut other_buf.restriction);
+        std::mem::swap(&mut current_buf.locals, &mut other_buf.locals);
+
+        r.buffers.insert(current, current_buf);
+        r.buffers.insert(other, other_buf);
+
+        for marker in r.markers.values_mut() {
+            if marker.buffer == current {
+                marker.buffer = other;
+            } else if marker.buffer == other {
+                marker.buffer = current;
+            }
+        }
+        for overlay in r.overlays.values_mut() {
+            if overlay.buffer == current {
+                overlay.buffer = other;
+            } else if overlay.buffer == other {
+                overlay.buffer = current;
+            }
+        }
+    });
+    Ok(LispObject::nil())
 }
 
 pub fn prim_overlay_lists(_args: &LispObject) -> ElispResult<LispObject> {
-    Ok(LispObject::cons(LispObject::nil(), LispObject::nil()))
+    let ids = buffer::with_registry(|r| {
+        let buf = r.current_id();
+        r.overlays
+            .values()
+            .filter(|ov| ov.buffer == buf && ov.start.is_some() && ov.end.is_some())
+            .map(|ov| ov.id)
+            .collect::<Vec<_>>()
+    });
+    Ok(LispObject::cons(list_from_ids(ids), LispObject::nil()))
 }
 
 pub fn prim_overlay_recenter(_args: &LispObject) -> ElispResult<LispObject> {
@@ -1586,12 +1739,26 @@ fn is_truthy(obj: &LispObject) -> bool {
     !matches!(obj, LispObject::Nil)
 }
 
+fn list_len(args: &LispObject) -> usize {
+    let mut len = 0;
+    let mut cur = args.clone();
+    while let Some((_, rest)) = cur.destructure_cons() {
+        len += 1;
+        cur = rest;
+    }
+    len
+}
+
 pub fn prim_overlayp(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().unwrap_or(LispObject::nil());
     Ok(LispObject::from(overlay_id_of(&a).is_some()))
 }
 
 pub fn prim_make_overlay(args: &LispObject) -> ElispResult<LispObject> {
+    let argc = list_len(args);
+    if !(2..=5).contains(&argc) {
+        return Err(ElispError::WrongNumberOfArguments);
+    }
     let start = args
         .first()
         .and_then(|a| a.as_integer())
@@ -1604,7 +1771,7 @@ pub fn prim_make_overlay(args: &LispObject) -> ElispResult<LispObject> {
     let buf_id = match args.nth(2) {
         Some(LispObject::Nil) | None => buffer::with_registry(|r| r.current_id()),
         Some(obj) => {
-            resolve_buffer(&obj).unwrap_or_else(|| buffer::with_registry(|r| r.current_id()))
+            resolve_buffer(&obj).ok_or_else(|| ElispError::WrongTypeArgument("buffer".into()))?
         }
     };
     let fa = args.nth(3).map(|o| is_truthy(&o)).unwrap_or(false);
@@ -1655,11 +1822,12 @@ pub fn prim_move_overlay(args: &LispObject) -> ElispResult<LispObject> {
     let buf_id = match args.nth(3) {
         Some(LispObject::Nil) | None => buffer::with_registry(|r| {
             r.overlay_get(id)
+                .filter(|o| o.start.is_some() && o.end.is_some() && r.get(o.buffer).is_some())
                 .map(|o| o.buffer)
                 .unwrap_or(r.current_id())
         }),
         Some(obj) => {
-            resolve_buffer(&obj).unwrap_or_else(|| buffer::with_registry(|r| r.current_id()))
+            resolve_buffer(&obj).ok_or_else(|| ElispError::WrongTypeArgument("buffer".into()))?
         }
     };
     let (pmin, pmax) = buffer::with_registry(|r| {
@@ -1718,17 +1886,17 @@ pub fn prim_overlay_buffer(args: &LispObject) -> ElispResult<LispObject> {
     let Some(id) = overlay_id_of(&a) else {
         return Ok(LispObject::nil());
     };
-    let name = buffer::with_registry(|r| {
+    let buffer_id = buffer::with_registry(|r| {
         let ov = r.overlay_get(id)?;
         // A detached overlay (deleted) has start/end None and
         // `overlay-buffer` must return nil.
         if ov.start.is_none() {
             return None;
         }
-        r.get(ov.buffer).map(|b| b.name.clone())
+        r.get(ov.buffer).map(|_| ov.buffer)
     });
-    Ok(name
-        .map(|n| LispObject::string(&n))
+    Ok(buffer_id
+        .map(make_buffer_object)
         .unwrap_or(LispObject::nil()))
 }
 
@@ -1836,6 +2004,18 @@ pub fn prim_remove_overlays(args: &LispObject) -> ElispResult<LispObject> {
 
     buffer::with_registry_mut(|r| {
         let buf = r.current_id();
+        if list_len(args) == 0 {
+            let ids = r
+                .overlays
+                .values()
+                .filter(|ov| ov.buffer == buf && ov.start.is_some() && ov.end.is_some())
+                .map(|ov| ov.id)
+                .collect::<Vec<_>>();
+            for id in ids {
+                r.delete_overlay(id);
+            }
+            return;
+        }
         let pmax = r.get(buf).map(|b| b.point_max()).unwrap_or(1);
         let b = beg.max(1) as usize;
         let e = end_arg.map(|n| n.max(1) as usize).unwrap_or(pmax);
@@ -1859,19 +2039,79 @@ pub fn prim_remove_overlays(args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::nil())
 }
 
+pub fn prim_next_overlay_change(args: &LispObject) -> ElispResult<LispObject> {
+    let default = buffer::with_current(|b| b.point);
+    let pos = int_arg(args, 0, default as i64).max(1) as usize;
+    let next = buffer::with_registry(|r| {
+        let buf = r.current_id();
+        let point_max = r.get(buf).map(|b| b.point_max()).unwrap_or(1);
+        if pos >= point_max {
+            return point_max;
+        }
+
+        let mut candidate = point_max;
+        for ov in r.overlays.values() {
+            if ov.buffer != buf {
+                continue;
+            }
+            for boundary in [ov.start, ov.end].into_iter().flatten() {
+                if boundary > pos && boundary < candidate {
+                    candidate = boundary;
+                }
+            }
+        }
+        candidate
+    });
+    Ok(LispObject::integer(next as i64))
+}
+
+pub fn prim_previous_overlay_change(args: &LispObject) -> ElispResult<LispObject> {
+    let default = buffer::with_current(|b| b.point);
+    let pos = int_arg(args, 0, default as i64).max(1) as usize;
+    let previous = buffer::with_registry(|r| {
+        let buf = r.current_id();
+        let point_min = r.get(buf).map(|b| b.point_min()).unwrap_or(1);
+        if pos <= point_min {
+            return point_min;
+        }
+
+        let mut candidate = point_min;
+        for ov in r.overlays.values() {
+            if ov.buffer != buf {
+                continue;
+            }
+            for boundary in [ov.start, ov.end].into_iter().flatten() {
+                if boundary < pos && boundary > candidate {
+                    candidate = boundary;
+                }
+            }
+        }
+        candidate
+    });
+    Ok(LispObject::integer(previous as i64))
+}
+
 pub fn prim_buffer_base_buffer(args: &LispObject) -> ElispResult<LispObject> {
     let id = args
         .first()
         .and_then(|a| resolve_buffer(&a))
         .unwrap_or_else(|| buffer::with_registry(|r| r.current_id()));
-    let name = buffer::with_registry(|r| r.get(id).map(|b| b.name.clone()));
-    Ok(name
-        .map(|n| LispObject::string(&n))
-        .unwrap_or(LispObject::nil()))
+    let base = buffer::with_registry(|r| r.get(id).and_then(|b| b.base_buffer));
+    Ok(base.map(make_buffer_object).unwrap_or(LispObject::nil()))
 }
 
 pub fn prim_buffer_last_name(args: &LispObject) -> ElispResult<LispObject> {
-    prim_buffer_name(args)
+    let id = match args.first() {
+        Some(a) => match resolve_buffer(&a) {
+            Some(id) => id,
+            None => return Ok(LispObject::nil()),
+        },
+        None => buffer::with_registry(|r| r.current_id()),
+    };
+    let name = buffer::with_registry(|r| r.get(id).and_then(|b| b.last_name.clone()));
+    Ok(name
+        .map(|n| LispObject::string(&n))
+        .unwrap_or(LispObject::nil()))
 }
 
 pub fn prim_buffer_chars_modified_tick(args: &LispObject) -> ElispResult<LispObject> {
@@ -2006,6 +2246,9 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "buffer-list" => prim_buffer_list(args),
         "get-buffer" => prim_get_buffer(args),
         "get-buffer-create" => prim_get_buffer_create(args),
+        "generate-new-buffer" => prim_generate_new_buffer(args),
+        "generate-new-buffer-name" => prim_generate_new_buffer_name(args),
+        "make-indirect-buffer" => prim_make_indirect_buffer(args),
         "rename-buffer" => prim_rename_buffer(args),
         "kill-buffer" => prim_kill_buffer(args),
         "other-buffer" => prim_other_buffer(args),
@@ -2019,6 +2262,7 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "buffer-file-name" => prim_buffer_file_name(args),
         "buffer-enable-undo" => prim_buffer_enable_undo(args),
         "buffer-disable-undo" => prim_buffer_disable_undo(args),
+        "buffer-local-variables" => prim_buffer_local_variables(args),
         "point" => prim_point(args),
         "point-min" => prim_point_min(args),
         "point-max" => prim_point_max(args),
@@ -2077,6 +2321,8 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "get-truename-buffer" => prim_get_truename_buffer(args),
         "buffer-text-pixel-size" => prim_buffer_text_pixel_size(args),
         "text-property-not-all" => prim_text_property_not_all(args),
+        "get-char-property" => prim_get_char_property(args, false),
+        "get-pos-property" => prim_get_char_property(args, true),
         "marker-insertion-type" => prim_marker_insertion_type(args),
         "buffer-swap-text" => prim_buffer_swap_text(args),
         "overlay-lists" => prim_overlay_lists(args),
@@ -2094,9 +2340,12 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "overlays-at" => prim_overlays_at(args),
         "overlays-in" => prim_overlays_in(args),
         "remove-overlays" => prim_remove_overlays(args),
+        "next-overlay-change" => prim_next_overlay_change(args),
+        "previous-overlay-change" => prim_previous_overlay_change(args),
         "buffer-base-buffer" => prim_buffer_base_buffer(args),
         "buffer-last-name" => prim_buffer_last_name(args),
         "buffer-chars-modified-tick" => prim_buffer_chars_modified_tick(args),
+        "set-visited-file-name" => prim_set_visited_file_name(args),
         "forward-word" => prim_forward_word(args),
         "backward-word" => prim_backward_word(args),
         "forward-comment" => prim_forward_comment(args),
@@ -2117,6 +2366,9 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "buffer-list",
     "get-buffer",
     "get-buffer-create",
+    "generate-new-buffer",
+    "generate-new-buffer-name",
+    "make-indirect-buffer",
     "rename-buffer",
     "kill-buffer",
     "other-buffer",
@@ -2130,8 +2382,13 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "buffer-substring",
     "buffer-substring-no-properties",
     "buffer-file-name",
+    "buffer-last-name",
+    "buffer-base-buffer",
+    "buffer-chars-modified-tick",
+    "set-visited-file-name",
     "buffer-enable-undo",
     "buffer-disable-undo",
+    "buffer-local-variables",
     "point",
     "point-min",
     "point-max",
@@ -2191,12 +2448,34 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "search-forward",
     "search-backward",
     "replace-match",
+    "get-char-property",
+    "get-pos-property",
+    "text-property-not-all",
+    "marker-insertion-type",
+    "buffer-swap-text",
     "forward-word",
     "backward-word",
     "forward-comment",
     "syntax-ppss",
     "current-indentation",
     "delete-all-overlays",
+    "overlay-lists",
+    "overlay-recenter",
+    "overlayp",
+    "make-overlay",
+    "delete-overlay",
+    "move-overlay",
+    "overlay-start",
+    "overlay-end",
+    "overlay-buffer",
+    "overlay-put",
+    "overlay-get",
+    "overlay-properties",
+    "overlays-at",
+    "overlays-in",
+    "remove-overlays",
+    "next-overlay-change",
+    "previous-overlay-change",
 ];
 
 #[cfg(test)]
@@ -2380,8 +2659,10 @@ mod tests {
         let _b = buffer::with_registry_mut(|r| r.create("b"));
         let _c = buffer::with_registry_mut(|r| r.create("c"));
         let result = prim_other_buffer(&LispObject::nil()).unwrap();
-        // Must return *some* buffer name (not nil, not the current).
-        let name = result.as_string().map(|s| s.to_string());
+        // Must return *some* buffer object (not nil, not the current).
+        let name = buffer_object_id(&result).and_then(|id| {
+            buffer::with_registry(|registry| registry.get(id).map(|buf| buf.name.clone()))
+        });
         assert!(name.is_some());
         assert_ne!(
             name.as_deref(),

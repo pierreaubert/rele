@@ -121,8 +121,10 @@ fn run_full_bootstrap_chain() {
 #[test]
 fn test_current_buffer_no_editor() {
     let interp = Interpreter::new();
-    let result = interp.eval(read("(current-buffer)").unwrap()).unwrap();
-    assert_eq!(result, LispObject::nil());
+    let result = interp
+        .eval(read("(buffer-name (current-buffer))").unwrap())
+        .unwrap();
+    assert_eq!(result, LispObject::string("*scratch*"));
 }
 #[test]
 fn test_buffer_name() {
@@ -134,7 +136,11 @@ fn test_buffer_name() {
 fn test_get_buffer() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
-    let result = interp.eval(read("(get-buffer \"foo\")").unwrap()).unwrap();
+    let result = interp
+        .eval(
+            read("(progn (get-buffer-create \"foo\") (buffer-name (get-buffer \"foo\")))").unwrap(),
+        )
+        .unwrap();
     assert_eq!(result, LispObject::string("foo"));
 }
 #[test]
@@ -142,14 +148,16 @@ fn test_get_buffer_create() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     let result = interp
-        .eval(read("(get-buffer-create \"test\")").unwrap())
+        .eval(read("(buffer-name (get-buffer-create \"test\"))").unwrap())
         .unwrap();
     assert_eq!(result, LispObject::string("test"));
 }
 #[test]
 fn test_buffer_list() {
     let interp = Interpreter::new();
-    let result = interp.eval(read("(buffer-list)").unwrap()).unwrap();
+    let result = interp
+        .eval(read("(mapcar #'buffer-name (buffer-list))").unwrap())
+        .unwrap();
     assert_eq!(
         result,
         LispObject::cons(LispObject::string("*scratch*"), LispObject::nil())
@@ -364,7 +372,7 @@ fn test_buffer_live_p() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);
     let result = interp
-        .eval(read("(buffer-live-p \"anything\")").unwrap())
+        .eval(read("(buffer-live-p (current-buffer))").unwrap())
         .unwrap();
     assert_eq!(result, LispObject::t());
 }

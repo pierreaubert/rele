@@ -53,6 +53,7 @@ pub fn prim_eq(args: &LispObject) -> ElispResult<LispObject> {
         (LispObject::Symbol(x), LispObject::Symbol(y)) => x == y,
         (LispObject::Cons(x), LispObject::Cons(y)) => {
             std::sync::Arc::ptr_eq(x, y)
+                || same_tagged_runtime_object(&a, &b)
                 || (is_function_cons(&LispObject::Cons(x.clone()))
                     && is_function_cons(&LispObject::Cons(y.clone()))
                     && *x.lock() == *y.lock())
@@ -63,6 +64,25 @@ pub fn prim_eq(args: &LispObject) -> ElispResult<LispObject> {
         _ => false,
     };
     Ok(LispObject::from(result))
+}
+
+fn same_tagged_runtime_object(a: &LispObject, b: &LispObject) -> bool {
+    let Some((a_tag, a_id)) = tagged_runtime_object(a) else {
+        return false;
+    };
+    let Some((b_tag, b_id)) = tagged_runtime_object(b) else {
+        return false;
+    };
+    a_tag == b_tag && a_id == b_id
+}
+
+fn tagged_runtime_object(obj: &LispObject) -> Option<(String, i64)> {
+    let (tag, id) = obj.destructure_cons()?;
+    let tag = tag.as_symbol()?;
+    if !matches!(tag.as_str(), "buffer" | "marker" | "overlay") {
+        return None;
+    }
+    Some((tag, id.as_integer()?))
 }
 
 fn is_function_cons(obj: &LispObject) -> bool {
@@ -96,7 +116,28 @@ pub fn prim_equal(args: &LispObject) -> ElispResult<LispObject> {
             crate::object::current_string_value(a) == crate::object::current_string_value(b),
         ));
     }
+    if let Some(equal) = overlays_equal(&a, &b) {
+        return Ok(LispObject::from(equal));
+    }
     Ok(LispObject::from(a == b))
+}
+
+fn overlays_equal(a: &LispObject, b: &LispObject) -> Option<bool> {
+    let (a_tag, a_id) = tagged_runtime_object(a)?;
+    let (b_tag, b_id) = tagged_runtime_object(b)?;
+    if a_tag != "overlay" || b_tag != "overlay" {
+        return None;
+    }
+    Some(crate::buffer::with_registry(|r| {
+        let a = r.overlay_get(a_id as usize);
+        let b = r.overlay_get(b_id as usize);
+        match (a, b) {
+            (Some(a), Some(b)) => {
+                a.buffer == b.buffer && a.start == b.start && a.end == b.end && a.plist == b.plist
+            }
+            _ => false,
+        }
+    }))
 }
 
 pub fn prim_not(args: &LispObject) -> ElispResult<LispObject> {

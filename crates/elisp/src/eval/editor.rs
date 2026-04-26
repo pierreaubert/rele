@@ -34,6 +34,7 @@ pub(super) fn eval_buffer_size(
 }
 pub(super) fn eval_insert(
     args: Value,
+    before_markers: bool,
     env: &Arc<RwLock<Environment>>,
     editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
     macros: &MacroTable,
@@ -62,7 +63,7 @@ pub(super) fn eval_insert(
         cb.insert(&text_str);
     } else {
         drop(e);
-        crate::buffer::with_current_mut(|b| b.insert(&text_str));
+        crate::buffer::with_registry_mut(|r| r.insert_current(&text_str, before_markers));
     }
     Ok(Value::nil())
 }
@@ -123,6 +124,18 @@ pub(super) fn eval_delete_char(
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {
         cb.delete_char(n);
+    } else {
+        drop(e);
+        let (start, end) = crate::buffer::with_current(|b| {
+            if n >= 0 {
+                let end = (b.point as i64 + n).min(b.point_max() as i64) as usize;
+                (b.point, end)
+            } else {
+                let start = (b.point as i64 + n).max(b.point_min() as i64) as usize;
+                (start, b.point)
+            }
+        });
+        crate::buffer::with_registry_mut(|r| r.delete_current_region(start, end));
     }
     Ok(Value::nil())
 }
@@ -166,7 +179,10 @@ pub(super) fn eval_find_file(
         let success = cb.find_file(&path_str);
         Ok(if success { Value::t() } else { Value::nil() })
     } else {
-        Ok(Value::nil())
+        let args = LispObject::cons(LispObject::string(&path_str), LispObject::nil());
+        let result = crate::primitives_file::call_file_primitive("find-file", &args, state)
+            .ok_or_else(|| ElispError::VoidFunction("find-file".to_string()))??;
+        Ok(obj_to_value(result))
     }
 }
 pub(super) fn eval_save_buffer(
@@ -177,6 +193,10 @@ pub(super) fn eval_save_buffer(
         let success = cb.save_buffer();
         Ok(if success { Value::t() } else { Value::nil() })
     } else {
+        crate::buffer::with_current_mut(|buffer| {
+            buffer.modified = false;
+            buffer.modified_status = None;
+        });
         Ok(Value::nil())
     }
 }

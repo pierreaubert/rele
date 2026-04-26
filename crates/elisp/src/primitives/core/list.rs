@@ -467,6 +467,18 @@ fn eq_test(a: &LispObject, b: &LispObject) -> bool {
         (LispObject::T, LispObject::T) => true,
         (LispObject::Integer(x), LispObject::Integer(y)) => x == y,
         (LispObject::Symbol(x), LispObject::Symbol(y)) => x == y,
+        (LispObject::Cons(_), LispObject::Cons(_)) => {
+            tagged_runtime_object(a) == tagged_runtime_object(b)
+        }
         _ => false,
     }
+}
+
+fn tagged_runtime_object(obj: &LispObject) -> Option<(String, i64)> {
+    let (tag, id) = obj.destructure_cons()?;
+    let tag = tag.as_symbol()?;
+    if !matches!(tag.as_str(), "buffer" | "marker" | "overlay") {
+        return None;
+    }
+    Some((tag, id.as_integer()?))
 }

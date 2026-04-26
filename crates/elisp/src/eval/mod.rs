@@ -1258,16 +1258,12 @@ pub(super) fn eval_inner(
                     result
                 }
                 "current-buffer" => {
-                    if editor.read().is_none() {
-                        Ok(Value::nil())
-                    } else {
-                        let result = crate::primitives_buffer::call_buffer_primitive(
-                            "current-buffer",
-                            &LispObject::nil(),
-                        )
-                        .ok_or_else(|| ElispError::VoidFunction("current-buffer".to_string()))??;
-                        Ok(obj_to_value(result))
-                    }
+                    let result = crate::primitives_buffer::call_buffer_primitive(
+                        "current-buffer",
+                        &LispObject::nil(),
+                    )
+                    .ok_or_else(|| ElispError::VoidFunction("current-buffer".to_string()))??;
+                    Ok(obj_to_value(result))
                 }
                 "set-buffer" => {
                     let buf = value_to_obj(eval(
@@ -1297,14 +1293,18 @@ pub(super) fn eval_inner(
                     Ok(obj_to_value(result))
                 }
                 "get-buffer" => {
-                    let name = eval(
+                    let name = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
                         editor,
                         macros,
                         state,
-                    )?;
-                    Ok(name)
+                    )?);
+                    let args = LispObject::cons(name, LispObject::nil());
+                    let result =
+                        crate::primitives_buffer::call_buffer_primitive("get-buffer", &args)
+                            .ok_or_else(|| ElispError::VoidFunction("get-buffer".to_string()))??;
+                    Ok(obj_to_value(result))
                 }
                 "get-buffer-create" => {
                     let name = value_to_obj(eval(
@@ -1331,14 +1331,18 @@ pub(super) fn eval_inner(
                     Ok(obj_to_value(result))
                 }
                 "buffer-live-p" => {
-                    let _buf = eval(
+                    let buf = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
                         editor,
                         macros,
                         state,
-                    )?;
-                    Ok(obj_to_value(LispObject::t()))
+                    )?);
+                    let args = LispObject::cons(buf, LispObject::nil());
+                    let result =
+                        crate::primitives_buffer::call_buffer_primitive("buffer-live-p", &args)
+                            .ok_or_else(|| ElispError::VoidFunction("buffer-live-p".to_string()))??;
+                    Ok(obj_to_value(result))
                 }
                 "with-current-buffer" => {
                     let buf = value_to_obj(eval(
@@ -1417,18 +1421,26 @@ pub(super) fn eval_inner(
                     )?)
                     .as_integer()
                     .unwrap_or(1) as usize;
-                    crate::buffer::with_current_mut(|b| b.delete_region(start, end));
+                    crate::buffer::with_registry_mut(|r| r.delete_current_region(start, end));
                     Ok(Value::nil())
                 }
                 "generate-new-buffer-name" => {
-                    let name = eval(
+                    let name = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
                         editor,
                         macros,
                         state,
-                    )?;
-                    Ok(name)
+                    )?);
+                    let args = LispObject::cons(name, LispObject::nil());
+                    let result = crate::primitives_buffer::call_buffer_primitive(
+                        "generate-new-buffer-name",
+                        &args,
+                    )
+                    .ok_or_else(|| {
+                        ElispError::VoidFunction("generate-new-buffer-name".to_string())
+                    })??;
+                    Ok(obj_to_value(result))
                 }
                 "file-name-quote" => {
                     let name_val = eval(
@@ -1460,7 +1472,15 @@ pub(super) fn eval_inner(
                     Ok(obj_to_value(LispObject::string(unquoted)))
                 }
                 "insert" | "insert-before-markers" | "insert-before-markers-and-inherit" => {
-                    eval_insert(obj_to_value(cdr), env, editor, macros, state)
+                    let before_markers = sym_name != "insert";
+                    eval_insert(
+                        obj_to_value(cdr),
+                        before_markers,
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )
                 }
                 "prog1" => eval_prog1(obj_to_value(cdr), env, editor, macros, state),
                 "prog2" => eval_prog2(obj_to_value(cdr), env, editor, macros, state),
@@ -1678,7 +1698,16 @@ pub(super) fn eval_inner(
                         }))),
                         Err(ElispError::StackOverflow) => Err(ElispError::StackOverflow),
                         Err(ref e) if e.is_eval_ops_exceeded() => Err(e.clone()),
-                        Err(_) => Ok(Value::t()),
+                        Err(ElispError::Signal(signal)) => {
+                            Ok(obj_to_value(LispObject::cons(signal.symbol, signal.data)))
+                        }
+                        Err(error) => {
+                            let signal = match error.to_signal() {
+                                ElispError::Signal(signal) => signal,
+                                _ => unreachable!("to_signal must return a signal"),
+                            };
+                            Ok(obj_to_value(LispObject::cons(signal.symbol, signal.data)))
+                        }
                     }
                 }
                 "skip-unless" => {
@@ -2516,7 +2545,6 @@ pub(super) fn eval_inner(
                     }
                     Ok(Value::nil())
                 }
-                "define-abbrev-table" => Ok(Value::nil()),
                 "cl-destructuring-bind" => {
                     let vars = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let value_form = cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
@@ -4352,8 +4380,7 @@ pub(super) fn eval_inner(
                     let data = state.match_data_as_objects();
                     Ok(state.list_from_objects(data))
                 }
-                "replace-match" | "re-search-forward" | "re-search-backward" | "search-forward"
-                | "search-backward" => Ok(Value::nil()),
+                "replace-match" | "re-search-forward" | "re-search-backward" => Ok(Value::nil()),
                 "version-to-list" => {
                     let ver_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let ver =
