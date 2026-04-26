@@ -17,6 +17,8 @@ jit = [
 [dependencies]
 parking_lot = { workspace = true }
 regex = { workspace = true }
+num-bigint = "0.4.6"
+num-traits = "0.2.19"
 
 # JIT (optional)
 cranelift-codegen = { workspace = true, optional = true }

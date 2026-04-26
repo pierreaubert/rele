@@ -66,8 +66,8 @@ use bootstrap_shortcuts::{
     is_generated_translation_table_let, register_generated_translation_table_let,
 };
 use builtins::{
-    emacs_regex_to_rust, eval_dolist, eval_featurep, eval_format, eval_get, eval_mapc, eval_mapcar,
-    eval_provide, eval_put, eval_require,
+    emacs_regex_to_rust, eval_dolist, eval_dotimes, eval_featurep, eval_format, eval_get,
+    eval_mapc, eval_mapcar, eval_provide, eval_put, eval_require,
 };
 use editor::{
     eval_beginning_of_buffer, eval_buffer_size, eval_buffer_string, eval_delete_char,
@@ -83,8 +83,10 @@ use error_forms::{
 use functions::{apply_lambda, eval_apply, eval_funcall, eval_funcall_form};
 use special_forms::{
     eval_and, eval_cond, eval_defalias, eval_defconst, eval_defmacro, eval_defun, eval_defvar,
-    eval_dlet, eval_if, eval_let, eval_let_star, eval_loop, eval_macroexpand, eval_or, eval_prog1,
-    eval_prog2, eval_progn, eval_setq, eval_unless, eval_when, eval_while, expand_macro,
+    eval_dlet, eval_if, eval_let, eval_let_star, eval_loop, eval_macroexpand,
+    eval_make_local_variable, eval_make_variable_buffer_local, eval_or, eval_prog1, eval_prog2,
+    eval_progn, eval_setq, eval_setq_local, eval_unless, eval_when, eval_while, expand_macro,
+    reject_cyclic_function_indirection,
 };
 
 // Re-export pub(crate) functions that vm.rs needs
@@ -1108,6 +1110,7 @@ pub(super) fn eval_inner(
                 }
                 "if" => eval_if(obj_to_value(cdr), env, editor, macros, state),
                 "setq" => eval_setq(obj_to_value(cdr), env, editor, macros, state),
+                "setq-local" => eval_setq_local(obj_to_value(cdr), env, editor, macros, state),
                 "defun" => eval_defun(obj_to_value(cdr), env, editor, macros, state),
                 "let" => {
                     if is_generated_translation_table_let(&cdr) {
@@ -1183,23 +1186,39 @@ pub(super) fn eval_inner(
                     result
                 }
                 "current-buffer" => {
-                    let e = editor.read();
-                    match e.as_ref() {
-                        Some(_) => Ok(obj_to_value(LispObject::string("*scratch*"))),
-                        None => Ok(Value::nil()),
+                    if editor.read().is_none() {
+                        Ok(Value::nil())
+                    } else {
+                        let result = crate::primitives_buffer::call_buffer_primitive(
+                            "current-buffer",
+                            &LispObject::nil(),
+                        )
+                        .ok_or_else(|| ElispError::VoidFunction("current-buffer".to_string()))??;
+                        Ok(obj_to_value(result))
                     }
                 }
                 "set-buffer" => {
-                    let _buf = eval(
+                    let buf = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
                         editor,
                         macros,
                         state,
-                    )?;
-                    Ok(Value::nil())
+                    )?);
+                    let args = LispObject::cons(buf, LispObject::nil());
+                    let result =
+                        crate::primitives_window::call_window_primitive("set-buffer", &args)
+                            .ok_or_else(|| ElispError::VoidFunction("set-buffer".to_string()))??;
+                    Ok(obj_to_value(result))
                 }
-                "buffer-name" => Ok(obj_to_value(LispObject::string("*scratch*"))),
+                "buffer-name" => {
+                    let result = crate::primitives_buffer::call_buffer_primitive(
+                        "buffer-name",
+                        &LispObject::nil(),
+                    )
+                    .ok_or_else(|| ElispError::VoidFunction("buffer-name".to_string()))??;
+                    Ok(obj_to_value(result))
+                }
                 "get-buffer" => {
                     let name = eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
@@ -1211,17 +1230,28 @@ pub(super) fn eval_inner(
                     Ok(name)
                 }
                 "get-buffer-create" => {
-                    let name = eval(
+                    let name = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
                         editor,
                         macros,
                         state,
-                    )?;
-                    Ok(name)
+                    )?);
+                    let args = LispObject::cons(name, LispObject::nil());
+                    let result =
+                        crate::primitives_buffer::call_buffer_primitive("get-buffer-create", &args)
+                            .ok_or_else(|| {
+                                ElispError::VoidFunction("get-buffer-create".to_string())
+                            })??;
+                    Ok(obj_to_value(result))
                 }
                 "buffer-list" => {
-                    Ok(state.list_from_values(std::iter::once(state.heap_string("*scratch*"))))
+                    let result = crate::primitives_buffer::call_buffer_primitive(
+                        "buffer-list",
+                        &LispObject::nil(),
+                    )
+                    .ok_or_else(|| ElispError::VoidFunction("buffer-list".to_string()))??;
+                    Ok(obj_to_value(result))
                 }
                 "buffer-live-p" => {
                     let _buf = eval(
@@ -1234,15 +1264,23 @@ pub(super) fn eval_inner(
                     Ok(obj_to_value(LispObject::t()))
                 }
                 "with-current-buffer" => {
-                    let _buf = eval(
+                    let buf = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
                         editor,
                         macros,
                         state,
-                    )?;
+                    )?);
+                    let previous = crate::buffer::with_registry(|registry| registry.current_id());
+                    let args = LispObject::cons(buf, LispObject::nil());
+                    let _ = crate::primitives_window::call_window_primitive("set-buffer", &args)
+                        .ok_or_else(|| ElispError::VoidFunction("set-buffer".to_string()))??;
                     let body = cdr.rest().unwrap_or(LispObject::nil());
-                    eval_progn(obj_to_value(body), env, editor, macros, state)
+                    let result = eval_progn(obj_to_value(body), env, editor, macros, state);
+                    crate::buffer::with_registry_mut(|registry| {
+                        registry.set_current(previous);
+                    });
+                    result
                 }
                 "with-temp-buffer" => {
                     crate::buffer::push_temp_buffer();
@@ -1995,6 +2033,7 @@ pub(super) fn eval_inner(
                 "mapcar" => eval_mapcar(obj_to_value(cdr), env, editor, macros, state),
                 "mapc" => eval_mapc(obj_to_value(cdr), env, editor, macros, state),
                 "dolist" => eval_dolist(obj_to_value(cdr), env, editor, macros, state),
+                "dotimes" => eval_dotimes(obj_to_value(cdr), env, editor, macros, state),
                 "maphash" => {
                     let func = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
@@ -2195,13 +2234,22 @@ pub(super) fn eval_inner(
                 }
                 "defvar-local" => {
                     let var_name = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let sym_name = var_name
-                        .as_symbol()
+                    let id = var_name
+                        .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    state.special_vars.write().insert(id);
+                    let key = crate::obarray::intern("variable-buffer-local");
+                    state.put_plist(id, key, LispObject::t());
                     if let Some(val_expr) = cdr.nth(1) {
                         let val = eval(obj_to_value(val_expr), env, editor, macros, state)?;
-                        let id = crate::obarray::intern(&sym_name);
-                        state.set_value_cell(id, value_to_obj(val));
+                        let value = value_to_obj(val);
+                        state.set_value_cell(id, value.clone());
+                        state.global_env.write().set_id(id, value);
+                        state.put_plist(
+                            id,
+                            crate::obarray::intern("default-toplevel-value"),
+                            state.get_value_cell(id).unwrap_or_else(LispObject::nil),
+                        );
                     }
                     Ok(obj_to_value(var_name))
                 }
@@ -2226,6 +2274,43 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
+                    let sym_id = sym
+                        .as_symbol_id()
+                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    let name = crate::obarray::symbol_name(sym_id);
+                    if matches!(
+                        name.as_str(),
+                        "nil"
+                            | "t"
+                            | "initial-window-system"
+                            | "most-positive-fixnum"
+                            | "most-negative-fixnum"
+                    ) || name.starts_with(':')
+                    {
+                        return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                            symbol: LispObject::symbol("setting-constant"),
+                            data: LispObject::cons(sym, LispObject::nil()),
+                        })));
+                    }
+                    if env.read().get_id_local(sym_id).is_some()
+                        && !Arc::ptr_eq(env, &state.global_env)
+                    {
+                        env.write().set_id(sym_id, LispObject::unbound_marker());
+                    } else if state.specpdl.read().iter().any(|(id, _)| *id == sym_id) {
+                        state
+                            .global_env
+                            .write()
+                            .set_id(sym_id, LispObject::unbound_marker());
+                    } else {
+                        state.clear_value_cell(sym_id);
+                        state.global_env.write().unset_id(sym_id);
+                        crate::buffer::with_registry_mut(|registry| {
+                            let current = registry.current_id();
+                            if let Some(buffer) = registry.get_mut(current) {
+                                buffer.locals.remove(&name);
+                            }
+                        });
+                    }
                     Ok(obj_to_value(sym))
                 }
                 "garbage-collect" => {
@@ -2261,25 +2346,19 @@ pub(super) fn eval_inner(
                     let arg = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let val = eval(obj_to_value(arg), env, editor, macros, state)?;
                     let val_obj = value_to_obj(val);
-                    match val_obj {
-                        LispObject::Integer(n) => {
-                            Ok(obj_to_value(LispObject::integer(n.wrapping_add(1))))
-                        }
-                        LispObject::Float(f) => Ok(obj_to_value(LispObject::float(f + 1.0))),
-                        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
-                    }
+                    Ok(obj_to_value(crate::primitives::call_primitive(
+                        "1+",
+                        &LispObject::cons(val_obj, LispObject::nil()),
+                    )?))
                 }
                 "1-" => {
                     let arg = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let val = eval(obj_to_value(arg), env, editor, macros, state)?;
                     let val_obj = value_to_obj(val);
-                    match val_obj {
-                        LispObject::Integer(n) => {
-                            Ok(obj_to_value(LispObject::integer(n.wrapping_sub(1))))
-                        }
-                        LispObject::Float(f) => Ok(obj_to_value(LispObject::float(f - 1.0))),
-                        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
-                    }
+                    Ok(obj_to_value(crate::primitives::call_primitive(
+                        "1-",
+                        &LispObject::cons(val_obj, LispObject::nil()),
+                    )?))
                 }
                 "defsubst" => eval_defun(obj_to_value(cdr), env, editor, macros, state),
                 "define-inline" => eval_defun(obj_to_value(cdr), env, editor, macros, state),
@@ -3074,7 +3153,9 @@ pub(super) fn eval_inner(
                     }
                     Ok(last)
                 }
-                "make-variable-buffer-local" => Ok(Value::nil()),
+                "make-variable-buffer-local" => {
+                    eval_make_variable_buffer_local(obj_to_value(cdr), env, editor, macros, state)
+                }
                 "make-hash-table" => {
                     let mut test = crate::object::HashTableTest::Eql;
                     let mut cur = cdr.clone();
@@ -3190,18 +3271,32 @@ pub(super) fn eval_inner(
                     }
                 }
                 "symbol-with-pos-p" => {
-                    let _arg = eval(
+                    let arg = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
                         editor,
                         macros,
                         state,
-                    )?;
-                    Ok(Value::nil())
+                    )?);
+                    let args = LispObject::cons(arg, LispObject::nil());
+                    Ok(obj_to_value(crate::primitives::call_primitive(
+                        "symbol-with-pos-p",
+                        &args,
+                    )?))
                 }
                 "bare-symbol" => {
-                    let arg = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    eval(obj_to_value(arg), env, editor, macros, state)
+                    let arg = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let args = LispObject::cons(arg, LispObject::nil());
+                    Ok(obj_to_value(crate::primitives::call_primitive(
+                        "remove-pos-from-symbol",
+                        &args,
+                    )?))
                 }
                 "vectorp" => {
                     let arg = value_to_obj(eval(
@@ -3216,7 +3311,7 @@ pub(super) fn eval_inner(
                         LispObject::Vector(_)
                     ))))
                 }
-                "recordp" | "bool-vector-p" => {
+                "recordp" => {
                     let _arg = eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
@@ -3225,6 +3320,18 @@ pub(super) fn eval_inner(
                         state,
                     )?;
                     Ok(Value::nil())
+                }
+                "bool-vector-p" => {
+                    let arg = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    Ok(obj_to_value(LispObject::from(
+                        crate::primitives::core::is_bool_vector(&arg),
+                    )))
                 }
                 "char-table-p" => {
                     let arg = value_to_obj(eval(
@@ -3237,6 +3344,43 @@ pub(super) fn eval_inner(
                     Ok(obj_to_value(LispObject::from(
                         crate::primitives::core::is_char_table(&arg),
                     )))
+                }
+                "string-to-list" => {
+                    let value = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let args = LispObject::cons(value, LispObject::nil());
+                    Ok(obj_to_value(crate::primitives::call_primitive(
+                        "string-to-list",
+                        &args,
+                    )?))
+                }
+                "cl-coerce" => {
+                    let value = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let target = value_to_obj(eval(
+                        obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    if target.as_symbol().as_deref() == Some("list") {
+                        if let Some(list) = crate::primitives::core::bool_vector_to_list(&value) {
+                            return Ok(obj_to_value(list));
+                        }
+                    }
+                    let args = LispObject::cons(value, LispObject::cons(target, LispObject::nil()));
+                    Ok(obj_to_value(crate::primitives::cl::prim_cl_coerce(&args)?))
                 }
                 "aref" => {
                     let array = value_to_obj(eval(
@@ -3349,11 +3493,11 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let name = arg
-                        .as_symbol()
+                    let id = arg
+                        .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
                     Ok(obj_to_value(
-                        env.read().get(&name).unwrap_or(LispObject::nil()),
+                        state.get_value_cell(id).unwrap_or_else(LispObject::nil),
                     ))
                 }
                 "default-boundp" => {
@@ -3364,11 +3508,13 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let name = arg
-                        .as_symbol()
+                    let id = arg
+                        .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
                     Ok(obj_to_value(LispObject::from(
-                        env.read().get(&name).is_some(),
+                        state
+                            .get_value_cell(id)
+                            .is_some_and(|v| !v.is_unbound_marker()),
                     )))
                 }
                 "set-default" => {
@@ -3386,10 +3532,12 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let name = sym
-                        .as_symbol()
+                    let id = sym
+                        .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-                    env.write().set(&name, val.clone());
+                    env.write().set_id(id, val.clone());
+                    state.global_env.write().set_id(id, val.clone());
+                    state.set_value_cell(id, val.clone());
                     Ok(obj_to_value(val))
                 }
                 "symbol-function" => {
@@ -3403,7 +3551,15 @@ pub(super) fn eval_inner(
                     let name = arg
                         .as_symbol()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-                    if let Some(val) = env.read().get_function(&name) {
+                    if name == "if" {
+                        return Ok(obj_to_value(LispObject::primitive("if")));
+                    }
+                    if let Some(val) = arg
+                        .as_symbol_id()
+                        .and_then(|id| state.get_function_cell(id))
+                    {
+                        Ok(obj_to_value(val))
+                    } else if let Some(val) = env.read().get_function(&name) {
                         Ok(obj_to_value(val))
                     } else if let Some(m) = macros.read().get(&name).cloned() {
                         let sym_macro = Value::symbol_id(obarray::intern("macro").0);
@@ -3692,6 +3848,7 @@ pub(super) fn eval_inner(
                     let sym_id = sym
                         .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    reject_cyclic_function_indirection(sym_id, &def, state)?;
                     state.set_function_cell(sym_id, def.clone());
                     Ok(obj_to_value(def))
                 }
@@ -3762,8 +3919,31 @@ pub(super) fn eval_inner(
                     let sym_id = sym
                         .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-                    state.set_value_cell(sym_id, val.clone());
-                    state.global_env.write().set_id(sym_id, val.clone());
+                    let name = crate::obarray::symbol_name(sym_id);
+                    let has_local = crate::buffer::with_registry(|registry| {
+                        registry
+                            .get(registry.current_id())
+                            .is_some_and(|buffer| buffer.locals.contains_key(&name))
+                    });
+                    let auto_local = {
+                        let key = crate::obarray::intern("variable-buffer-local");
+                        !state.get_plist(sym_id, key).is_nil()
+                    };
+                    if has_local || auto_local {
+                        crate::buffer::with_registry_mut(|registry| {
+                            let current = registry.current_id();
+                            if let Some(buffer) = registry.get_mut(current) {
+                                buffer.locals.insert(name, val.clone());
+                            }
+                        });
+                    } else if env.read().get_id_local(sym_id).is_some()
+                        && !Arc::ptr_eq(env, &state.global_env)
+                    {
+                        env.write().set_id(sym_id, val.clone());
+                    } else {
+                        state.set_value_cell(sym_id, val.clone());
+                        state.global_env.write().set_id(sym_id, val.clone());
+                    }
                     Ok(obj_to_value(val))
                 }
                 "boundp" => {
@@ -3774,11 +3954,58 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
+                    let sym_id = symbol_id_including_constants(&sym)?;
                     let name = symbol_name_including_constants(&sym)?;
+                    if let Some(val) = env.read().get_id_local(sym_id) {
+                        return Ok(obj_to_value(LispObject::from(!val.is_unbound_marker())));
+                    }
+                    let local = crate::buffer::with_registry(|registry| {
+                        registry
+                            .get(registry.current_id())
+                            .and_then(|buffer| buffer.locals.get(&name).cloned())
+                    });
+                    if let Some(val) = local {
+                        return Ok(obj_to_value(LispObject::from(!val.is_unbound_marker())));
+                    }
                     Ok(obj_to_value(LispObject::from(
                         matches!(sym, LispObject::Nil | LispObject::T)
-                            || env.read().get(&name).is_some(),
+                            || state
+                                .get_value_cell(sym_id)
+                                .is_some_and(|val| !val.is_unbound_marker())
+                            || env
+                                .read()
+                                .get(&name)
+                                .is_some_and(|val| !val.is_unbound_marker()),
                     )))
+                }
+                "variable-binding-locus" => {
+                    let sym = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    let sym_id = symbol_id_including_constants(&sym)?;
+                    let name = crate::obarray::symbol_name(sym_id);
+                    let buffer_name = crate::buffer::with_registry(|registry| {
+                        registry.get(registry.current_id()).and_then(|buffer| {
+                            buffer
+                                .locals
+                                .contains_key(&name)
+                                .then(|| buffer.name.clone())
+                        })
+                    });
+                    let locus = if editor.read().is_none() {
+                        None
+                    } else {
+                        buffer_name
+                    };
+                    Ok(obj_to_value(
+                        locus
+                            .map(|name| LispObject::string(&name))
+                            .unwrap_or_else(LispObject::nil),
+                    ))
                 }
                 "fboundp" => {
                     let sym = value_to_obj(eval(
@@ -3791,9 +4018,11 @@ pub(super) fn eval_inner(
                     if matches!(sym, LispObject::Nil | LispObject::T) {
                         return Ok(Value::nil());
                     }
+                    let sym_id = symbol_id_including_constants(&sym)?;
                     let name = symbol_name_including_constants(&sym)?;
                     Ok(obj_to_value(LispObject::from(
-                        env.read().get_function(&name).is_some(),
+                        state.get_function_cell(sym_id).is_some()
+                            || env.read().get_function(&name).is_some(),
                     )))
                 }
                 "symbol-plist" => {
@@ -4711,8 +4940,7 @@ pub(super) fn eval_inner(
                     eval(obj_to_value(name), env, editor, macros, state)
                 }
                 "make-local-variable" => {
-                    let var = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    eval(obj_to_value(var), env, editor, macros, state)
+                    eval_make_local_variable(obj_to_value(cdr), env, editor, macros, state)
                 }
                 "frame-list" | "window-list" => Ok(Value::nil()),
                 "selected-frame" | "selected-window" => Ok(Value::nil()),

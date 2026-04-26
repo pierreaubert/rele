@@ -145,6 +145,18 @@ pub(super) fn stateful_get(args: &LispObject, state: &InterpreterState) -> Elisp
     let prop_id = plist_symbol_id(&prop)?;
     Ok(state.get_plist(sym_id, prop_id))
 }
+
+pub(super) fn stateful_setplist(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let sym = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let plist = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let sym_id = plist_symbol_id(&sym)?;
+    state.replace_plist(sym_id, plist.clone());
+    Ok(plist)
+}
+
 fn plist_symbol_id(obj: &LispObject) -> ElispResult<crate::obarray::SymbolId> {
     symbol_id_including_constants(obj)
 }

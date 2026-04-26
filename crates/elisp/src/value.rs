@@ -1043,8 +1043,12 @@ pub fn obj_to_value(obj: LispObject) -> Value {
                 Value::fixnum(*n)
             } else {
                 // Out-of-range integer → Bignum object on the real heap.
-                with_current_heap(|h| h.bignum_value(*n)).unwrap_or_else(no_heap_nil_fallback)
+                with_current_heap(|h| h.bignum_value(num_bigint::BigInt::from(*n)))
+                    .unwrap_or_else(no_heap_nil_fallback)
             }
+        }
+        LispObject::BigInt(n) => {
+            with_current_heap(|h| h.bignum_value(n.clone())).unwrap_or_else(no_heap_nil_fallback)
         }
         LispObject::Float(f) => Value::float(*f),
         LispObject::Symbol(id) => Value::symbol_id(id.0),
@@ -1156,7 +1160,7 @@ pub fn value_to_obj(val: Value) -> LispObject {
                 }
                 crate::gc::ObjectTag::Bignum => {
                     let obj: &crate::gc::BignumObject = &*(ptr as *const crate::gc::BignumObject);
-                    return LispObject::Integer(obj.value);
+                    return LispObject::BigInt(obj.value.clone());
                 }
                 crate::gc::ObjectTag::Symbol => {
                     // Symbols aren't heap-allocated via Heap; live in
@@ -1204,6 +1208,7 @@ impl Value {
                     Value::float(*n as f64)
                 }
             }
+            LispObject::BigInt(n) => Value::float(n.to_string().parse::<f64>().unwrap_or(0.0)),
             LispObject::Float(f) => Value::float(*f),
             LispObject::Symbol(id) => Value::symbol_id(id.0),
             // Heap objects can't be converted without allocation

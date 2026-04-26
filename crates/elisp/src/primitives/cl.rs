@@ -707,9 +707,11 @@ pub fn prim_cl_type_of(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::T => "boolean",
         LispObject::Symbol(_) => "symbol",
         LispObject::Integer(_) => "integer",
+        LispObject::BigInt(_) => "integer",
         LispObject::Float(_) => "float",
         LispObject::String(_) => "string",
         LispObject::Cons(_) => "cons",
+        LispObject::HashTable(_) if crate::primitives::core::is_bool_vector(&v) => "bool-vector",
         LispObject::Vector(_) => "vector",
         LispObject::HashTable(_) => "hash-table",
         LispObject::Primitive(_) => "subr",
@@ -734,7 +736,9 @@ fn check_single_type(v: &LispObject, type_name: &str) -> bool {
         "number" | "real" => matches!(v, LispObject::Integer(_) | LispObject::Float(_)),
         "cons" => matches!(v, LispObject::Cons(_)),
         "list" => matches!(v, LispObject::Cons(_)) || matches!(v, LispObject::Nil),
-        "vector" | "array" => matches!(v, LispObject::Vector(_)),
+        "vector" => matches!(v, LispObject::Vector(_)),
+        "bool-vector" => crate::primitives::core::is_bool_vector(v),
+        "array" => matches!(v, LispObject::Vector(_)) || crate::primitives::core::is_bool_vector(v),
         "hash-table" => matches!(v, LispObject::HashTable(_)),
         "sequence" => matches!(
             v,
@@ -844,6 +848,9 @@ pub fn prim_cl_coerce(args: &LispObject) -> ElispResult<LispObject> {
             LispObject::Vector(v) => {
                 let items = v.lock().clone();
                 Ok(from_slice(&items))
+            }
+            LispObject::HashTable(_) => {
+                Ok(crate::primitives::core::bool_vector_to_list(&v).unwrap_or(v))
             }
             _ => Ok(v),
         },

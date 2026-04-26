@@ -1,10 +1,13 @@
 use crate::eval::SyncRefCell;
 use crate::obarray::{self, SymbolId};
+use num_bigint::BigInt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Global counter for total cons cell allocations. Monotonically increasing.
 static GLOBAL_CONS_COUNT: AtomicU64 = AtomicU64::new(0);
+const BOOL_VECTOR_MARKER: i64 = -10_000;
+const BOOL_VECTOR_LENGTH: i64 = -10_001;
 
 /// Read the global cons allocation counter.
 pub fn global_cons_count() -> u64 {
@@ -32,6 +35,7 @@ pub enum LispObject {
     T,
     Symbol(SymbolId),
     Integer(i64),
+    BigInt(BigInt),
     Float(f64),
     String(String),
     Cons(ConsCell),
@@ -54,6 +58,9 @@ impl PartialEq for LispObject {
             (LispObject::T, LispObject::T) => true,
             (LispObject::Symbol(a), LispObject::Symbol(b)) => a == b,
             (LispObject::Integer(a), LispObject::Integer(b)) => a == b,
+            (LispObject::BigInt(a), LispObject::BigInt(b)) => a == b,
+            (LispObject::Integer(a), LispObject::BigInt(b))
+            | (LispObject::BigInt(b), LispObject::Integer(a)) => BigInt::from(*a) == *b,
             (LispObject::Float(a), LispObject::Float(b)) => a == b,
             (LispObject::String(a), LispObject::String(b)) => a == b,
             (LispObject::Cons(a), LispObject::Cons(b)) => {
@@ -67,7 +74,7 @@ impl PartialEq for LispObject {
             }
             (LispObject::BytecodeFn(a), LispObject::BytecodeFn(b)) => a == b,
             (LispObject::HashTable(a), LispObject::HashTable(b)) => {
-                Arc::ptr_eq(a, b) || a.lock().test == b.lock().test
+                Arc::ptr_eq(a, b) || *a.lock() == *b.lock()
             }
             _ => false,
         }
@@ -86,6 +93,7 @@ pub struct LispHashTable {
 pub enum HashKey {
     Symbol(SymbolId),
     Integer(i64),
+    BigInt(BigInt),
     String(String),
     /// For 'equal test: use prin1 representation as key
     Printed(String),
@@ -119,6 +127,10 @@ impl std::hash::Hash for HashKey {
                 state.write_u8(1);
                 i.hash(state);
             }
+            HashKey::BigInt(i) => {
+                state.write_u8(4);
+                i.hash(state);
+            }
             HashKey::String(s) => {
                 state.write_u8(2);
                 s.hash(state);
@@ -140,6 +152,7 @@ impl PartialEq for HashKey {
         match (self, other) {
             (HashKey::Symbol(a), HashKey::Symbol(b)) => a == b,
             (HashKey::Integer(a), HashKey::Integer(b)) => a == b,
+            (HashKey::BigInt(a), HashKey::BigInt(b)) => a == b,
             (HashKey::String(a), HashKey::String(b)) => a == b,
             (HashKey::Printed(a), HashKey::Printed(b)) => a == b,
             (HashKey::Identity(a), HashKey::Identity(b)) => a == b,
@@ -156,6 +169,7 @@ impl HashKey {
         match self {
             HashKey::Symbol(id) => LispObject::Symbol(*id),
             HashKey::Integer(n) => LispObject::Integer(*n),
+            HashKey::BigInt(n) => LispObject::BigInt(n.clone()),
             HashKey::String(s) => LispObject::String(s.clone()),
             HashKey::Printed(s) => LispObject::String(s.clone()),
             HashKey::Identity(_) => LispObject::Nil,
@@ -179,6 +193,7 @@ impl LispHashTable {
                 LispObject::T => HashKey::Symbol(obarray::intern("t")),
                 LispObject::Symbol(id) => HashKey::Symbol(*id),
                 LispObject::Integer(i) => HashKey::Integer(*i),
+                LispObject::BigInt(i) => HashKey::BigInt(i.clone()),
                 // Strings, cons, vectors: use pointer identity
                 LispObject::Cons(cell) => HashKey::Identity(std::sync::Arc::as_ptr(cell) as usize),
                 LispObject::Vector(v) => HashKey::Identity(std::sync::Arc::as_ptr(v) as usize),
@@ -189,6 +204,7 @@ impl LispHashTable {
                 // eql: value equality for numbers, identity for rest
                 LispObject::Symbol(id) => HashKey::Symbol(*id),
                 LispObject::Integer(i) => HashKey::Integer(*i),
+                LispObject::BigInt(i) => HashKey::BigInt(i.clone()),
                 LispObject::Float(f) => HashKey::Printed(format!("{:?}", f)),
                 LispObject::String(s) => HashKey::String(s.clone()),
                 _ => HashKey::Printed(obj.prin1_to_string()),
@@ -268,6 +284,14 @@ impl LispObject {
         LispObject::Integer(i)
     }
 
+    pub fn bigint(i: BigInt) -> Self {
+        if let Some(n) = i.to_string().parse::<i64>().ok() {
+            LispObject::Integer(n)
+        } else {
+            LispObject::BigInt(i)
+        }
+    }
+
     pub fn float(f: f64) -> Self {
         LispObject::Float(f)
     }
@@ -289,7 +313,7 @@ impl LispObject {
     }
 
     pub fn is_integer(&self) -> bool {
-        matches!(self, LispObject::Integer(_))
+        matches!(self, LispObject::Integer(_) | LispObject::BigInt(_))
     }
 
     pub fn is_float(&self) -> bool {
@@ -349,6 +373,15 @@ impl LispObject {
     pub fn as_integer(&self) -> Option<i64> {
         match self {
             LispObject::Integer(i) => Some(*i),
+            LispObject::BigInt(i) => i.to_string().parse::<i64>().ok(),
+            _ => None,
+        }
+    }
+
+    pub fn as_bigint(&self) -> Option<BigInt> {
+        match self {
+            LispObject::Integer(i) => Some(BigInt::from(*i)),
+            LispObject::BigInt(i) => Some(i.clone()),
             _ => None,
         }
     }
@@ -428,6 +461,14 @@ impl LispObject {
         LispObject::Primitive(name.to_string())
     }
 
+    pub(crate) fn unbound_marker() -> LispObject {
+        LispObject::Primitive("#<rele-unbound>".to_string())
+    }
+
+    pub(crate) fn is_unbound_marker(&self) -> bool {
+        matches!(self, LispObject::Primitive(name) if name == "#<rele-unbound>")
+    }
+
     pub fn is_primitive(&self) -> bool {
         matches!(self, LispObject::Primitive(_))
     }
@@ -461,6 +502,7 @@ impl LispObject {
             LispObject::T => "t".to_string(),
             LispObject::Symbol(id) => obarray::symbol_name(*id),
             LispObject::Integer(i) => i.to_string(),
+            LispObject::BigInt(i) => i.to_string(),
             LispObject::Float(f) => {
                 let s = f.to_string();
                 if s.contains('.') {
@@ -501,7 +543,30 @@ impl LispObject {
             }
             LispObject::HashTable(ht) => {
                 let ht = ht.lock();
-                format!("#<hash-table count {} test {:?}>", ht.data.len(), ht.test)
+                if is_bool_vector_table(&ht) {
+                    let len = ht
+                        .data
+                        .get(&HashKey::Integer(BOOL_VECTOR_LENGTH))
+                        .and_then(LispObject::as_integer)
+                        .unwrap_or(0)
+                        .max(0) as usize;
+                    let parts: Vec<&str> = (0..len)
+                        .map(|idx| {
+                            if ht
+                                .data
+                                .get(&HashKey::Integer(idx as i64))
+                                .is_some_and(|value| !value.is_nil())
+                            {
+                                "t"
+                            } else {
+                                "nil"
+                            }
+                        })
+                        .collect();
+                    format!("[{}]", parts.join(" "))
+                } else {
+                    format!("#<hash-table count {} test {:?}>", ht.data.len(), ht.test)
+                }
             }
         }
     }
@@ -513,4 +578,10 @@ impl LispObject {
             other => other.prin1_to_string(),
         }
     }
+}
+
+fn is_bool_vector_table(table: &LispHashTable) -> bool {
+    table
+        .data
+        .contains_key(&HashKey::Integer(BOOL_VECTOR_MARKER))
 }

@@ -269,6 +269,29 @@ fn test_vector_decode_preserves_content() {
         .unwrap();
     assert_eq!(result, LispObject::integer(3));
 }
+
+#[test]
+fn test_bool_vector_operations_and_coerce() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let result = interp
+        .eval(
+            read(
+                "(let* ((a (bool-vector nil t nil t))
+                        (b (bool-vector t nil nil t))
+                        (u (bool-vector-union a b))
+                        (n (bool-vector-not a)))
+                   (list (length u)
+                         (cl-coerce u 'list)
+                         (cl-coerce n 'list)
+                         (bool-vector-count-consecutive u t 0)))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(result, read("(4 (t t nil t) (t nil t nil) 2)").unwrap());
+}
+
 #[test]
 fn test_cons_setcar_after_heap_round_trip() {
     let mut interp = Interpreter::new();
@@ -584,4 +607,134 @@ fn test_cl_generic_define_method_installs_primary_function() {
             );
         })
         .unwrap();
+}
+
+#[test]
+fn test_position_symbol_round_trips_through_bare_symbol_helpers() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let value = interp
+        .eval_source(
+            "(let ((s (position-symbol 'bootstrap-pos-symbol 7)))
+               (list
+                 (symbol-with-pos-p s)
+                 (symbol-with-pos-pos s)
+                 (bare-symbol s)
+                 (remove-pos-from-symbol s)))",
+        )
+        .unwrap();
+    assert_eq!(
+        value,
+        read("(t 7 bootstrap-pos-symbol bootstrap-pos-symbol)").unwrap()
+    );
+}
+
+#[test]
+fn test_symbol_plist_watchers_and_command_modes_are_stateful() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let value = interp
+        .eval_source(
+            "(progn
+               (setplist 'bootstrap-plist-symbol '(a 1 b 2))
+               (put 'bootstrap-command 'command-modes '(bootstrap-mode))
+               (add-variable-watcher 'bootstrap-watch-symbol 'watch-one)
+               (add-variable-watcher 'bootstrap-watch-symbol 'watch-one)
+               (add-variable-watcher 'bootstrap-watch-symbol 'watch-two)
+               (let ((before (get-variable-watchers 'bootstrap-watch-symbol)))
+                 (remove-variable-watcher 'bootstrap-watch-symbol 'watch-one)
+                 (list
+                   (symbol-plist 'bootstrap-plist-symbol)
+                   (command-modes 'bootstrap-command)
+                   before
+                   (get-variable-watchers 'bootstrap-watch-symbol))))",
+        )
+        .unwrap();
+    assert_eq!(
+        value,
+        read("((a 1 b 2) (bootstrap-mode) (watch-one watch-two) (watch-two))").unwrap()
+    );
+}
+
+#[test]
+fn test_subr_introspection_handles_primitives_and_special_forms() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let value = interp
+        .eval_source(
+            "(list
+               (subr-name (symbol-function 'car))
+               (subr-arity (symbol-function 'car))
+               (subr-arity (symbol-function 'if)))",
+        )
+        .unwrap();
+    assert_eq!(value, read(r#"("car" (1 . 1) (2 . unevalled))"#).unwrap());
+}
+
+#[test]
+fn test_numeric_comparisons_validate_like_emacs() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert!(interp.eval_source("(=)").is_err());
+    assert!(interp.eval_source("(<)").is_err());
+    assert_eq!(interp.eval_source("(< 1)").unwrap(), LispObject::t());
+    assert_eq!(interp.eval_source("(> 1)").unwrap(), LispObject::t());
+    assert_eq!(
+        interp.eval_source("(< 9 8 'not-a-number)").unwrap(),
+        LispObject::nil()
+    );
+    assert!(interp.eval_source("(< 8 9 'not-a-number)").is_err());
+}
+
+#[test]
+fn test_interpreted_function_p_recognizes_lambda_objects() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    assert_eq!(
+        interp
+            .eval_source("(interpreted-function-p '(lambda (x) x))")
+            .unwrap(),
+        LispObject::t()
+    );
+    assert_eq!(
+        interp
+            .eval_source("(interpreted-function-p (symbol-function 'car))")
+            .unwrap(),
+        LispObject::nil()
+    );
+}
+
+#[test]
+fn test_special_variable_p_tracks_defvar_and_builtin_specials() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let value = interp
+        .eval_source(
+            "(progn
+               (defvar bootstrap-special-var nil)
+               (list
+                 (special-variable-p 'bootstrap-special-var)
+                 (special-variable-p 'standard-output)
+                 (special-variable-p 'bootstrap-not-special)))",
+        )
+        .unwrap();
+    assert_eq!(value, read("(t t nil)").unwrap());
+}
+
+#[test]
+fn test_symbol_function_and_indirect_function_use_function_cells() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let value = interp
+        .eval_source(
+            "(progn
+               (defun bootstrap-if-target () 'ok)
+               (defalias 'bootstrap-if-alias 'bootstrap-if-target)
+               (list
+                 (fboundp 'bootstrap-if-target)
+                 (eq (indirect-function 'bootstrap-if-alias)
+                     (symbol-function 'bootstrap-if-target))))",
+        )
+        .unwrap();
+    assert_eq!(value, read("(t t)").unwrap());
 }

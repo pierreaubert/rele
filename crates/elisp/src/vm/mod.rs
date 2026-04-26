@@ -530,6 +530,9 @@ impl<'a> Vm<'a> {
                     LispObject::Nil => 0,
                     LispObject::String(s) => s.len() as i64,
                     LispObject::Vector(v) => v.lock().len() as i64,
+                    LispObject::HashTable(_) if crate::primitives::core::is_bool_vector(&val) => {
+                        crate::primitives::core::bool_vector_length(&val).unwrap_or(0) as i64
+                    }
                     LispObject::Cons(_) => {
                         let mut n = 0i64;
                         let mut cur = val.clone();
@@ -551,6 +554,13 @@ impl<'a> Vm<'a> {
                 let i = idx.as_integer().unwrap_or(0) as usize;
                 let val = match &array {
                     LispObject::Vector(v) => v.lock().get(i).cloned().unwrap_or(LispObject::nil()),
+                    LispObject::HashTable(_) if crate::primitives::core::is_bool_vector(&array) => {
+                        let args = LispObject::cons(
+                            array.clone(),
+                            LispObject::cons(LispObject::integer(i as i64), LispObject::nil()),
+                        );
+                        crate::primitives::call_primitive("aref", &args)?
+                    }
                     LispObject::String(s) => {
                         let ch = s.chars().nth(i).map(|c| c as i64).unwrap_or(0);
                         LispObject::integer(ch)
@@ -571,6 +581,15 @@ impl<'a> Vm<'a> {
                     if i < v.len() {
                         v[i] = val.clone();
                     }
+                } else if crate::primitives::core::is_bool_vector(&array) {
+                    let args = LispObject::cons(
+                        array.clone(),
+                        LispObject::cons(
+                            LispObject::integer(i as i64),
+                            LispObject::cons(val.clone(), LispObject::nil()),
+                        ),
+                    );
+                    let _ = crate::primitives::call_primitive("aset", &args)?;
                 }
                 self.push_obj(val);
             }

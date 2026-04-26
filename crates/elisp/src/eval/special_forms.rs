@@ -50,16 +50,143 @@ pub(super) fn eval_setq(
             .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
         let val_expr = rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
         let value_val = eval(obj_to_value(val_expr), env, editor, macros, state)?;
-        let value = value_to_obj(value_val);
+        let mut value = value_to_obj(value_val);
+        let name = crate::obarray::symbol_name(id);
+        if is_constant_symbol(&name) && value != LispObject::Symbol(id) {
+            return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                symbol: LispObject::symbol("setting-constant"),
+                data: LispObject::cons(LispObject::Symbol(id), LispObject::nil()),
+            })));
+        }
+        if name == "gc-cons-threshold"
+            && !matches!(value, LispObject::Integer(_) | LispObject::BigInt(_))
+        {
+            return Err(ElispError::WrongTypeArgument("integer".to_string()));
+        }
+        if name == "display-hourglass" {
+            value = LispObject::from(!value.is_nil());
+        }
         if state.special_vars.read().contains(&id) {
+            if env.read().get_id_local(id).is_some() && !Arc::ptr_eq(env, &state.global_env) {
+                env.write().set_id(id, value.clone());
+            }
             state.global_env.write().set_id(id, value);
-        } else {
+        } else if env.read().get_id_local(id).is_some() && !Arc::ptr_eq(env, &state.global_env) {
             env.write().set_id(id, value);
+        } else if has_current_buffer_local(&name) || is_automatic_buffer_local(id, state) {
+            set_current_buffer_local(&name, value);
+        } else {
+            env.write().set_id(id, value.clone());
+            state.global_env.write().set_id(id, value.clone());
+            state.set_value_cell(id, value);
         }
         result = value_val;
         current = rest.rest().unwrap_or(LispObject::nil());
     }
     Ok(result)
+}
+
+pub(super) fn eval_setq_local(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let args_obj = value_to_obj(args);
+    let mut result = Value::nil();
+    let mut current = args_obj;
+    while let Some((name_obj, rest)) = current.destructure_cons() {
+        let id = name_obj
+            .as_symbol_id()
+            .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+        let val_expr = rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
+        let value_val = eval(obj_to_value(val_expr), env, editor, macros, state)?;
+        let value = value_to_obj(value_val);
+        let name = crate::obarray::symbol_name(id);
+        set_current_buffer_local(&name, value);
+        result = value_val;
+        current = rest.rest().unwrap_or(LispObject::nil());
+    }
+    Ok(result)
+}
+
+pub(super) fn eval_make_local_variable(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let args_obj = value_to_obj(args);
+    let var = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let sym = value_to_obj(eval(obj_to_value(var), env, editor, macros, state)?);
+    let id = sym
+        .as_symbol_id()
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let name = crate::obarray::symbol_name(id);
+    let value = current_buffer_local(&name)
+        .or_else(|| env.read().get_id_local(id))
+        .or_else(|| state.get_value_cell(id))
+        .or_else(|| env.read().get(&name))
+        .unwrap_or_else(LispObject::nil);
+    set_current_buffer_local(&name, value);
+    Ok(obj_to_value(LispObject::Symbol(id)))
+}
+
+pub(super) fn eval_make_variable_buffer_local(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let args_obj = value_to_obj(args);
+    let var = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let sym = value_to_obj(eval(obj_to_value(var), env, editor, macros, state)?);
+    let id = sym
+        .as_symbol_id()
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let key = crate::obarray::intern("variable-buffer-local");
+    state.put_plist(id, key, LispObject::t());
+    Ok(obj_to_value(LispObject::Symbol(id)))
+}
+
+fn current_buffer_local(name: &str) -> Option<LispObject> {
+    crate::buffer::with_registry(|registry| {
+        registry
+            .get(registry.current_id())
+            .and_then(|buffer| buffer.locals.get(name).cloned())
+    })
+}
+
+fn has_current_buffer_local(name: &str) -> bool {
+    crate::buffer::with_registry(|registry| {
+        registry
+            .get(registry.current_id())
+            .is_some_and(|buffer| buffer.locals.contains_key(name))
+    })
+}
+
+fn set_current_buffer_local(name: &str, value: LispObject) {
+    crate::buffer::with_registry_mut(|registry| {
+        let current = registry.current_id();
+        if let Some(buffer) = registry.get_mut(current) {
+            buffer.locals.insert(name.to_string(), value);
+        }
+    });
+}
+
+fn is_automatic_buffer_local(id: crate::obarray::SymbolId, state: &InterpreterState) -> bool {
+    let key = crate::obarray::intern("variable-buffer-local");
+    !state.get_plist(id, key).is_nil()
+}
+
+fn is_constant_symbol(name: &str) -> bool {
+    matches!(
+        name,
+        "nil" | "t" | "most-positive-fixnum" | "most-negative-fixnum"
+    ) || name.starts_with(':')
 }
 pub(super) fn eval_defun(
     args: Value,
@@ -396,10 +523,11 @@ pub(super) fn eval_let(
     let new_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
 
     let specpdl_depth = state.specpdl.read().len();
+    let mut local_saves: Vec<(crate::buffer::BufferId, String, LispObject)> = Vec::new();
 
     let mut bindings_list = bindings;
     while let Some((binding, rest)) = bindings_list.destructure_cons() {
-        let (id, value) = if let Some(id) = binding.as_symbol_id() {
+        let (id, mut value) = if let Some(id) = binding.as_symbol_id() {
             (id, LispObject::nil())
         } else if let Some((binding_name, binding_val_wrapper)) = binding.destructure_cons() {
             let binding_id = binding_name
@@ -412,11 +540,21 @@ pub(super) fn eval_let(
         } else {
             return Err(ElispError::WrongTypeArgument("symbol or list".to_string()));
         };
+        if crate::obarray::symbol_name(id) == "display-hourglass" {
+            value = LispObject::from(!value.is_nil());
+        }
 
-        if state.special_vars.read().contains(&id) {
+        let name = crate::obarray::symbol_name(id);
+        if state.special_vars.read().contains(&id) && has_current_buffer_local(&name) {
+            let old = current_buffer_local(&name).unwrap_or_else(LispObject::nil);
+            let buffer_id = crate::buffer::with_registry(|registry| registry.current_id());
+            local_saves.push((buffer_id, name.clone(), old));
+            set_current_buffer_local(&name, value);
+        } else if state.special_vars.read().contains(&id) {
             let global = &state.global_env;
             let old = global.read().get_id(id);
             state.specpdl.write().push((id, old));
+            new_env.write().define_id(id, value.clone());
             global.write().set_id(id, value);
         } else {
             new_env.write().define_id(id, value);
@@ -428,6 +566,13 @@ pub(super) fn eval_let(
     let result = eval_progn_no_tco(obj_to_value(body), &new_env, editor, macros, state);
 
     unwind_specpdl(state, specpdl_depth);
+    for (buffer_id, name, old) in local_saves.into_iter().rev() {
+        crate::buffer::with_registry_mut(|registry| {
+            if let Some(buffer) = registry.get_mut(buffer_id) {
+                buffer.locals.insert(name, old);
+            }
+        });
+    }
 
     result
 }
@@ -583,10 +728,11 @@ pub(super) fn eval_let_star(
     let new_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
 
     let specpdl_depth = state.specpdl.read().len();
+    let mut local_saves: Vec<(crate::buffer::BufferId, String, LispObject)> = Vec::new();
 
     let mut bindings_list = bindings;
     while let Some((binding, rest)) = bindings_list.destructure_cons() {
-        let (id, value) = if let Some(id) = binding.as_symbol_id() {
+        let (id, mut value) = if let Some(id) = binding.as_symbol_id() {
             (id, LispObject::nil())
         } else if let Some((binding_name, binding_val_wrapper)) = binding.destructure_cons() {
             let binding_id = binding_name
@@ -604,11 +750,21 @@ pub(super) fn eval_let_star(
         } else {
             return Err(ElispError::WrongTypeArgument("symbol or list".to_string()));
         };
+        if crate::obarray::symbol_name(id) == "display-hourglass" {
+            value = LispObject::from(!value.is_nil());
+        }
 
-        if state.special_vars.read().contains(&id) {
+        let name = crate::obarray::symbol_name(id);
+        if state.special_vars.read().contains(&id) && has_current_buffer_local(&name) {
+            let old = current_buffer_local(&name).unwrap_or_else(LispObject::nil);
+            let buffer_id = crate::buffer::with_registry(|registry| registry.current_id());
+            local_saves.push((buffer_id, name.clone(), old));
+            set_current_buffer_local(&name, value);
+        } else if state.special_vars.read().contains(&id) {
             let global = &state.global_env;
             let old = global.read().get_id(id);
             state.specpdl.write().push((id, old));
+            new_env.write().define_id(id, value.clone());
             global.write().set_id(id, value);
         } else {
             new_env.write().define_id(id, value);
@@ -620,6 +776,13 @@ pub(super) fn eval_let_star(
     let result = eval_progn_no_tco(obj_to_value(body), &new_env, editor, macros, state);
 
     unwind_specpdl(state, specpdl_depth);
+    for (buffer_id, name, old) in local_saves.into_iter().rev() {
+        crate::buffer::with_registry_mut(|registry| {
+            if let Some(buffer) = registry.get_mut(buffer_id) {
+                buffer.locals.insert(name, old);
+            }
+        });
+    }
 
     result
 }
@@ -846,13 +1009,18 @@ pub(super) fn eval_defvar(
     // because process-global value cells may hold a concurrent test's
     // value — that must NOT block initialization of this interpreter's
     // binding.
-    let is_bound = env.read().get_id_local(id).is_some();
+    let is_bound = state.get_value_cell(id).is_some();
     if !is_bound {
         if let Some(value_expr) = args_obj.nth(1) {
             let value = value_to_obj(eval(obj_to_value(value_expr), env, editor, macros, state)?);
-            env.write().define_id(id, value.clone());
+            state.global_env.write().define_id(id, value.clone());
             // Mirror to the value cell so fresh envs elsewhere can see it.
             state.set_value_cell(id, value);
+            state.put_plist(
+                id,
+                crate::obarray::intern("default-toplevel-value"),
+                state.get_value_cell(id).unwrap_or_else(LispObject::nil),
+            );
         }
     }
     Ok(obj_to_value(LispObject::Symbol(id)))
@@ -876,6 +1044,11 @@ pub(super) fn eval_defconst(
         let value = value_to_obj(eval(obj_to_value(value_expr), env, editor, macros, state)?);
         env.write().define_id(id, value.clone());
         state.set_value_cell(id, value);
+        state.put_plist(
+            id,
+            crate::obarray::intern("default-toplevel-value"),
+            state.get_value_cell(id).unwrap_or_else(LispObject::nil),
+        );
     }
     Ok(obj_to_value(LispObject::Symbol(id)))
 }
@@ -917,6 +1090,32 @@ pub(super) fn eval_defalias(
 
     // defalias writes the function cell — value is a function definition.
     let id = crate::obarray::intern(&name);
+    reject_cyclic_function_indirection(id, &value, state)?;
     state.set_function_cell(id, value);
     Ok(obj_to_value(LispObject::Symbol(id)))
+}
+
+pub(super) fn reject_cyclic_function_indirection(
+    name: crate::obarray::SymbolId,
+    def: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<()> {
+    let mut current = match def {
+        LispObject::Symbol(id) => *id,
+        _ => return Ok(()),
+    };
+    let mut seen = std::collections::HashSet::new();
+    while seen.insert(current) {
+        if current == name {
+            return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                symbol: LispObject::symbol("cyclic-function-indirection"),
+                data: LispObject::cons(LispObject::Symbol(name), LispObject::nil()),
+            })));
+        }
+        match state.get_function_cell(current) {
+            Some(LispObject::Symbol(next)) => current = next,
+            _ => return Ok(()),
+        }
+    }
+    Ok(())
 }

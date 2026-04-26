@@ -21,21 +21,52 @@ pub(super) fn eval_atom(
             return Some(Ok(expr));
         }
         if state.special_vars.read().contains(&sym_id) {
+            if let Some(val) = env.read().get_id_local(sym_id) {
+                if val.is_unbound_marker() {
+                    return Some(Err(ElispError::VoidVariable(name)));
+                }
+                return Some(Ok(obj_to_value(val)));
+            }
+            if state.specpdl.read().iter().any(|(id, _)| *id == sym_id) {
+                let global = state.global_env.read();
+                return Some(match global.get_id(sym_id) {
+                    Some(val) if val.is_unbound_marker() => Err(ElispError::VoidVariable(name)),
+                    Some(val) => Ok(obj_to_value(val)),
+                    None => Err(ElispError::VoidVariable(name)),
+                });
+            }
+            if let Some(local) = current_buffer_local(&name) {
+                if local.is_unbound_marker() {
+                    return Some(Err(ElispError::VoidVariable(name)));
+                }
+                return Some(Ok(obj_to_value(local)));
+            }
             let global = state.global_env.read();
-            return Some(
-                global
-                    .get_id(sym_id)
-                    .map(obj_to_value)
-                    .ok_or(ElispError::VoidVariable(name)),
-            );
+            return Some(match global.get_id(sym_id) {
+                Some(val) if val.is_unbound_marker() => Err(ElispError::VoidVariable(name)),
+                Some(val) => Ok(obj_to_value(val)),
+                None => Err(ElispError::VoidVariable(name)),
+            });
         }
 
         let env = env.read();
-        return Some(
-            env.get_id(sym_id)
-                .map(obj_to_value)
-                .ok_or(ElispError::VoidVariable(name)),
-        );
+        if let Some(val) = env.get_id_local(sym_id) {
+            if val.is_unbound_marker() {
+                return Some(Err(ElispError::VoidVariable(name)));
+            }
+            return Some(Ok(obj_to_value(val)));
+        }
+        if let Some(local) = current_buffer_local(&name) {
+            if local.is_unbound_marker() {
+                return Some(Err(ElispError::VoidVariable(name)));
+            }
+            return Some(Ok(obj_to_value(local)));
+        }
+        return Some(match state.get_value_cell(sym_id) {
+            Some(val) if val.is_unbound_marker() => Err(ElispError::VoidVariable(name)),
+            Some(val) => Ok(obj_to_value(val)),
+            None => Err(ElispError::VoidVariable(name)),
+        });
     }
 
     let expr_obj = value_to_obj(expr);
@@ -48,4 +79,12 @@ pub(super) fn eval_atom(
         LispObject::Cons(_) => None,
         _ => Some(Ok(expr)),
     }
+}
+
+fn current_buffer_local(name: &str) -> Option<LispObject> {
+    crate::buffer::with_registry(|registry| {
+        registry
+            .get(registry.current_id())
+            .and_then(|buffer| buffer.locals.get(name).cloned())
+    })
 }

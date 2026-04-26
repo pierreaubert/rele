@@ -350,6 +350,9 @@ fn seq_length(obj: &LispObject) -> ElispResult<i64> {
         }
         LispObject::Vector(v) => Ok(v.lock().len() as i64),
         LispObject::String(s) => Ok(s.chars().count() as i64),
+        LispObject::HashTable(_) if crate::primitives::core::is_bool_vector(obj) => {
+            Ok(crate::primitives::core::bool_vector_length(obj).unwrap_or(0) as i64)
+        }
         _ => Err(ElispError::WrongTypeArgument("sequence".to_string())),
     }
 }

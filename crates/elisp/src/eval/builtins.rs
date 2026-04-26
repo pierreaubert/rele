@@ -263,21 +263,76 @@ pub(super) fn eval_dolist(
 
     let list = value_to_obj(eval(obj_to_value(list_expr), env, editor, macros, state)?);
 
-    let parent_env = Arc::new(env.read().clone());
-    let loop_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
-
     let body_val = obj_to_value(body);
+    let var_id = crate::obarray::intern(&var_name);
+    let saved_loop_binding = env.read().get_id_local(var_id);
     let mut current = list;
     while let Some((car, cdr)) = current.destructure_cons() {
-        loop_env.write().set(&var_name, car);
-        eval_progn(body_val, &loop_env, editor, macros, state)?;
+        env.write().set_id(var_id, car);
+        eval_progn(body_val, env, editor, macros, state)?;
         current = cdr;
     }
 
-    loop_env.write().set(&var_name, LispObject::nil());
+    env.write().set_id(var_id, LispObject::nil());
     if let Some(result_expr) = result_expr {
-        eval(obj_to_value(result_expr), &loop_env, editor, macros, state)
+        let result = eval(obj_to_value(result_expr), env, editor, macros, state);
+        match saved_loop_binding {
+            Some(value) => env.write().set_id(var_id, value),
+            None => env.write().unset_id(var_id),
+        }
+        result
     } else {
+        match saved_loop_binding {
+            Some(value) => env.write().set_id(var_id, value),
+            None => env.write().unset_id(var_id),
+        }
+        Ok(Value::nil())
+    }
+}
+
+pub(super) fn eval_dotimes(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let args_obj = value_to_obj(args);
+    let spec = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let body = args_obj.rest().unwrap_or(LispObject::nil());
+
+    let var = spec.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let var_name = var
+        .as_symbol()
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let count_expr = spec.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let result_expr = spec.nth(2);
+    let count = value_to_obj(eval(obj_to_value(count_expr), env, editor, macros, state)?)
+        .as_integer()
+        .unwrap_or(0)
+        .max(0);
+
+    let body_val = obj_to_value(body);
+    let var_id = crate::obarray::intern(&var_name);
+    let saved_loop_binding = env.read().get_id_local(var_id);
+    for i in 0..count {
+        env.write().set_id(var_id, LispObject::integer(i));
+        eval_progn(body_val, env, editor, macros, state)?;
+    }
+
+    env.write().set_id(var_id, LispObject::nil());
+    if let Some(result_expr) = result_expr {
+        let result = eval(obj_to_value(result_expr), env, editor, macros, state);
+        match saved_loop_binding {
+            Some(value) => env.write().set_id(var_id, value),
+            None => env.write().unset_id(var_id),
+        }
+        result
+    } else {
+        match saved_loop_binding {
+            Some(value) => env.write().set_id(var_id, value),
+            None => env.write().unset_id(var_id),
+        }
         Ok(Value::nil())
     }
 }

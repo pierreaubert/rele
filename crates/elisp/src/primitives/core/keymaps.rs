@@ -347,12 +347,14 @@ pub fn prim_type_of(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::T => "symbol",
         LispObject::Symbol(_) => "symbol",
         LispObject::Integer(_) => "integer",
+        LispObject::BigInt(_) => "integer",
         LispObject::Float(_) => "float",
         LispObject::String(_) => "string",
         LispObject::Cons(_) => "cons",
         LispObject::Primitive(_) => "subr",
         LispObject::Vector(_) => "vector",
         LispObject::BytecodeFn(_) => "compiled-function",
+        LispObject::HashTable(_) if crate::primitives::core::is_bool_vector(&arg) => "bool-vector",
         LispObject::HashTable(_) => "hash-table",
     };
     Ok(LispObject::symbol(type_name))

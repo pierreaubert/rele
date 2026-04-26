@@ -15,8 +15,11 @@ pub fn make_stdlib_interp() -> Interpreter {
     add_primitives(&mut interp);
     crate::primitives_modules::register(&mut interp);
     interp.define("backtrace-on-error-noninteractive", LispObject::nil());
-    interp.define("most-positive-fixnum", LispObject::integer(i64::MAX));
-    interp.define("most-negative-fixnum", LispObject::integer(i64::MIN));
+    interp.define(
+        "most-positive-fixnum",
+        LispObject::integer((1_i64 << 47) - 1),
+    );
+    interp.define("most-negative-fixnum", LispObject::integer(-(1_i64 << 47)));
     interp.define("emacs-version", LispObject::string("30.2"));
     interp.define("emacs-major-version", LispObject::integer(30));
     interp.define("emacs-minor-version", LispObject::integer(2));
@@ -155,12 +158,41 @@ pub fn make_stdlib_interp() -> Interpreter {
     );
     interp.define("C-@", LispObject::integer(0));
     interp.define("meta-prefix-char", LispObject::integer(27));
-    interp.define("set-default", LispObject::primitive("ignore"));
+    interp.define("set-default", LispObject::primitive("set-default"));
     interp.define("remap", LispObject::nil());
     interp.define("hash-table-p", LispObject::primitive("ignore"));
-    interp.define("local-variable-if-set-p", LispObject::primitive("ignore"));
-    interp.define("make-local-variable", LispObject::primitive("identity"));
-    interp.define("local-variable-p", LispObject::primitive("ignore"));
+    interp.define(
+        "local-variable-if-set-p",
+        LispObject::primitive("local-variable-if-set-p"),
+    );
+    interp.define(
+        "make-local-variable",
+        LispObject::primitive("make-local-variable"),
+    );
+    interp.define(
+        "local-variable-p",
+        LispObject::primitive("local-variable-p"),
+    );
+    interp.define(
+        "variable-binding-locus",
+        LispObject::primitive("variable-binding-locus"),
+    );
+    interp.define(
+        "default-toplevel-value",
+        LispObject::primitive("default-toplevel-value"),
+    );
+    interp.define(
+        "set-default-toplevel-value",
+        LispObject::primitive("set-default-toplevel-value"),
+    );
+    interp.define(
+        "buffer-local-toplevel-value",
+        LispObject::primitive("buffer-local-toplevel-value"),
+    );
+    interp.define(
+        "set-buffer-local-toplevel-value",
+        LispObject::primitive("set-buffer-local-toplevel-value"),
+    );
     interp.define("exit-minibuffer", LispObject::nil());
     interp.define("self-insert-command", LispObject::nil());
     interp.define("undefined", LispObject::nil());
@@ -651,7 +683,10 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("overlayp", LispObject::primitive("overlayp"));
     interp.define("current-message", LispObject::primitive("ignore"));
     interp.define("message-log-max", LispObject::nil());
-    interp.define("kill-all-local-variables", LispObject::primitive("ignore"));
+    interp.define(
+        "kill-all-local-variables",
+        LispObject::primitive("kill-all-local-variables"),
+    );
     interp.define(
         "treesit-language-available-p",
         LispObject::primitive("ignore"),
@@ -756,9 +791,9 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("treesit-available-p", LispObject::primitive("ignore"));
     interp.define("daemonp", LispObject::primitive("ignore"));
     interp.define("subword-mode", LispObject::primitive("ignore"));
-    interp.define("setq-local", LispObject::primitive("ignore"));
-    interp.define("fixnump", LispObject::primitive("integerp"));
-    interp.define("bignump", LispObject::primitive("ignore"));
+    interp.define("setq-local", LispObject::primitive("setq-local"));
+    interp.define("fixnump", LispObject::primitive("fixnump"));
+    interp.define("bignump", LispObject::primitive("bignump"));
     interp.define("cl-progv", LispObject::primitive("ignore"));
     for fn_name in [
         "map-elt",

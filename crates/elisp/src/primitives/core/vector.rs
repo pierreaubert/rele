@@ -6,6 +6,8 @@ const CHAR_TABLE_MARKER: i64 = -1;
 const CHAR_TABLE_DEFAULT: i64 = -2;
 const CHAR_TABLE_PARENT: i64 = -3;
 const CHAR_TABLE_EXTRA_BASE: i64 = -100;
+const BOOL_VECTOR_MARKER: i64 = -10_000;
+const BOOL_VECTOR_LENGTH: i64 = -10_001;
 const MAX_CHAR_CODE: i64 = 0x10ffff;
 
 pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
@@ -17,6 +19,14 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "vectorp" => Some(prim_vectorp(args)),
         "bool-vector" => Some(prim_bool_vector(args)),
         "make-bool-vector" => Some(prim_make_bool_vector(args)),
+        "bool-vector-count-population" => Some(prim_bool_vector_count_population(args)),
+        "bool-vector-count-consecutive" => Some(prim_bool_vector_count_consecutive(args)),
+        "bool-vector-not" => Some(prim_bool_vector_not(args)),
+        "bool-vector-subsetp" => Some(prim_bool_vector_subsetp(args)),
+        "bool-vector-union" => Some(prim_bool_vector_union(args)),
+        "bool-vector-intersection" => Some(prim_bool_vector_intersection(args)),
+        "bool-vector-exclusive-or" => Some(prim_bool_vector_exclusive_or(args)),
+        "bool-vector-set-difference" => Some(prim_bool_vector_set_difference(args)),
         _ => None,
     }
 }
@@ -42,6 +52,16 @@ pub fn prim_aref(args: &LispObject) -> ElispResult<LispObject> {
                 ));
             }
             Ok(guard[idx as usize].clone())
+        }
+        LispObject::HashTable(_) if is_bool_vector(&vec) => {
+            let len = bool_vector_len(&vec).unwrap_or(0);
+            let idx = if idx < 0 { len as i64 + idx } else { idx };
+            if idx < 0 || (idx as usize) >= len {
+                return Err(ElispError::EvalError(
+                    "aref: index out of range".to_string(),
+                ));
+            }
+            Ok(LispObject::from(bool_vector_bit(&vec, idx as usize)))
         }
         LispObject::HashTable(h) if is_char_table(&vec) => {
             let guard = h.lock();
@@ -93,6 +113,17 @@ pub fn prim_aset(args: &LispObject) -> ElispResult<LispObject> {
                 ));
             }
             guard[idx as usize] = val.clone();
+            Ok(val)
+        }
+        LispObject::HashTable(_) if is_bool_vector(&vec) => {
+            let len = bool_vector_len(&vec).unwrap_or(0);
+            let idx = if idx < 0 { len as i64 + idx } else { idx };
+            if idx < 0 || (idx as usize) >= len {
+                return Err(ElispError::EvalError(
+                    "aset: index out of range".to_string(),
+                ));
+            }
+            bool_vector_set(&vec, idx as usize, !val.is_nil());
             Ok(val)
         }
         LispObject::HashTable(h) if is_char_table(&vec) => {
@@ -162,31 +193,224 @@ pub fn prim_make_bool_vector(args: &LispObject) -> ElispResult<LispObject> {
     if length < 0 {
         return Err(ElispError::WrongTypeArgument("integer".to_string()));
     }
-    let val = if init.is_nil() {
-        LispObject::nil()
-    } else {
-        LispObject::t()
-    };
-    let vec: Vec<LispObject> = vec![val; length as usize];
-    Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(
-        vec,
-    ))))
+    Ok(make_bool_vector(length as usize, !init.is_nil()))
 }
 
 pub fn prim_bool_vector(args: &LispObject) -> ElispResult<LispObject> {
-    let mut elems = Vec::new();
+    let mut bits = Vec::new();
     let mut cur = args.clone();
     while let Some((arg, rest)) = cur.destructure_cons() {
-        elems.push(if arg.is_nil() {
-            LispObject::nil()
-        } else {
-            LispObject::t()
-        });
+        bits.push(!arg.is_nil());
         cur = rest;
     }
-    Ok(LispObject::Vector(Arc::new(crate::eval::SyncRefCell::new(
-        elems,
-    ))))
+    Ok(bool_vector_from_bits(bits))
+}
+
+pub fn prim_bool_vector_count_population(args: &LispObject) -> ElispResult<LispObject> {
+    let bv = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    require_bool_vector(&bv)?;
+    Ok(LispObject::integer(bool_vector_true_count(&bv) as i64))
+}
+
+pub fn prim_bool_vector_count_consecutive(args: &LispObject) -> ElispResult<LispObject> {
+    let bv = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let bit = !args.nth(1).unwrap_or_else(LispObject::nil).is_nil();
+    let start = args
+        .nth(2)
+        .and_then(|obj| obj.as_integer())
+        .unwrap_or(0)
+        .max(0) as usize;
+    require_bool_vector(&bv)?;
+    let len = bool_vector_len(&bv).unwrap_or(0);
+    let mut count = 0usize;
+    for idx in start..len {
+        if bool_vector_bit(&bv, idx) == bit {
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    Ok(LispObject::integer(count as i64))
+}
+
+pub fn prim_bool_vector_not(args: &LispObject) -> ElispResult<LispObject> {
+    let bv = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    require_bool_vector(&bv)?;
+    let len = bool_vector_len(&bv).unwrap_or(0);
+    let bits: Vec<bool> = (0..len).map(|idx| !bool_vector_bit(&bv, idx)).collect();
+    Ok(bool_vector_from_bits(bits))
+}
+
+pub fn prim_bool_vector_subsetp(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let b = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    require_same_len_bool_vectors(&a, &b)?;
+    let len = bool_vector_len(&a).unwrap_or(0);
+    let subset = (0..len).all(|idx| !bool_vector_bit(&a, idx) || bool_vector_bit(&b, idx));
+    Ok(LispObject::from(subset))
+}
+
+pub fn prim_bool_vector_union(args: &LispObject) -> ElispResult<LispObject> {
+    bool_vector_binop(args, |a, b| a || b)
+}
+
+pub fn prim_bool_vector_intersection(args: &LispObject) -> ElispResult<LispObject> {
+    bool_vector_binop(args, |a, b| a && b)
+}
+
+pub fn prim_bool_vector_exclusive_or(args: &LispObject) -> ElispResult<LispObject> {
+    bool_vector_binop(args, |a, b| a ^ b)
+}
+
+pub fn prim_bool_vector_set_difference(args: &LispObject) -> ElispResult<LispObject> {
+    bool_vector_binop(args, |a, b| a && !b)
+}
+
+fn bool_vector_binop(
+    args: &LispObject,
+    op: impl Fn(bool, bool) -> bool,
+) -> ElispResult<LispObject> {
+    let left = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let right = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    require_same_len_bool_vectors(&left, &right)?;
+    let len = bool_vector_len(&left).unwrap_or(0);
+    let bits: Vec<bool> = (0..len)
+        .map(|idx| op(bool_vector_bit(&left, idx), bool_vector_bit(&right, idx)))
+        .collect();
+
+    if let Some(target) = args.nth(2) {
+        if target.is_nil() {
+            return Ok(bool_vector_from_bits(bits));
+        }
+        require_bool_vector(&target)?;
+        if bool_vector_len(&target).unwrap_or(0) != len {
+            return Err(ElispError::WrongTypeArgument("bool-vector".to_string()));
+        }
+        let mut changed = false;
+        for (idx, bit) in bits.into_iter().enumerate() {
+            if bool_vector_bit(&target, idx) != bit {
+                bool_vector_set(&target, idx, bit);
+                changed = true;
+            }
+        }
+        if changed {
+            Ok(target)
+        } else {
+            Ok(LispObject::nil())
+        }
+    } else {
+        Ok(bool_vector_from_bits(bits))
+    }
+}
+
+pub fn is_bool_vector(obj: &LispObject) -> bool {
+    matches!(obj, LispObject::HashTable(h) if h.lock().data.contains_key(&HashKey::Integer(BOOL_VECTOR_MARKER)))
+}
+
+pub fn bool_vector_to_list(obj: &LispObject) -> Option<LispObject> {
+    if !is_bool_vector(obj) {
+        return None;
+    }
+    let len = bool_vector_len(obj)?;
+    let mut out = LispObject::nil();
+    for idx in (0..len).rev() {
+        out = LispObject::cons(LispObject::from(bool_vector_bit(obj, idx)), out);
+    }
+    Some(out)
+}
+
+pub fn bool_vector_length(obj: &LispObject) -> Option<usize> {
+    if is_bool_vector(obj) {
+        bool_vector_len(obj)
+    } else {
+        None
+    }
+}
+
+fn make_bool_vector(length: usize, init: bool) -> LispObject {
+    let bits = vec![init; length];
+    bool_vector_from_bits(bits)
+}
+
+fn bool_vector_from_bits<I>(bits: I) -> LispObject
+where
+    I: IntoIterator<Item = bool>,
+{
+    let mut table = LispHashTable::new(HashTableTest::Eql);
+    table
+        .data
+        .insert(HashKey::Integer(BOOL_VECTOR_MARKER), LispObject::t());
+    let mut len = 0usize;
+    for (idx, bit) in bits.into_iter().enumerate() {
+        len = idx + 1;
+        if bit {
+            table
+                .data
+                .insert(HashKey::Integer(idx as i64), LispObject::t());
+        }
+    }
+    table.data.insert(
+        HashKey::Integer(BOOL_VECTOR_LENGTH),
+        LispObject::integer(len as i64),
+    );
+    LispObject::HashTable(Arc::new(crate::eval::SyncRefCell::new(table)))
+}
+
+fn require_bool_vector(obj: &LispObject) -> ElispResult<()> {
+    if is_bool_vector(obj) {
+        Ok(())
+    } else {
+        Err(ElispError::WrongTypeArgument("bool-vector".to_string()))
+    }
+}
+
+fn require_same_len_bool_vectors(left: &LispObject, right: &LispObject) -> ElispResult<()> {
+    require_bool_vector(left)?;
+    require_bool_vector(right)?;
+    if bool_vector_len(left) == bool_vector_len(right) {
+        Ok(())
+    } else {
+        Err(ElispError::WrongTypeArgument("bool-vector".to_string()))
+    }
+}
+
+fn bool_vector_len(obj: &LispObject) -> Option<usize> {
+    let LispObject::HashTable(h) = obj else {
+        return None;
+    };
+    h.lock()
+        .data
+        .get(&HashKey::Integer(BOOL_VECTOR_LENGTH))
+        .and_then(LispObject::as_integer)
+        .map(|n| n.max(0) as usize)
+}
+
+fn bool_vector_bit(obj: &LispObject, idx: usize) -> bool {
+    let LispObject::HashTable(h) = obj else {
+        return false;
+    };
+    h.lock()
+        .data
+        .get(&HashKey::Integer(idx as i64))
+        .is_some_and(|value| !value.is_nil())
+}
+
+fn bool_vector_set(obj: &LispObject, idx: usize, bit: bool) {
+    if let LispObject::HashTable(h) = obj {
+        let mut guard = h.lock();
+        if bit {
+            guard
+                .data
+                .insert(HashKey::Integer(idx as i64), LispObject::t());
+        } else {
+            guard.data.remove(&HashKey::Integer(idx as i64));
+        }
+    }
+}
+
+fn bool_vector_true_count(obj: &LispObject) -> usize {
+    let len = bool_vector_len(obj).unwrap_or(0);
+    (0..len).filter(|&idx| bool_vector_bit(obj, idx)).count()
 }
 
 pub fn make_char_table(purpose: LispObject, init: LispObject) -> LispObject {

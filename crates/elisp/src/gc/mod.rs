@@ -150,14 +150,11 @@ pub struct BytecodeFnObject {
 // ---------------------------------------------------------------------------
 
 /// A big integer that doesn't fit in a 48-bit fixnum Value. For now
-/// this just stores an `i64` — oversized integers in the current
-/// codebase never exceed `i64::MAX`, and wrapping Emacs's arbitrary-
-/// precision semantics is a separate project. The object is here so
-/// `Heap` can replace the side-table fallback path.
+/// this stores a `BigInt` for the interpreter-visible bignum path.
 #[repr(C)]
 pub struct BignumObject {
     pub header: GcHeader,
-    pub value: i64,
+    pub value: num_bigint::BigInt,
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +510,7 @@ impl Heap {
 
     /// Allocate a `BignumObject` holding an integer outside the 48-bit
     /// fixnum range. Returns a Value tagged as a real heap pointer.
-    pub fn bignum_value(&mut self, n: i64) -> crate::value::Value {
+    pub fn bignum_value(&mut self, n: num_bigint::BigInt) -> crate::value::Value {
         self.maybe_gc();
         let boxed = Box::new(BignumObject {
             header: GcHeader::new(ObjectTag::Bignum),
@@ -1588,14 +1585,14 @@ mod tests {
     fn bignum_allocation_rooted_survives() {
         let mut heap = Heap::new();
         heap.set_gc_mode(GcMode::Manual);
-        let big = heap.bignum_value(1_i64 << 50); // beyond fixnum range
+        let big = heap.bignum_value((1_i64 << 50).into()); // beyond fixnum range
         assert!(big.is_heap_ptr());
         let root_idx = heap.root_value(big).unwrap();
         heap.collect();
         assert_eq!(heap.bytes_allocated(), std::mem::size_of::<BignumObject>());
         // SAFETY: rooted.
         let obj = unsafe { &*(big.as_heap_ptr().unwrap() as *const BignumObject) };
-        assert_eq!(obj.value, 1_i64 << 50);
+        assert_eq!(obj.value, (1_i64 << 50).into());
         heap.pop_root(root_idx);
     }
 

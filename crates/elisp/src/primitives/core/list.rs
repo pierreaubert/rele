@@ -123,6 +123,11 @@ pub fn prim_length(args: &LispObject) -> ElispResult<LispObject> {
         }
         LispObject::String(s) => Ok(LispObject::integer(s.chars().count() as i64)),
         LispObject::Vector(v) => Ok(LispObject::integer(v.lock().len() as i64)),
+        LispObject::HashTable(_) if crate::primitives::core::is_bool_vector(&arg) => {
+            Ok(LispObject::integer(
+                crate::primitives::core::bool_vector_length(&arg).unwrap_or(0) as i64,
+            ))
+        }
         LispObject::HashTable(ht) => Ok(LispObject::integer(ht.lock().data.len() as i64)),
         _ => Err(ElispError::WrongTypeArgument(
             "sequence (list, string, vector)".to_string(),

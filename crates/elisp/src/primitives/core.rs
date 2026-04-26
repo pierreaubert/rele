@@ -23,8 +23,9 @@ mod vector;
 // Re-export public ERT API used by mod.rs and the eval crate
 pub use ert::{make_ert_test_obj, set_current_ert_test};
 pub(crate) use vector::{
-    char_table_extra_slot, char_table_parent, char_table_range, char_table_set_extra_slot,
-    char_table_set_parent, char_table_set_range, is_char_table, make_char_table,
+    bool_vector_length, bool_vector_to_list, char_table_extra_slot, char_table_parent,
+    char_table_range, char_table_set_extra_slot, char_table_set_parent, char_table_set_range,
+    is_bool_vector, is_char_table, make_char_table,
 };
 
 pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
@@ -96,6 +97,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "string-prefix-p",
         "string-suffix-p",
         "string-join",
+        "string-to-list",
         "char-to-string",
         "string-to-char",
         "string-width",
@@ -125,6 +127,14 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "vectorp",
         "make-bool-vector",
         "bool-vector",
+        "bool-vector-count-population",
+        "bool-vector-count-consecutive",
+        "bool-vector-not",
+        "bool-vector-subsetp",
+        "bool-vector-union",
+        "bool-vector-intersection",
+        "bool-vector-exclusive-or",
+        "bool-vector-set-difference",
     ] {
         interp.define(name, LispObject::primitive(name));
     }
@@ -251,13 +261,8 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "set-case-syntax",
         "set-case-syntax-pair",
         "set-case-syntax-delims",
-        "add-variable-watcher",
-        "remove-variable-watcher",
-        "get-variable-watchers",
         "variable-binding-locus",
         "interactive-form",
-        "command-modes",
-        "symbol-with-pos-pos",
         "native-comp-unit-file",
         "native-comp-unit-set-file",
         "subr-native-comp-unit",
@@ -290,8 +295,11 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     }
 
     // Aliases that map to real primitives
-    interp.define("position-symbol", LispObject::primitive("identity"));
-    interp.define("remove-pos-from-symbol", LispObject::primitive("identity"));
+    interp.define("position-symbol", LispObject::primitive("position-symbol"));
+    interp.define(
+        "remove-pos-from-symbol",
+        LispObject::primitive("remove-pos-from-symbol"),
+    );
     interp.define(
         "indirect-variable",
         LispObject::primitive("indirect-variable"),
@@ -333,6 +341,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "integer-or-marker-p",
         "number-or-marker-p",
         "vector-or-char-table-p",
+        "special-variable-p",
         "bare-symbol-p",
         "symbol-with-pos-p",
         "bool-vector-p",

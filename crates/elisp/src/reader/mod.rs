@@ -1186,14 +1186,10 @@ impl Reader {
         } else {
             match s.parse::<i64>() {
                 Ok(n) => Ok(LispObject::integer(n)),
-                Err(_) => {
-                    // Overflow: fall back to float (Emacs uses bignums;
-                    // we approximate with f64 for now).
-                    let f: f64 = s
-                        .parse()
-                        .map_err(|_| ElispError::ReaderError(format!("invalid integer: {}", s)))?;
-                    Ok(LispObject::float(f))
-                }
+                Err(_) => s
+                    .parse::<num_bigint::BigInt>()
+                    .map(LispObject::BigInt)
+                    .map_err(|_| ElispError::ReaderError(format!("invalid integer: {}", s))),
             }
         }
     }
@@ -1230,28 +1226,20 @@ impl Reader {
                 s
             )));
         }
-        // Parse as i64; on overflow, fall back to wrapping u128 → i64 so
-        // huge literals in test files don't break the reader. Emacs itself
-        // promotes these to bignums, but our bignum path is heap-side and
-        // overkill for literals that rarely matter at runtime.
-        let n = match i64::from_str_radix(digits, radix) {
-            Ok(v) => v,
-            Err(_) => match u128::from_str_radix(digits, radix) {
-                Ok(v) => v as i64,
-                Err(_) => {
-                    return Err(ElispError::ReaderError(format!(
-                        "invalid radix-{} number: {}",
-                        radix, s
-                    )));
-                }
-            },
+        let Some(mut n) = num_bigint::BigInt::parse_bytes(digits.as_bytes(), radix) else {
+            return Err(ElispError::ReaderError(format!(
+                "invalid radix-{} number: {}",
+                radix, s
+            )));
         };
-        let n = if has_sign && s.starts_with('-') {
-            n.wrapping_neg()
+        if has_sign && s.starts_with('-') {
+            n = -n;
+        }
+        if let Ok(small) = n.to_string().parse::<i64>() {
+            Ok(LispObject::integer(small))
         } else {
-            n
-        };
-        Ok(LispObject::integer(n))
+            Ok(LispObject::BigInt(n))
+        }
     }
 
     fn read_escaped_symbol(&mut self, first_escaped: char) -> ElispResult<LispObject> {

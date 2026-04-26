@@ -19,6 +19,17 @@
 use crate::error::ElispResult;
 use crate::value::Value;
 
+const FAST_FIXNUM_MAX: i128 = (1_i128 << 47) - 1;
+const FAST_FIXNUM_MIN: i128 = -(1_i128 << 47);
+
+fn fast_fixnum(n: i128) -> Option<Value> {
+    if (FAST_FIXNUM_MIN..=FAST_FIXNUM_MAX).contains(&n) {
+        Some(Value::fixnum(n as i64))
+    } else {
+        None
+    }
+}
+
 /// Walk a cons-chain Value, collecting fixnums. Returns `None` if any
 /// element isn't a fixnum or if the spine contains a `ConsArcCell` (those
 /// need a mutex lock, defeating the fast-path purpose) or any other
@@ -87,30 +98,36 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         // Arithmetic (variadic over fixnums)
         "+" => {
             let xs = collect_fixnum_args(args)?;
-            let sum: i64 = xs.iter().copied().fold(0i64, |a, b| a.wrapping_add(b));
-            Some(Ok(Value::fixnum(sum)))
+            let sum: i128 = xs.iter().map(|&n| i128::from(n)).sum();
+            Some(Ok(fast_fixnum(sum)?))
         }
         "-" => {
             let xs = collect_fixnum_args(args)?;
             if xs.is_empty() {
                 Some(Ok(Value::fixnum(0)))
             } else if xs.len() == 1 {
-                Some(Ok(Value::fixnum(xs[0].wrapping_neg())))
+                Some(Ok(fast_fixnum(-i128::from(xs[0]))?))
             } else {
-                let first = xs[0];
-                let rest_sum: i64 = xs[1..].iter().copied().fold(0i64, |a, b| a.wrapping_add(b));
-                Some(Ok(Value::fixnum(first.wrapping_sub(rest_sum))))
+                let result = xs[1..]
+                    .iter()
+                    .fold(i128::from(xs[0]), |acc, &n| acc - i128::from(n));
+                Some(Ok(fast_fixnum(result)?))
             }
         }
         "*" => {
             let xs = collect_fixnum_args(args)?;
-            let product: i64 = xs.iter().copied().fold(1i64, |a, b| a.wrapping_mul(b));
-            Some(Ok(Value::fixnum(product)))
+            let product = xs
+                .iter()
+                .fold(1_i128, |acc, &n| acc.saturating_mul(i128::from(n)));
+            Some(Ok(fast_fixnum(product)?))
         }
 
         // Comparison (binary fixnum)
         "=" | "eql" => {
             let xs = collect_fixnum_args(args)?;
+            if xs.is_empty() {
+                return None;
+            }
             if xs.len() < 2 {
                 return Some(Ok(Value::t()));
             }
@@ -119,6 +136,9 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         "<" => {
             let xs = collect_fixnum_args(args)?;
+            if xs.is_empty() {
+                return None;
+            }
             if xs.len() < 2 {
                 return Some(Ok(Value::t()));
             }
@@ -127,6 +147,9 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         ">" => {
             let xs = collect_fixnum_args(args)?;
+            if xs.is_empty() {
+                return None;
+            }
             if xs.len() < 2 {
                 return Some(Ok(Value::t()));
             }
@@ -135,6 +158,9 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         "<=" => {
             let xs = collect_fixnum_args(args)?;
+            if xs.is_empty() {
+                return None;
+            }
             if xs.len() < 2 {
                 return Some(Ok(Value::t()));
             }
@@ -143,6 +169,9 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         ">=" => {
             let xs = collect_fixnum_args(args)?;
+            if xs.is_empty() {
+                return None;
+            }
             if xs.len() < 2 {
                 return Some(Ok(Value::t()));
             }
@@ -157,11 +186,11 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         "1+" => {
             let n = one_arg(args)?.as_fixnum()?;
-            Some(Ok(Value::fixnum(n.wrapping_add(1))))
+            Some(Ok(fast_fixnum(i128::from(n) + 1)?))
         }
         "1-" => {
             let n = one_arg(args)?.as_fixnum()?;
-            Some(Ok(Value::fixnum(n.wrapping_sub(1))))
+            Some(Ok(fast_fixnum(i128::from(n) - 1)?))
         }
 
         // Cons / list (raw-Value form)
@@ -171,6 +200,9 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         "eq" => {
             let (a, b) = two_args(args)?;
+            if a.as_heap_ptr().is_some() || b.as_heap_ptr().is_some() {
+                return None;
+            }
             Some(Ok(if a.raw() == b.raw() {
                 Value::t()
             } else {
@@ -179,7 +211,18 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
 
         // Type predicates
-        "integerp" | "fixnump" => {
+        "integerp" => {
+            let v = one_arg(args)?;
+            if v.as_heap_ptr().is_some() {
+                return None;
+            }
+            Some(Ok(if v.as_fixnum().is_some() {
+                Value::t()
+            } else {
+                Value::nil()
+            }))
+        }
+        "fixnump" => {
             let v = one_arg(args)?;
             Some(Ok(if v.as_fixnum().is_some() {
                 Value::t()
@@ -196,6 +239,9 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         "natnump" => {
             let v = one_arg(args)?;
+            if v.as_heap_ptr().is_some() {
+                return None;
+            }
             match v.as_fixnum() {
                 Some(n) => Some(Ok(if n >= 0 { Value::t() } else { Value::nil() })),
                 None => None,
@@ -306,6 +352,9 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         "numberp" => {
             let v = one_arg(args)?;
+            if v.as_heap_ptr().is_some() {
+                return None;
+            }
             let is_num = v.is_fixnum() || v.is_float();
             Some(Ok(if is_num { Value::t() } else { Value::nil() }))
         }

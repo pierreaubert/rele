@@ -64,9 +64,15 @@ pub(super) fn stateful_indirect_function(
     state: &InterpreterState,
 ) -> ElispResult<LispObject> {
     let obj = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    match &obj {
-        LispObject::Symbol(id) => Ok(state.get_function_cell(*id).unwrap_or_else(LispObject::nil)),
-        _ => Ok(obj),
+    let mut current = obj.clone();
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        match current {
+            LispObject::Symbol(id) if seen.insert(id) => {
+                current = state.get_function_cell(id).unwrap_or_else(LispObject::nil);
+            }
+            _ => return Ok(current),
+        }
     }
 }
 pub(super) fn stateful_default_toplevel_value(
@@ -77,7 +83,13 @@ pub(super) fn stateful_default_toplevel_value(
         .first()
         .and_then(|a| a.as_symbol_id())
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-    Ok(state.get_value_cell(sym).unwrap_or_else(LispObject::nil))
+    let key = crate::obarray::intern("default-toplevel-value");
+    let value = state.get_plist(sym, key);
+    if value.is_nil() {
+        Ok(state.get_value_cell(sym).unwrap_or_else(LispObject::nil))
+    } else {
+        Ok(value)
+    }
 }
 pub(super) fn stateful_buffer_local_value(
     args: &LispObject,

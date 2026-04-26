@@ -417,6 +417,51 @@ fn cl_loop_for_from_below() {
     assert_eq!(items[0], LispObject::integer(0));
     assert_eq!(items[3], LispObject::integer(3));
 }
+
+#[test]
+fn cl_loop_for_below_shorthand_and_unless_do() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(
+            read(
+                "(let ((bad nil))
+                   (cl-loop for i below 4
+                            unless (< i 4)
+                            do (setq bad t)
+                            collect i)
+                   bad)",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(r, LispObject::nil());
+}
+
+#[test]
+fn dolist_and_dotimes_mutate_outer_bindings() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let r = interp
+        .eval(
+            read(
+                "(let ((xs nil) (n 15) (bits nil))
+                   (dolist (x (string-to-list \"ab\"))
+                     (push x xs))
+                   (dotimes (_ 4)
+                     (push (oddp n) bits)
+                     (setq n (ash n -1)))
+                   (list xs bits))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let xs = r.first().unwrap();
+    let bits = r.nth(1).unwrap();
+    assert_eq!(xs, read("(98 97)").unwrap());
+    assert_eq!(bits, read("(t t t t)").unwrap());
+}
+
 #[test]
 fn cl_loop_count_and_maximize() {
     let mut interp = Interpreter::new();

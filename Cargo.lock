@@ -6289,6 +6289,8 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "criterion",
+ "num-bigint",
+ "num-traits",
  "parking_lot",
  "regex",
  "serde_json",

@@ -24,6 +24,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "string-prefix-p" => Some(prim_string_prefix_p(args)),
         "string-suffix-p" => Some(prim_string_suffix_p(args)),
         "string-join" => Some(prim_string_join(args)),
+        "string-to-list" => Some(prim_string_to_list(args)),
         "char-to-string" => Some(prim_char_to_string(args)),
         "string-to-char" => Some(prim_string_to_char(args)),
         "string-width" => Some(prim_string_width(args)),
@@ -198,6 +199,27 @@ pub fn prim_string_to_number(args: &LispObject) -> ElispResult<LispObject> {
         _ if arg.is_nil() => return Ok(LispObject::integer(0)),
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
+    if let Some(radix) = args.nth(1).and_then(|obj| obj.as_integer()) {
+        if (2..=36).contains(&radix) {
+            let trimmed = s.trim();
+            let sign = if trimmed.starts_with('-') { -1 } else { 1 };
+            let digits = if trimmed.starts_with('+') || trimmed.starts_with('-') {
+                &trimmed[1..]
+            } else {
+                trimmed
+            };
+            let valid: String = digits
+                .chars()
+                .take_while(|c| c.to_digit(radix as u32).is_some())
+                .collect();
+            if valid.is_empty() {
+                return Ok(LispObject::integer(0));
+            }
+            return Ok(LispObject::integer(
+                i64::from_str_radix(&valid, radix as u32).unwrap_or(0) * sign,
+            ));
+        }
+    }
     if let Ok(i) = s.trim().parse::<i64>() {
         Ok(LispObject::integer(i))
     } else if let Ok(f) = s.trim().parse::<f64>() {
@@ -211,6 +233,7 @@ pub fn prim_number_to_string(args: &LispObject) -> ElispResult<LispObject> {
     let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     match &arg {
         LispObject::Integer(i) => Ok(LispObject::string(&i.to_string())),
+        LispObject::BigInt(i) => Ok(LispObject::string(&i.to_string())),
         LispObject::Float(f) => Ok(LispObject::string(&f.to_string())),
         _ => Err(ElispError::WrongTypeArgument("number".to_string())),
     }
@@ -289,6 +312,11 @@ pub fn prim_safe_length(args: &LispObject) -> ElispResult<LispObject> {
         }
         LispObject::Vector(v) => Ok(LispObject::integer(v.lock().len() as i64)),
         LispObject::String(s) => Ok(LispObject::integer(s.len() as i64)),
+        LispObject::HashTable(_) if crate::primitives::core::is_bool_vector(&arg) => {
+            Ok(LispObject::integer(
+                crate::primitives::core::bool_vector_length(&arg).unwrap_or(0) as i64,
+            ))
+        }
         _ => Err(ElispError::WrongTypeArgument("sequence".to_string())),
     }
 }
@@ -443,6 +471,19 @@ pub fn prim_char_to_string(args: &LispObject) -> ElispResult<LispObject> {
         _ => return Err(ElispError::WrongTypeArgument("character".to_string())),
     };
     Ok(LispObject::string(&c.to_string()))
+}
+
+pub fn prim_string_to_list(args: &LispObject) -> ElispResult<LispObject> {
+    let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let s = match arg {
+        LispObject::String(s) => s,
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    let mut out = LispObject::nil();
+    for c in s.chars().rev() {
+        out = LispObject::cons(LispObject::integer(c as i64), out);
+    }
+    Ok(out)
 }
 
 pub fn prim_string_to_char(args: &LispObject) -> ElispResult<LispObject> {

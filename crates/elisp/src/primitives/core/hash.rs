@@ -50,6 +50,7 @@ fn prim_hash_table_keys(args: &LispObject) -> ElispResult<LispObject> {
                 let key_obj = match key {
                     crate::object::HashKey::Symbol(id) => LispObject::Symbol(*id),
                     crate::object::HashKey::Integer(i) => LispObject::integer(*i),
+                    crate::object::HashKey::BigInt(i) => LispObject::BigInt(i.clone()),
                     crate::object::HashKey::String(s) => LispObject::string(s),
                     crate::object::HashKey::Printed(s) => LispObject::string(s),
                     crate::object::HashKey::Identity(_) => LispObject::nil(),

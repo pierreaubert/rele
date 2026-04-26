@@ -125,6 +125,27 @@ pub(in crate::eval) fn eval_cl_loop(
                         )?);
                         bindings.push((var_obj, Iter::OnList(list)));
                     }
+                    "to" | "upto" | "below" | "downto" | "above" => {
+                        let (end_form, r3) = cur
+                            .clone()
+                            .destructure_cons()
+                            .ok_or(ElispError::WrongNumberOfArguments)?;
+                        cur = r3;
+                        let end =
+                            value_to_obj(eval(obj_to_value(end_form), env, editor, macros, state)?)
+                                .as_integer()
+                                .unwrap_or(0);
+                        bindings.push((
+                            var_obj,
+                            Iter::FromTo {
+                                cur: 0,
+                                end,
+                                step: 1,
+                                inclusive: matches!(kind.as_str(), "to" | "upto" | "downto"),
+                                descending: matches!(kind.as_str(), "downto" | "above"),
+                            },
+                        ));
+                    }
                     "from" | "upfrom" | "downfrom" => {
                         let (start_form, r3) = cur
                             .clone()
@@ -532,11 +553,52 @@ pub(in crate::eval) fn eval_cl_loop(
                     cur = r;
                 }
             }
-            "if" | "when" | "unless" | "and" | "else" | "end" => {
-                if let Some((_, r)) = cur.clone().destructure_cons() {
-                    cur = r;
+            "if" | "when" | "unless" => {
+                let (cond, r) = cur
+                    .clone()
+                    .destructure_cons()
+                    .ok_or(ElispError::WrongNumberOfArguments)?;
+                cur = r;
+                if let Some((then_kw, r2)) = cur.clone().destructure_cons() {
+                    if then_kw.as_symbol().as_deref() == Some("do")
+                        || then_kw.as_symbol().as_deref() == Some("doing")
+                    {
+                        cur = r2;
+                        let mut body: Vec<LispObject> = Vec::new();
+                        while let Some((form, r3)) = cur.clone().destructure_cons() {
+                            if is_loop_keyword(&form) {
+                                break;
+                            }
+                            body.push(form);
+                            cur = r3;
+                        }
+                        let mut body_chain = LispObject::nil();
+                        for form in body.into_iter().rev() {
+                            body_chain = LispObject::cons(form, body_chain);
+                        }
+                        let progn = LispObject::cons(LispObject::symbol("progn"), body_chain);
+                        let conditional = if word == "unless" {
+                            LispObject::cons(
+                                LispObject::symbol("if"),
+                                LispObject::cons(
+                                    cond,
+                                    LispObject::cons(
+                                        LispObject::nil(),
+                                        LispObject::cons(progn, LispObject::nil()),
+                                    ),
+                                ),
+                            )
+                        } else {
+                            LispObject::cons(
+                                LispObject::symbol("if"),
+                                LispObject::cons(cond, LispObject::cons(progn, LispObject::nil())),
+                            )
+                        };
+                        actions.push(Action::Do(conditional));
+                    }
                 }
             }
+            "and" | "else" | "end" => {}
             _ => {}
         }
     }
