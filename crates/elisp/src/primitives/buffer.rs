@@ -67,7 +67,10 @@ pub fn prim_bufferp(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_buffer_live_p(args: &LispObject) -> ElispResult<LispObject> {
-    let id = args.first().and_then(|a| resolve_buffer(&a));
+    let id = match args.first() {
+        Some(LispObject::Nil) | None => None,
+        Some(arg) => resolve_buffer(&arg),
+    };
     Ok(LispObject::from(id.is_some()))
 }
 
@@ -127,7 +130,20 @@ pub fn prim_get_buffer_create(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_generate_new_buffer(args: &LispObject) -> ElispResult<LispObject> {
     let name = string_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let inhibit_hooks = args.nth(1).is_some_and(|arg| !arg.is_nil());
     let id = buffer::with_registry_mut(|r| r.create_unique(&name));
+    buffer::with_registry_mut(|r| {
+        if let Some(buffer) = r.get_mut(id) {
+            buffer.locals.insert(
+                "rele--inhibit-buffer-hooks".to_string(),
+                LispObject::from(inhibit_hooks),
+            );
+            buffer.locals.insert(
+                "rele--pending-buffer-list-update-hook".to_string(),
+                LispObject::from(!inhibit_hooks),
+            );
+        }
+    });
     Ok(make_buffer_object(id))
 }
 
@@ -143,8 +159,22 @@ pub fn prim_make_indirect_buffer(args: &LispObject) -> ElispResult<LispObject> {
         .and_then(|a| resolve_buffer(&a))
         .ok_or_else(|| ElispError::WrongTypeArgument("buffer".into()))?;
     let name = string_arg(args, 1).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
-    let id = buffer::with_registry_mut(|r| r.make_indirect(base, &name))
+    let clone_overlays = args.nth(2).is_some_and(|arg| !arg.is_nil());
+    let inhibit_hooks = args.nth(3).is_some_and(|arg| !arg.is_nil());
+    let id = buffer::with_registry_mut(|r| r.make_indirect(base, &name, clone_overlays))
         .ok_or_else(|| ElispError::WrongTypeArgument("buffer".into()))?;
+    buffer::with_registry_mut(|r| {
+        if let Some(buffer) = r.get_mut(id) {
+            buffer.locals.insert(
+                "rele--inhibit-buffer-hooks".to_string(),
+                LispObject::from(inhibit_hooks),
+            );
+            buffer.locals.insert(
+                "rele--pending-buffer-list-update-hook".to_string(),
+                LispObject::from(!inhibit_hooks),
+            );
+        }
+    });
     Ok(make_buffer_object(id))
 }
 
@@ -503,24 +533,61 @@ pub fn prim_narrow_to_region(args: &LispObject) -> ElispResult<LispObject> {
         let pmax = buf.point_max();
         let lo = lo.clamp(pmin, pmax);
         let hi = hi.clamp(pmin, pmax);
-        buf.restriction = Some((lo, hi));
-        if buf.point < lo {
-            buf.point = lo;
-        } else if buf.point > hi {
-            buf.point = hi;
-        }
+        buf.set_manual_restriction(Some((lo, hi)));
     });
     Ok(LispObject::nil())
 }
 
 pub fn prim_widen(_args: &LispObject) -> ElispResult<LispObject> {
-    buffer::with_current_mut(|b| b.restriction = None);
+    buffer::with_current_mut(|b| b.set_manual_restriction(None));
     Ok(LispObject::nil())
 }
 
 pub fn prim_buffer_narrowed_p(_args: &LispObject) -> ElispResult<LispObject> {
     let narrowed = buffer::with_current(|b| b.restriction.is_some());
     Ok(LispObject::from(narrowed))
+}
+
+pub fn prim_set_buffer_multibyte(args: &LispObject) -> ElispResult<LispObject> {
+    let enabled = args.first().is_none_or(|arg| !arg.is_nil());
+    buffer::with_registry_mut(|r| r.set_current_multibyte(enabled));
+    Ok(LispObject::nil())
+}
+
+fn restriction_label(obj: &LispObject) -> Option<String> {
+    obj.as_symbol()
+        .or_else(|| obj.as_string().map(ToOwned::to_owned))
+}
+
+pub fn prim_internal_labeled_narrow_to_region(args: &LispObject) -> ElispResult<LispObject> {
+    let a = int_arg(args, 0, 1);
+    let b = int_arg(args, 1, 1);
+    let label = args
+        .nth(2)
+        .and_then(|obj| restriction_label(&obj))
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
+    let lo_raw = a.min(b).max(1) as usize;
+    let hi_raw = a.max(b).max(1) as usize;
+    buffer::with_current_mut(|buf| {
+        let pmin = buf.point_min();
+        let pmax = buf.point_max();
+        let lo = lo_raw.clamp(pmin, pmax);
+        let hi = hi_raw.clamp(pmin, pmax);
+        buf.push_restriction_layer(Some(label), (lo, hi));
+    });
+    Ok(LispObject::nil())
+}
+
+pub fn prim_internal_labeled_widen(args: &LispObject) -> ElispResult<LispObject> {
+    let label = args
+        .first()
+        .and_then(|obj| restriction_label(&obj))
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
+    buffer::with_current_mut(|buf| {
+        buf.manual_restriction = None;
+        buf.remove_restriction_label(&label);
+    });
+    Ok(LispObject::nil())
 }
 
 // ---- Characters and regions -----------------------------------------
@@ -1479,8 +1546,14 @@ pub fn prim_search_forward(args: &LispObject) -> ElispResult<LispObject> {
         })
     });
     match result {
-        Some((_, end)) => {
+        Some((start, end)) => {
             buffer::with_current_mut(|b| b.point = end);
+            let id = buffer::with_registry(|r| r.current_id());
+            buffer::with_registry_mut(|r| {
+                r.match_data.groups = vec![Some((start, end))];
+                r.match_data.buffer = Some(id);
+                r.match_data.source = None;
+            });
             Ok(LispObject::integer(end as i64))
         }
         None => {
@@ -1512,8 +1585,14 @@ pub fn prim_search_backward(args: &LispObject) -> ElispResult<LispObject> {
         })
     });
     match result {
-        Some((start, _)) => {
+        Some((start, end)) => {
             buffer::with_current_mut(|b| b.point = start);
+            let id = buffer::with_registry(|r| r.current_id());
+            buffer::with_registry_mut(|r| {
+                r.match_data.groups = vec![Some((start, end))];
+                r.match_data.buffer = Some(id);
+                r.match_data.source = None;
+            });
             Ok(LispObject::integer(start as i64))
         }
         None => {
@@ -1664,6 +1743,7 @@ pub fn prim_buffer_swap_text(args: &LispObject) -> ElispResult<LispObject> {
         };
 
         std::mem::swap(&mut current_buf.text, &mut other_buf.text);
+        std::mem::swap(&mut current_buf.multibyte, &mut other_buf.multibyte);
         std::mem::swap(&mut current_buf.point, &mut other_buf.point);
         std::mem::swap(&mut current_buf.mark, &mut other_buf.mark);
         std::mem::swap(&mut current_buf.mark_active, &mut other_buf.mark_active);
@@ -1674,6 +1754,14 @@ pub fn prim_buffer_swap_text(args: &LispObject) -> ElispResult<LispObject> {
         );
         std::mem::swap(&mut current_buf.modified_tick, &mut other_buf.modified_tick);
         std::mem::swap(&mut current_buf.restriction, &mut other_buf.restriction);
+        std::mem::swap(
+            &mut current_buf.manual_restriction,
+            &mut other_buf.manual_restriction,
+        );
+        std::mem::swap(
+            &mut current_buf.restriction_layers,
+            &mut other_buf.restriction_layers,
+        );
         std::mem::swap(&mut current_buf.locals, &mut other_buf.locals);
 
         r.buffers.insert(current, current_buf);
@@ -2232,8 +2320,21 @@ pub fn prim_current_indentation(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_delete_all_overlays(args: &LispObject) -> ElispResult<LispObject> {
-    let _ = args;
-    // Stub: clear overlays is a no-op for now.
+    let target = args
+        .first()
+        .and_then(|arg| resolve_buffer(&arg))
+        .unwrap_or_else(|| buffer::with_registry(|r| r.current_id()));
+    buffer::with_registry_mut(|r| {
+        let ids = r
+            .overlays
+            .values()
+            .filter(|ov| ov.buffer == target && ov.start.is_some() && ov.end.is_some())
+            .map(|ov| ov.id)
+            .collect::<Vec<_>>();
+        for id in ids {
+            r.delete_overlay(id);
+        }
+    });
     Ok(LispObject::nil())
 }
 
@@ -2284,6 +2385,9 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "narrow-to-region" => prim_narrow_to_region(args),
         "widen" => prim_widen(args),
         "buffer-narrowed-p" => prim_buffer_narrowed_p(args),
+        "set-buffer-multibyte" => prim_set_buffer_multibyte(args),
+        "internal--labeled-narrow-to-region" => prim_internal_labeled_narrow_to_region(args),
+        "internal--labeled-widen" => prim_internal_labeled_widen(args),
         "char-after" => prim_char_after(args),
         "char-before" => prim_char_before(args),
         "following-char" => prim_following_char(args),
@@ -2412,6 +2516,9 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "narrow-to-region",
     "widen",
     "buffer-narrowed-p",
+    "set-buffer-multibyte",
+    "internal--labeled-narrow-to-region",
+    "internal--labeled-widen",
     "char-after",
     "char-before",
     "following-char",

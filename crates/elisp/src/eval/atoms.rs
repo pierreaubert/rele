@@ -54,6 +54,11 @@ pub(super) fn eval_atom(
 
         let env = env.read();
         if let Some(val) = env.get_id_local(sym_id) {
+            if let Some(captured) = state.get_closure_mutation(sym_id)
+                && captured != val
+            {
+                return Some(Ok(obj_to_value(captured)));
+            }
             if val.is_unbound_marker() {
                 return Some(Err(ElispError::VoidVariable(name)));
             }

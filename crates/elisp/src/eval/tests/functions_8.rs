@@ -131,37 +131,54 @@ fn test_emacs_all_files_run() {
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
             let test_root = format!("{root}/test");
-            let mut files: Vec<std::path::PathBuf> = walkdir::WalkDir::new(&test_root)
-                .into_iter()
-                .filter_map(Result::ok)
-                .filter(|e| e.path().extension().is_some_and(|x| x == "el"))
-                .filter(|e| {
-                    !e.path().components().any(|c| {
-                        let s = c.as_os_str().to_string_lossy();
-                        s.ends_with("-resources") || s == "manual" || s == "infra"
+            let env_files = std::env::var("EMACS_TEST_FILES").ok();
+            let mut files: Vec<std::path::PathBuf> = if let Some(list) = env_files {
+                list.split(':')
+                    .filter(|s| !s.is_empty())
+                    .map(|path| {
+                        let p = std::path::PathBuf::from(path);
+                        if p.is_absolute() {
+                            p
+                        } else {
+                            std::path::PathBuf::from(&root).join(p)
+                        }
                     })
-                })
-                .filter(|e| {
-                    let p = e.path().to_string_lossy();
-                    !p.contains("/cl-lib-tests.el")
-                        && !p.contains("/cl-macs-tests.el")
-                        && !p.contains("/comp-tests.el")
-                        && !p.contains("/comp-cstr-tests.el")
-                        && !p.contains("/completion-tests.el")
-                        && !p.contains("/cus-edit-tests.el")
-                        && !p.contains("/custom-tests.el")
-                        && !p.contains("/dom-tests.el")
-                        && !p.contains("/backquote-tests.el")
-                        && !p.contains("/bytecomp-tests.el")
-                })
-                .map(|e| e.path().to_path_buf())
-                .collect();
+                    .collect()
+            } else {
+                walkdir::WalkDir::new(&test_root)
+                    .into_iter()
+                    .filter_map(Result::ok)
+                    .filter(|e| e.path().extension().is_some_and(|x| x == "el"))
+                    .filter(|e| {
+                        !e.path().components().any(|c| {
+                            let s = c.as_os_str().to_string_lossy();
+                            s.ends_with("-resources") || s == "manual" || s == "infra"
+                        })
+                    })
+                    .filter(|e| {
+                        let p = e.path().to_string_lossy();
+                        !p.contains("/cl-lib-tests.el")
+                            && !p.contains("/cl-macs-tests.el")
+                            && !p.contains("/comp-tests.el")
+                            && !p.contains("/comp-cstr-tests.el")
+                            && !p.contains("/completion-tests.el")
+                            && !p.contains("/cus-edit-tests.el")
+                            && !p.contains("/custom-tests.el")
+                            && !p.contains("/dom-tests.el")
+                            && !p.contains("/backquote-tests.el")
+                            && !p.contains("/bytecomp-tests.el")
+                    })
+                    .map(|e| e.path().to_path_buf())
+                    .collect()
+            };
             files.sort();
             eprintln!(
                 "Discovered {} .el test files under {test_root}",
                 files.len()
             );
-            let jsonl_path = std::path::PathBuf::from("target/emacs-test-results.jsonl");
+            let jsonl_path = std::env::var("EMACS_TEST_RESULT_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("target/emacs-test-results.jsonl"));
             if let Some(parent) = jsonl_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -183,9 +200,23 @@ fn run_worker_pool(
 ) {
     use std::io::Write;
     use std::sync::mpsc;
-    let n_workers = std::thread::available_parallelism()
-        .map(|n| n.get().clamp(1, 8))
-        .unwrap_or(4);
+    let n_workers = std::env::var("EMACS_TEST_WORKERS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get().clamp(1, 8))
+                .unwrap_or(4)
+        });
+    let per_test_ms = std::env::var("EMACS_TEST_PER_TEST_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(8_000);
+    let per_file_ms = std::env::var("EMACS_TEST_PER_FILE_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(120_000);
     eprintln!("Spawning {n_workers} worker subprocess(es)");
     let (task_tx, task_rx) = mpsc::channel::<(usize, std::path::PathBuf)>();
     let task_rx = std::sync::Arc::new(std::sync::Mutex::new(task_rx));
@@ -200,7 +231,7 @@ fn run_worker_pool(
         let out_tx = out_tx.clone();
         let root = root.to_string();
         handles.push(std::thread::spawn(move || {
-            worker_manager(wid, task_rx, out_tx, root);
+            worker_manager(wid, task_rx, out_tx, root, per_test_ms, per_file_ms);
         }));
     }
     drop(out_tx);
@@ -218,6 +249,7 @@ fn run_worker_pool(
                 rel,
                 jsonl_lines,
                 summary,
+                elapsed_ms,
             } => {
                 for line in &jsonl_lines {
                     let _ = writeln!(jsonl, "{line}");
@@ -244,6 +276,7 @@ fn run_worker_pool(
                         summary.panicked,
                         summary.timed_out,
                     );
+                    eprintln!("    timing: {elapsed_ms}ms total");
                 }
                 grand.passed += summary.passed;
                 grand.failed += summary.failed;
@@ -319,11 +352,13 @@ fn worker_manager(
     >,
     out_tx: std::sync::mpsc::Sender<FileOutcome>,
     root: String,
+    per_test_ms: u64,
+    per_file_ms: u64,
 ) {
     use std::io::Write;
     use std::time::Duration;
     let worker_bin = worker_binary_path();
-    let mut worker = match Worker::spawn(&worker_bin) {
+    let mut worker = match Worker::spawn(&worker_bin, per_test_ms) {
         Some(w) => w,
         None => {
             eprintln!("worker {wid}: initial spawn failed, manager exiting");
@@ -356,7 +391,7 @@ fn worker_manager(
                 rel,
                 reason: "stdin write failed".into(),
             });
-            worker = match Worker::spawn(&worker_bin) {
+            worker = match Worker::spawn(&worker_bin, per_test_ms) {
                 Some(w) => w,
                 None => return,
             };
@@ -366,7 +401,8 @@ fn worker_manager(
         let mut summary: Option<FileSummary> = None;
         let mut done = false;
         let mut crashed = false;
-        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        let started = std::time::Instant::now();
+        let deadline = started + Duration::from_millis(per_file_ms);
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
@@ -396,9 +432,10 @@ fn worker_manager(
                 rel,
                 jsonl_lines,
                 summary: summary.unwrap_or_default(),
+                elapsed_ms: started.elapsed().as_millis(),
             }
         } else if crashed {
-            worker = match Worker::spawn(&worker_bin) {
+            worker = match Worker::spawn(&worker_bin, per_test_ms) {
                 Some(w) => w,
                 None => return,
             };
@@ -408,7 +445,7 @@ fn worker_manager(
                 reason: "worker stdout EOF before __DONE__".into(),
             }
         } else {
-            worker = match Worker::spawn(&worker_bin) {
+            worker = match Worker::spawn(&worker_bin, per_test_ms) {
                 Some(w) => w,
                 None => return,
             };
@@ -462,9 +499,11 @@ fn worker_binary_path() -> std::path::PathBuf {
     std::path::PathBuf::from("./target/release/emacs_test_worker")
 }
 #[allow(dead_code)]
-pub(super) fn spawn_worker(bin: &std::path::Path) -> Option<std::process::Child> {
+pub(super) fn spawn_worker(bin: &std::path::Path, per_test_ms: u64) -> Option<std::process::Child> {
     use std::process::{Command, Stdio};
     Command::new(bin)
+        .arg("--per-test-ms")
+        .arg(per_test_ms.to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

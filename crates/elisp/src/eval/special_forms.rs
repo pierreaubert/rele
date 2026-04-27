@@ -56,6 +56,9 @@ pub(super) fn eval_setq(
         let value = value_to_obj(eval(obj_to_value(val_expr), env, editor, macros, state)?);
         let assigned =
             assign_symbol_value(id, value, env, editor, macros, state, SetOperation::Setq)?;
+        if state.has_closure_mutation(id) {
+            state.set_closure_mutation(id, assigned.clone());
+        }
         result = obj_to_value(assigned);
         current = rest.rest().unwrap_or(LispObject::nil());
     }
@@ -87,6 +90,9 @@ pub(super) fn eval_setq_local(
             state,
             SetOperation::SetqLocal,
         )?;
+        if state.has_closure_mutation(id) {
+            state.set_closure_mutation(id, assigned.clone());
+        }
         result = obj_to_value(assigned);
         current = rest.rest().unwrap_or(LispObject::nil());
     }

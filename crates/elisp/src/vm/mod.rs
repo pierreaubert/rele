@@ -1858,6 +1858,7 @@ mod tests {
             translation_tables: Arc::new(RwLock::new(HashMap::new())),
             custom_metadata: Arc::new(RwLock::new(HashMap::new())),
             advice_metadata: Arc::new(RwLock::new(HashMap::new())),
+            closure_mutations: Arc::new(RwLock::new(HashMap::new())),
             eval_ops: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             eval_ops_limit: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             deadline: std::cell::Cell::new(None),

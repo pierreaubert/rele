@@ -241,17 +241,41 @@ fn sync_closure_captures(captured_alist: &LispObject, closure_env: &Arc<RwLock<E
 fn sync_closure_captures_to_caller(
     captured_alist: &LispObject,
     caller_env: &Arc<RwLock<Environment>>,
+    old_values: &[(crate::obarray::SymbolId, LispObject)],
+    state: &InterpreterState,
 ) {
     let mut cur = captured_alist.clone();
     while let Some((pair, rest)) = cur.destructure_cons() {
         if let Some((key, value)) = pair.destructure_cons()
             && let Some(id) = key.as_symbol_id()
-            && caller_env.read().get_id_local(id).is_some()
+            && old_values
+                .iter()
+                .find(|(old_id, _)| *old_id == id)
+                .is_none_or(|(_, old_value)| old_value != &value)
         {
-            caller_env.write().set_id(id, value);
+            if caller_env.read().get_id_local(id).is_some() {
+                caller_env.write().set_id(id, value.clone());
+            }
+            state.set_closure_mutation(id, value);
         }
         cur = rest;
     }
+}
+
+fn closure_capture_snapshot(
+    captured_alist: &LispObject,
+) -> Vec<(crate::obarray::SymbolId, LispObject)> {
+    let mut out = Vec::new();
+    let mut cur = captured_alist.clone();
+    while let Some((pair, rest)) = cur.destructure_cons() {
+        if let Some((key, value)) = pair.destructure_cons()
+            && let Some(id) = key.as_symbol_id()
+        {
+            out.push((id, value));
+        }
+        cur = rest;
+    }
+    out
 }
 
 /// Inner dispatch with an optional caller symbol for JIT version tracking.
@@ -308,6 +332,7 @@ fn call_function_inner(
                 if s == "closure" {
                     let captured_alist =
                         cdr_val.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let old_captures = closure_capture_snapshot(&captured_alist);
                     let rest = cdr_val.rest().ok_or(ElispError::WrongNumberOfArguments)?;
                     let params = rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let body = rest.rest().ok_or(ElispError::WrongNumberOfArguments)?;
@@ -326,7 +351,7 @@ fn call_function_inner(
                     let result =
                         apply_lambda(&params, &body, args, &closure_env, editor, macros, state);
                     sync_closure_captures(&captured_alist, &closure_env);
-                    sync_closure_captures_to_caller(&captured_alist, env);
+                    sync_closure_captures_to_caller(&captured_alist, env, &old_captures, state);
                     return result;
                 }
             }
@@ -442,6 +467,11 @@ fn call_function_inner(
                 Some(state),
             ) {
                 return result.map(obj_to_value);
+            }
+            if let Some(result) =
+                call_stateful_primitive(&name, &args_obj, env, editor, macros, state)
+            {
+                return Ok(obj_to_value(result?));
             }
             source_level_fallback(&name, &args_obj, env, editor, macros, state)
         }

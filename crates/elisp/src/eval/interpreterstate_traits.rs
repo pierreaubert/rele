@@ -33,6 +33,7 @@ impl Clone for InterpreterState {
             translation_tables: self.translation_tables.clone(),
             custom_metadata: self.custom_metadata.clone(),
             advice_metadata: self.advice_metadata.clone(),
+            closure_mutations: self.closure_mutations.clone(),
             eval_ops: self.eval_ops.clone(),
             eval_ops_limit: self.eval_ops_limit.clone(),
             deadline: std::cell::Cell::new(self.deadline.get()),

@@ -103,11 +103,18 @@ pub struct Marker {
 }
 
 #[derive(Debug, Clone)]
+pub struct RestrictionLayer {
+    pub label: Option<String>,
+    pub range: (usize, usize),
+}
+
+#[derive(Debug, Clone)]
 pub struct StubBuffer {
     pub id: BufferId,
     /// Buffer text. Operates on character offsets, not byte offsets,
     /// to match Emacs semantics (point is a character index).
     pub text: String,
+    pub multibyte: bool,
     /// 1-based char offset matching Emacs's `point` convention.
     pub point: usize,
     pub mark: Option<usize>,
@@ -124,6 +131,8 @@ pub struct StubBuffer {
     /// Narrowing: if `Some((a, b))` then point-min = a and point-max = b
     /// instead of 1..=text.chars().count()+1.
     pub restriction: Option<(usize, usize)>,
+    pub manual_restriction: Option<(usize, usize)>,
+    pub restriction_layers: Vec<RestrictionLayer>,
     /// File this buffer visits (Emacs's `buffer-file-name`). None for
     /// temp/scratch buffers.
     pub file_name: Option<String>,
@@ -139,9 +148,14 @@ impl StubBuffer {
             "buffer-undo-list".to_string(),
             crate::object::LispObject::nil(),
         );
+        locals.insert(
+            "buffer-auto-save-file-name".to_string(),
+            crate::object::LispObject::nil(),
+        );
         Self {
             id,
             text: String::new(),
+            multibyte: true,
             point: 1,
             mark: None,
             mark_active: false,
@@ -152,6 +166,8 @@ impl StubBuffer {
             modified_status: None,
             modified_tick: 0,
             restriction: None,
+            manual_restriction: None,
+            restriction_layers: Vec::new(),
             file_name: None,
             locals,
         }
@@ -159,6 +175,45 @@ impl StubBuffer {
 
     pub fn new(name: impl Into<String>) -> Self {
         Self::new_raw(name.into())
+    }
+
+    fn intersect_restriction(
+        a: Option<(usize, usize)>,
+        b: Option<(usize, usize)>,
+    ) -> Option<(usize, usize)> {
+        match (a, b) {
+            (None, None) => None,
+            (Some(r), None) | (None, Some(r)) => Some(r),
+            (Some((a0, a1)), Some((b0, b1))) => Some((a0.max(b0), a1.min(b1).max(a0.max(b0)))),
+        }
+    }
+
+    pub fn recompute_restriction(&mut self) {
+        let mut effective = self.manual_restriction;
+        for layer in &self.restriction_layers {
+            effective = Self::intersect_restriction(effective, Some(layer.range));
+        }
+        self.restriction = effective;
+        if let Some((lo, hi)) = self.restriction {
+            self.point = self.point.clamp(lo, hi);
+        }
+    }
+
+    pub fn set_manual_restriction(&mut self, range: Option<(usize, usize)>) {
+        self.manual_restriction = range;
+        self.recompute_restriction();
+    }
+
+    pub fn push_restriction_layer(&mut self, label: Option<String>, range: (usize, usize)) {
+        self.restriction_layers
+            .push(RestrictionLayer { label, range });
+        self.recompute_restriction();
+    }
+
+    pub fn remove_restriction_label(&mut self, label: &str) {
+        self.restriction_layers
+            .retain(|layer| layer.label.as_deref() != Some(label));
+        self.recompute_restriction();
     }
 
     pub fn point_min(&self) -> usize {
@@ -210,11 +265,50 @@ impl StubBuffer {
     }
 
     pub fn insert(&mut self, s: &str) {
-        let byte_idx = self.char_to_byte(self.point);
-        self.text.insert_str(byte_idx, s);
-        let n = s.chars().count();
-        self.point += n;
+        let pos = self.point;
+        self.insert_at(pos, s, true);
+    }
+
+    fn insert_at(&mut self, pos: usize, s: &str, advance_point_at_pos: bool) {
+        let byte_idx = self.char_to_byte(pos);
+        let inserted = if self.multibyte {
+            s.to_string()
+        } else {
+            Self::encode_unibyte_text(s)
+        };
+        self.text.insert_str(byte_idx, &inserted);
+        let n = inserted.chars().count();
+        if self.point > pos || (advance_point_at_pos && self.point == pos) {
+            self.point += n;
+        }
+        self.adjust_restrictions_after_insert(pos, n);
         self.bump_modified();
+    }
+
+    fn adjust_range_after_insert(range: &mut (usize, usize), pos: usize, len: usize) {
+        if pos < range.0 {
+            range.0 += len;
+            range.1 += len;
+        } else if pos <= range.1 {
+            range.1 += len;
+        }
+    }
+
+    fn adjust_restrictions_after_insert(&mut self, pos: usize, len: usize) {
+        if let Some(range) = self.manual_restriction.as_mut() {
+            Self::adjust_range_after_insert(range, pos, len);
+        }
+        for layer in &mut self.restriction_layers {
+            Self::adjust_range_after_insert(&mut layer.range, pos, len);
+        }
+        self.recompute_restriction();
+    }
+
+    fn encode_unibyte_text(s: &str) -> String {
+        s.as_bytes()
+            .iter()
+            .map(|byte| char::from_u32(0xE000 + u32::from(*byte)).unwrap())
+            .collect()
     }
 
     pub fn goto_char(&mut self, pos: usize) {
@@ -233,6 +327,10 @@ impl StubBuffer {
         let pmax = self.point_max();
         let a = a.clamp(pmin, pmax);
         let b = b.clamp(pmin, pmax);
+        self.delete_shared_region(a, b);
+    }
+
+    fn delete_shared_region(&mut self, a: usize, b: usize) {
         let a_byte = self.char_to_byte(a);
         let b_byte = self.char_to_byte(b);
         self.text.replace_range(a_byte..b_byte, "");
@@ -248,6 +346,7 @@ impl StubBuffer {
             if b > na {
                 let shrink = b.min(nb).saturating_sub(a.max(na));
                 self.restriction = Some((na, nb.saturating_sub(shrink).max(na)));
+                self.manual_restriction = self.restriction;
             }
         }
         self.bump_modified();
@@ -257,6 +356,8 @@ impl StubBuffer {
         self.text.clear();
         self.point = 1;
         self.restriction = None;
+        self.manual_restriction = None;
+        self.restriction_layers.clear();
         self.bump_modified();
     }
 
@@ -430,11 +531,17 @@ impl Registry {
         self.create(&name)
     }
 
-    pub fn make_indirect(&mut self, base: BufferId, name: &str) -> Option<BufferId> {
+    pub fn make_indirect(
+        &mut self,
+        base: BufferId,
+        name: &str,
+        clone_overlays: bool,
+    ) -> Option<BufferId> {
         let base_buf = self.buffers.get(&base)?.clone();
         let unique_name = self.generate_new_name(name);
         let mut buf = StubBuffer::new(unique_name.clone());
         buf.text = base_buf.text;
+        buf.multibyte = base_buf.multibyte;
         buf.point = base_buf.point;
         buf.mark = base_buf.mark;
         buf.mark_active = base_buf.mark_active;
@@ -442,12 +549,29 @@ impl Registry {
         buf.modified_status = base_buf.modified_status;
         buf.modified_tick = base_buf.modified_tick;
         buf.restriction = base_buf.restriction;
+        buf.manual_restriction = base_buf.manual_restriction;
+        buf.restriction_layers = base_buf.restriction_layers;
         buf.file_name = base_buf.file_name;
         buf.locals = base_buf.locals;
         buf.base_buffer = Some(base);
         let id = buf.id;
         self.buffers.insert(id, buf);
         self.by_name.insert(unique_name, id);
+        if clone_overlays {
+            let clones = self
+                .overlays
+                .values()
+                .filter(|ov| ov.buffer == base && ov.start.is_some() && ov.end.is_some())
+                .cloned()
+                .collect::<Vec<_>>();
+            for source in clones {
+                let new_id = NEXT_OVERLAY_ID.fetch_add(1, Ordering::Relaxed);
+                let mut cloned = source;
+                cloned.id = new_id;
+                cloned.buffer = id;
+                self.overlays.insert(new_id, cloned);
+            }
+        }
         Some(id)
     }
 
@@ -582,6 +706,22 @@ impl Registry {
         self.overlays.get_mut(&id)
     }
 
+    fn root_buffer(&self, mut id: BufferId) -> BufferId {
+        while let Some(base) = self.get(id).and_then(|buf| buf.base_buffer) {
+            id = base;
+        }
+        id
+    }
+
+    fn text_family_ids(&self, buffer: BufferId) -> Vec<BufferId> {
+        let root = self.root_buffer(buffer);
+        self.buffers
+            .keys()
+            .copied()
+            .filter(|id| self.root_buffer(*id) == root)
+            .collect()
+    }
+
     pub fn insert_current(&mut self, text: &str, before_markers: bool) {
         let buffer = self.current_id();
         let Some(pos) = self.get(buffer).map(|b| b.point) else {
@@ -591,8 +731,14 @@ impl Registry {
         if len == 0 {
             return;
         }
-        if let Some(buf) = self.get_mut(buffer) {
-            buf.insert(text);
+        for id in self.text_family_ids(buffer) {
+            if let Some(buf) = self.get_mut(id) {
+                if id == buffer {
+                    buf.insert(text);
+                } else {
+                    buf.insert_at(pos, text, false);
+                }
+            }
         }
         self.relocate_overlays_after_insert(buffer, pos, len, before_markers);
     }
@@ -614,10 +760,91 @@ impl Registry {
         if a == b {
             return;
         }
-        if let Some(buf) = self.get_mut(buffer) {
-            buf.delete_region(a, b);
+        for id in self.text_family_ids(buffer) {
+            if let Some(buf) = self.get_mut(id) {
+                if id == buffer {
+                    buf.delete_region(a, b);
+                } else {
+                    buf.delete_shared_region(a, b);
+                }
+            }
         }
         self.relocate_overlays_after_delete(buffer, a, b);
+    }
+
+    pub fn set_current_multibyte(&mut self, enabled: bool) {
+        let buffer = self.current_id();
+        let Some(old_text) = self.get(buffer).map(|buf| buf.text.clone()) else {
+            return;
+        };
+        let Some(old_multibyte) = self.get(buffer).map(|buf| buf.multibyte) else {
+            return;
+        };
+        if old_multibyte == enabled {
+            return;
+        }
+
+        let map_pos = if enabled {
+            let bytes = old_text
+                .chars()
+                .map(|ch| {
+                    let code = ch as u32;
+                    if (0xE000..=0xE0FF).contains(&code) {
+                        (code - 0xE000) as u8
+                    } else {
+                        ch as u8
+                    }
+                })
+                .collect::<Vec<_>>();
+            let decoded = String::from_utf8_lossy(&bytes).into_owned();
+            let starts = decoded
+                .char_indices()
+                .map(|(idx, _)| idx)
+                .collect::<Vec<_>>();
+            if let Some(buf) = self.get_mut(buffer) {
+                buf.text = decoded;
+                buf.multibyte = true;
+            }
+            Box::new(move |pos: usize| -> usize {
+                let offset = pos.saturating_sub(1);
+                starts.iter().filter(|idx| **idx < offset).count() + 1
+            }) as Box<dyn Fn(usize) -> usize>
+        } else {
+            let encoded = StubBuffer::encode_unibyte_text(&old_text);
+            let mut offsets = Vec::new();
+            for pos in 1..=old_text.chars().count() + 1 {
+                offsets.push(
+                    old_text
+                        .char_indices()
+                        .nth(pos.saturating_sub(1))
+                        .map(|(idx, _)| idx)
+                        .unwrap_or(old_text.len())
+                        + 1,
+                );
+            }
+            if let Some(buf) = self.get_mut(buffer) {
+                buf.text = encoded;
+                buf.multibyte = false;
+            }
+            Box::new(move |pos: usize| -> usize {
+                offsets
+                    .get(pos.saturating_sub(1))
+                    .copied()
+                    .unwrap_or_else(|| offsets.last().copied().unwrap_or(1))
+            }) as Box<dyn Fn(usize) -> usize>
+        };
+
+        for ov in self.overlays.values_mut() {
+            if ov.buffer != buffer {
+                continue;
+            }
+            if let Some(start) = ov.start {
+                ov.start = Some(map_pos(start));
+            }
+            if let Some(end) = ov.end {
+                ov.end = Some(map_pos(end));
+            }
+        }
     }
 
     fn relocate_overlays_after_insert(
@@ -627,6 +854,7 @@ impl Registry {
         len: usize,
         before_markers: bool,
     ) {
+        let family = self.text_family_ids(buffer);
         fn move_boundary(
             boundary: usize,
             pos: usize,
@@ -642,7 +870,7 @@ impl Registry {
         }
 
         for ov in self.overlays.values_mut() {
-            if ov.buffer != buffer {
+            if !family.contains(&ov.buffer) {
                 continue;
             }
             let (Some(start), Some(end)) = (ov.start, ov.end) else {
@@ -679,6 +907,7 @@ impl Registry {
     }
 
     fn relocate_overlays_after_delete(&mut self, buffer: BufferId, start: usize, end: usize) {
+        let family = self.text_family_ids(buffer);
         fn move_boundary(boundary: usize, start: usize, end: usize) -> usize {
             if boundary < start {
                 boundary
@@ -690,7 +919,7 @@ impl Registry {
         }
 
         for ov in self.overlays.values_mut() {
-            if ov.buffer != buffer {
+            if !family.contains(&ov.buffer) {
                 continue;
             }
             let (Some(ov_start), Some(ov_end)) = (ov.start, ov.end) else {
@@ -698,6 +927,13 @@ impl Registry {
             };
             ov.start = Some(move_boundary(ov_start, start, end));
             ov.end = Some(move_boundary(ov_end, start, end));
+            let evaporates = ov.plist.iter().any(|(key, value)| {
+                key.as_symbol().as_deref() == Some("evaporate") && !value.is_nil()
+            });
+            if evaporates && ov.start == ov.end {
+                ov.start = None;
+                ov.end = None;
+            }
         }
     }
 

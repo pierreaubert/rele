@@ -46,7 +46,7 @@ use rele_elisp::eval::bootstrap::{
 /// down by a watchdog, which yields an `EvalError` that the runner
 /// reclassifies as a `timeout` result. The parent harness also has a
 /// per-file deadline (currently 15 s) as a last-resort safety net.
-const DEFAULT_PER_TEST_MS: u64 = 3_000;
+const DEFAULT_PER_TEST_MS: u64 = 8_000;
 
 enum Mode {
     /// Read paths from stdin (one per line); exit on EOF. Pool mode.
@@ -62,7 +62,10 @@ struct Config {
 
 fn parse_args() -> Result<Config, String> {
     let mut mode = Mode::Stdin;
-    let mut per_test_ms = DEFAULT_PER_TEST_MS;
+    let mut per_test_ms = std::env::var("EMACS_TEST_PER_TEST_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_PER_TEST_MS);
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {

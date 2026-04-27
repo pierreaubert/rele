@@ -49,6 +49,7 @@ pub(super) fn run_rele_ert_tests_detailed_inner(
             ),
         );
         interp.reset_eval_ops();
+        interp.state.clear_closure_mutations();
         interp.set_eval_ops_limit(50_000_000);
         if per_test_ms > 0 {
             interp.set_deadline(

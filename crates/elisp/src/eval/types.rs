@@ -54,6 +54,10 @@ pub struct InterpreterState {
     pub translation_tables: Arc<RwLock<HashMap<String, LispObject>>>,
     pub custom_metadata: Arc<RwLock<HashMap<SymbolId, LispObject>>>,
     pub advice_metadata: Arc<RwLock<HashMap<SymbolId, Vec<LispObject>>>>,
+    /// Mutations made through lexical closures whose original binding frame is
+    /// no longer the direct caller. This bridges Emacs's shared lexical cells
+    /// until the interpreter grows real binding-cell objects.
+    pub closure_mutations: Arc<RwLock<HashMap<SymbolId, LispObject>>>,
     /// Per-eval operation counter. Incremented on every eval call.
     /// When `eval_ops_limit` is > 0 and ops exceeds it, eval returns an error.
     pub eval_ops: Arc<std::sync::atomic::AtomicU64>,
@@ -173,6 +177,18 @@ impl InterpreterState {
     }
     pub fn def_version(&self, sym: obarray::SymbolId) -> u64 {
         self.symbol_cells.read().def_version(sym)
+    }
+    pub fn set_closure_mutation(&self, sym: obarray::SymbolId, value: LispObject) {
+        self.closure_mutations.write().insert(sym, value);
+    }
+    pub fn get_closure_mutation(&self, sym: obarray::SymbolId) -> Option<LispObject> {
+        self.closure_mutations.read().get(&sym).cloned()
+    }
+    pub fn has_closure_mutation(&self, sym: obarray::SymbolId) -> bool {
+        self.closure_mutations.read().contains_key(&sym)
+    }
+    pub fn clear_closure_mutations(&self) {
+        self.closure_mutations.write().clear();
     }
     /// Allocate a cons cell on the interpreter's real GC heap and return
     /// it as a Value (TAG_HEAP_PTR). This is the chokepoint for every
@@ -341,6 +357,7 @@ impl Interpreter {
             "case-fold-search",
             "default-directory",
             "buffer-file-name",
+            "kill-buffer-delete-auto-save-files",
             "last-command",
             "this-command",
         ]
@@ -381,6 +398,7 @@ impl Interpreter {
                 translation_tables: Arc::new(RwLock::new(HashMap::new())),
                 custom_metadata: Arc::new(RwLock::new(HashMap::new())),
                 advice_metadata: Arc::new(RwLock::new(HashMap::new())),
+                closure_mutations: Arc::new(RwLock::new(HashMap::new())),
                 eval_ops: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 eval_ops_limit: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 deadline: std::cell::Cell::new(None),

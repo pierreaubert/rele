@@ -16,6 +16,7 @@ pub(super) enum FileOutcome {
         rel: String,
         jsonl_lines: Vec<String>,
         summary: FileSummary,
+        elapsed_ms: u128,
     },
     /// Worker exceeded the wall-clock budget for this file.
     Timeout { file_index: usize, rel: String },
@@ -38,8 +39,8 @@ pub(super) struct Worker {
 }
 impl Worker {
     #[allow(dead_code)]
-    pub(super) fn spawn(bin: &std::path::Path) -> Option<Self> {
-        let mut child = spawn_worker(bin)?;
+    pub(super) fn spawn(bin: &std::path::Path, per_test_ms: u64) -> Option<Self> {
+        let mut child = spawn_worker(bin, per_test_ms)?;
         let stdout = child.stdout.take()?;
         let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
         std::thread::spawn(move || {

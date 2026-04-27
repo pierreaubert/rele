@@ -310,7 +310,10 @@ pub fn make_stdlib_interp() -> Interpreter {
         "prefer-coding-system",
         LispObject::primitive("prefer-coding-system"),
     );
-    interp.define("set-buffer-multibyte", LispObject::primitive("ignore"));
+    interp.define(
+        "set-buffer-multibyte",
+        LispObject::primitive("set-buffer-multibyte"),
+    );
     interp.define(
         "set-keyboard-coding-system-internal",
         LispObject::primitive("ignore"),

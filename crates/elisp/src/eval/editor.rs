@@ -28,7 +28,7 @@ pub(super) fn eval_buffer_size(
     match e.as_ref() {
         Some(cb) => Ok(obj_to_value(LispObject::integer(cb.buffer_size() as i64))),
         None => Ok(obj_to_value(LispObject::integer(
-            crate::buffer::with_current(|b| b.text.chars().count()) as i64,
+            crate::buffer::with_current(|b| b.buffer_size()) as i64,
         ))),
     }
 }
@@ -63,7 +63,7 @@ pub(super) fn eval_insert(
         cb.insert(&text_str);
     } else {
         drop(e);
-        crate::buffer::with_registry_mut(|r| r.insert_current(&text_str, before_markers));
+        super::insert_with_overlay_hooks(&text_str, before_markers, env, editor, macros, state)?;
     }
     Ok(Value::nil())
 }
@@ -207,8 +207,9 @@ pub(super) fn eval_point_min(
     let e = editor.read();
     match e.as_ref() {
         Some(cb) => Ok(obj_to_value(LispObject::integer(cb.point_min() as i64))),
-        // StubBuffer convention: point-min = 1 (Emacs-like).
-        None => Ok(obj_to_value(LispObject::integer(1))),
+        None => Ok(obj_to_value(LispObject::integer(
+            crate::buffer::with_current(|b| b.point_min()) as i64,
+        ))),
     }
 }
 
@@ -219,7 +220,7 @@ pub(super) fn eval_point_max(
     match e.as_ref() {
         Some(cb) => Ok(obj_to_value(LispObject::integer(cb.point_max() as i64))),
         None => Ok(obj_to_value(LispObject::integer(
-            crate::buffer::with_current(|b| b.text.chars().count()) as i64 + 1,
+            crate::buffer::with_current(|b| b.point_max()) as i64,
         ))),
     }
 }
