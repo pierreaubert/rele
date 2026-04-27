@@ -336,7 +336,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     );
     interp.define(
         "multibyte-char-to-unibyte",
-        LispObject::primitive("identity"),
+        LispObject::primitive("multibyte-char-to-unibyte"),
     );
     interp.define("string-to-multibyte", LispObject::primitive("identity"));
     interp.define("string-to-unibyte", LispObject::primitive("identity"));

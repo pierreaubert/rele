@@ -500,7 +500,7 @@ fn test_batched_defun_stubs_resolve() {
         ("(gnutls-available-p)", "nil"),
         ("(display-graphic-p)", "nil"),
         ("(get-char-property 1 'face)", "nil"),
-        ("(documentation 'car)", "nil"),
+        ("(documentation 'car)", ""),
         ("(backward-prefix-chars)", "nil"),
         ("(undo-boundary)", "nil"),
         ("(buffer-text-pixel-size)", "(0 . 0)"),

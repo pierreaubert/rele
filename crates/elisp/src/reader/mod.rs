@@ -81,6 +81,13 @@ fn unicode_name_to_char(name: &str) -> Option<char> {
         "LATIN CAPITAL LETTER X" => 'X',
         "LATIN CAPITAL LETTER Y" => 'Y',
         "LATIN CAPITAL LETTER Z" => 'Z',
+        // Latin-1 supplement: accented letters used in test corpora.
+        "LATIN SMALL LETTER E WITH ACUTE" => '\u{00E9}',
+        "LATIN SMALL LETTER A WITH ACUTE" => '\u{00E1}',
+        "LATIN SMALL LETTER I WITH ACUTE" => '\u{00ED}',
+        "LATIN SMALL LETTER O WITH ACUTE" => '\u{00F3}',
+        "LATIN SMALL LETTER U WITH ACUTE" => '\u{00FA}',
+        "LATIN CAPITAL LETTER E WITH ACUTE" => '\u{00C9}',
         // Greek letters (common in mathematical contexts)
         "GREEK SMALL LETTER ALPHA" => '\u{03B1}',
         "GREEK SMALL LETTER BETA" => '\u{03B2}',
@@ -204,7 +211,33 @@ fn unicode_name_to_char(name: &str) -> Option<char> {
         "SNOWFLAKE" => '\u{2745}',
         "BLACK HEART SUIT" => '\u{2665}',
         "WHITE SMILING FACE" => '\u{263A}',
-        _ => return None,
+        _ => {
+            // U+XXXX hex codepoint form, used by Emacs's reader as a
+            // catch-all for characters that don't have a registered name.
+            if let Some(rest) = key.strip_prefix("U+") {
+                if let Ok(code) = u32::from_str_radix(rest, 16) {
+                    return char::from_u32(code);
+                }
+            }
+            // VARIATION SELECTOR-N (1..256). 1..16 maps to U+FE00..U+FE0F,
+            // 17..256 maps to U+E0100..U+E01EF.
+            if let Some(num_str) = key.strip_prefix("VARIATION SELECTOR ") {
+                if let Ok(n) = num_str.parse::<u32>() {
+                    if (1..=16).contains(&n) {
+                        return char::from_u32(0xFE00 + n - 1);
+                    } else if (17..=256).contains(&n) {
+                        return char::from_u32(0xE0100 + n - 17);
+                    }
+                }
+            }
+            // CJK COMPATIBILITY IDEOGRAPH-XXXX hex codepoint.
+            if let Some(rest) = key.strip_prefix("CJK COMPATIBILITY IDEOGRAPH ") {
+                if let Ok(code) = u32::from_str_radix(rest, 16) {
+                    return char::from_u32(code);
+                }
+            }
+            return None;
+        }
     };
     Some(ch)
 }
@@ -887,12 +920,25 @@ impl Reader {
                 }
                 'C' | '^' => {
                     // Control modifier: \C-X or \^X
+                    // For ASCII letters / @-_ collapse into the ASCII control
+                    // char (`?\C-a` = 1). For '?' produce DEL (127). Other
+                    // characters keep the control bit (1 << 26) so e.g.
+                    // `?\C-\0` = 0x4000000 instead of plain 0.
                     if esc == 'C' {
                         self.advance(); // skip '-'
                     }
                     let inner = self.read_char_literal()?;
                     let val = inner.as_integer().unwrap_or(0);
-                    return Ok(LispObject::Integer(val & 0x1F));
+                    let resolved = if (b'@' as i64..=b'_' as i64).contains(&val)
+                        || (b'a' as i64..=b'z' as i64).contains(&val)
+                    {
+                        val & 0x1F
+                    } else if val == b'?' as i64 {
+                        127
+                    } else {
+                        val | 0x4000000
+                    };
+                    return Ok(LispObject::Integer(resolved));
                 }
                 'S' => {
                     // Shift modifier: \S-X adds 0x2000000
@@ -1072,6 +1118,29 @@ impl Reader {
                             // out-of-range values rather than erroring.
                             let ch = char::from_u32(code).unwrap_or('\u{FFFD}');
                             s.push(ch);
+                        }
+                    }
+                    'N' => {
+                        // \N{UNICODE NAME} inside a string literal: same
+                        // table as char literals.
+                        if self.peek() == Some('{') {
+                            self.advance();
+                            let mut name = String::new();
+                            loop {
+                                match self.advance() {
+                                    Some('}') => break,
+                                    Some(c) => name.push(c),
+                                    None => {
+                                        return Err(ElispError::ReaderError(
+                                            "unterminated \\N{} unicode name".to_string(),
+                                        ));
+                                    }
+                                }
+                            }
+                            let ch = unicode_name_to_char(&name).unwrap_or('\u{FFFD}');
+                            s.push(ch);
+                        } else {
+                            s.push('N');
                         }
                     }
                     'u' | 'U' => {

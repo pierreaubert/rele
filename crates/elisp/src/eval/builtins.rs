@@ -948,3 +948,365 @@ pub(super) fn eval_progn_value(
 ) -> ElispResult<Value> {
     eval_progn(body, env, editor, macros, state)
 }
+
+// ---------------------------------------------------------------------------
+// Completion primitives: try-completion, all-completions, test-completion.
+//
+// Collections accepted: list of strings, list of symbols, alist whose car
+// is a string or symbol, vector (obarray approximation), or hash table
+// whose keys are strings or symbols. Predicate, when supplied, is called
+// with one argument (the candidate as it appears in the collection — for
+// alists, the entire pair) and the candidate is included only if the
+// predicate returns non-nil. The dynamic variable `completion-regexp-list`,
+// if non-nil, restricts candidates to those that match every regexp in
+// the list.
+// ---------------------------------------------------------------------------
+
+/// Extract the (key, raw-element, optional-second-pred-arg) triples from a
+/// completion collection. `key` is the string used for prefix matching;
+/// `raw` is the first arg passed to the user predicate; `extra` is a
+/// second arg for hash-table predicates (which take key + value).
+fn collection_candidates(coll: &LispObject) -> Vec<(String, LispObject, Option<LispObject>)> {
+    let mut out = Vec::new();
+    match coll {
+        LispObject::Nil => {}
+        LispObject::Cons(_) => {
+            let mut cur = coll.clone();
+            while let Some((car, cdr)) = cur.destructure_cons() {
+                let (key, raw) = match &car {
+                    LispObject::String(s) => (s.to_string(), car.clone()),
+                    LispObject::Symbol(_) => {
+                        if let Some(name) = car.as_symbol() {
+                            (name, car.clone())
+                        } else {
+                            cur = cdr;
+                            continue;
+                        }
+                    }
+                    LispObject::Cons(_) => {
+                        let head = car.first().unwrap_or_else(LispObject::nil);
+                        let key = match &head {
+                            LispObject::String(s) => s.to_string(),
+                            LispObject::Symbol(_) => head.as_symbol().unwrap_or_default(),
+                            _ => {
+                                cur = cdr;
+                                continue;
+                            }
+                        };
+                        (key, car.clone())
+                    }
+                    _ => {
+                        cur = cdr;
+                        continue;
+                    }
+                };
+                out.push((key, raw, None));
+                cur = cdr;
+            }
+        }
+        LispObject::Vector(v) => {
+            let g = v.lock();
+            for slot in g.iter() {
+                if let Some(name) = slot.as_symbol() {
+                    out.push((name, slot.clone(), None));
+                }
+            }
+        }
+        LispObject::HashTable(h) => {
+            let g = h.lock();
+            for (k, v) in g.data.iter() {
+                use crate::object::HashKey;
+                let (key, raw): (String, LispObject) = match k {
+                    HashKey::String(s) => (s.clone(), LispObject::string(s)),
+                    HashKey::Symbol(sid) => {
+                        let name = crate::obarray::symbol_name(*sid);
+                        (name, LispObject::Symbol(*sid))
+                    }
+                    HashKey::Printed(p) => {
+                        // `:test 'equal` stores all keys via prin1. Recover
+                        // strings (quoted) and bare symbols; skip anything
+                        // we can't parse back into a completion candidate.
+                        if p.starts_with('"') && p.ends_with('"') && p.len() >= 2 {
+                            let inner = &p[1..p.len() - 1];
+                            (inner.to_string(), LispObject::string(inner))
+                        } else if p.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                        {
+                            (p.clone(), LispObject::symbol(p))
+                        } else {
+                            continue;
+                        }
+                    }
+                    _ => continue,
+                };
+                out.push((key, raw, Some(v.clone())));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+fn longest_common_prefix(a: &str, b: &str) -> String {
+    let mut out = String::new();
+    let mut ai = a.chars();
+    let mut bi = b.chars();
+    loop {
+        match (ai.next(), bi.next()) {
+            (Some(ca), Some(cb)) if ca == cb => out.push(ca),
+            _ => break,
+        }
+    }
+    out
+}
+
+fn completion_regexp_list(
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> Vec<String> {
+    let id = crate::obarray::intern("completion-regexp-list");
+    // Read the dynamic value: env walks let-bindings first, then falls back
+    // to the value cell. `let` on non-special vars only updates env.
+    let val = env
+        .read()
+        .get_id(id)
+        .or_else(|| state.get_value_cell(id))
+        .unwrap_or_else(LispObject::nil);
+    let mut out = Vec::new();
+    let mut cur = val;
+    while let Some((car, cdr)) = cur.destructure_cons() {
+        if let LispObject::String(s) = &car {
+            out.push(s.to_string());
+        }
+        cur = cdr;
+    }
+    out
+}
+
+fn matches_regexps(s: &str, regexps: &[String]) -> bool {
+    for pat in regexps {
+        match regex::Regex::new(pat) {
+            Ok(re) => {
+                if !re.is_match(s) {
+                    return false;
+                }
+            }
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
+fn predicate_accepts(
+    pred: &LispObject,
+    raw: &LispObject,
+    extra: Option<&LispObject>,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<bool> {
+    if pred.is_nil() {
+        return Ok(true);
+    }
+    let call_args = match extra {
+        Some(e) => LispObject::cons(
+            raw.clone(),
+            LispObject::cons(e.clone(), LispObject::nil()),
+        ),
+        None => LispObject::cons(raw.clone(), LispObject::nil()),
+    };
+    // Try the call; if the predicate doesn't accept two args, fall back to
+    // calling it with just the raw element. This lets a hash-table-aware
+    // predicate (k v) coexist with simple (elt) predicates.
+    let result = call_function(
+        obj_to_value(pred.clone()),
+        obj_to_value(call_args),
+        env,
+        editor,
+        macros,
+        state,
+    );
+    match result {
+        Ok(v) => Ok(!value_to_obj(v).is_nil()),
+        Err(ElispError::WrongNumberOfArguments) if extra.is_some() => {
+            let single = LispObject::cons(raw.clone(), LispObject::nil());
+            let v = call_function(
+                obj_to_value(pred.clone()),
+                obj_to_value(single),
+                env,
+                editor,
+                macros,
+                state,
+            )?;
+            Ok(!value_to_obj(v).is_nil())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+pub(super) fn eval_try_completion(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let args_obj = value_to_obj(args);
+    let prefix_obj = value_to_obj(eval(
+        obj_to_value(args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?),
+        env,
+        editor,
+        macros,
+        state,
+    )?);
+    let prefix = match &prefix_obj {
+        LispObject::String(s) => s.to_string(),
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    let coll = value_to_obj(eval(
+        obj_to_value(args_obj.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+        env,
+        editor,
+        macros,
+        state,
+    )?);
+    let pred = match args_obj.nth(2) {
+        Some(p) => value_to_obj(eval(obj_to_value(p), env, editor, macros, state)?),
+        None => LispObject::nil(),
+    };
+    let regexps = completion_regexp_list(env, state);
+
+    let mut common: Option<String> = None;
+    let mut exact_match = false;
+    for (key, raw, extra) in collection_candidates(&coll) {
+        if !key.starts_with(&prefix) {
+            continue;
+        }
+        if !regexps.is_empty() && !matches_regexps(&key, &regexps) {
+            continue;
+        }
+        if !predicate_accepts(&pred, &raw, extra.as_ref(), env, editor, macros, state)? {
+            continue;
+        }
+        if key == prefix {
+            exact_match = true;
+        }
+        common = Some(match common {
+            Some(c) => longest_common_prefix(&c, &key),
+            None => key,
+        });
+    }
+    Ok(obj_to_value(match common {
+        None => LispObject::nil(),
+        Some(c) if c == prefix && exact_match => {
+            // Exact match and no longer extension exists.
+            // Only return t when prefix equals the (single) common candidate.
+            // If multiple candidates share prefix exactly, common is also prefix
+            // but we still want to return the prefix itself only when there's
+            // a single completion equal to prefix. Distinguish: if any candidate
+            // is strictly longer than prefix, return common (== prefix string).
+            // Emacs returns t in this case (exact unique match).
+            LispObject::t()
+        }
+        Some(c) => LispObject::string(&c),
+    }))
+}
+
+pub(super) fn eval_all_completions(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let args_obj = value_to_obj(args);
+    let prefix_obj = value_to_obj(eval(
+        obj_to_value(args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?),
+        env,
+        editor,
+        macros,
+        state,
+    )?);
+    let prefix = match &prefix_obj {
+        LispObject::String(s) => s.to_string(),
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    let coll = value_to_obj(eval(
+        obj_to_value(args_obj.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+        env,
+        editor,
+        macros,
+        state,
+    )?);
+    let pred = match args_obj.nth(2) {
+        Some(p) => value_to_obj(eval(obj_to_value(p), env, editor, macros, state)?),
+        None => LispObject::nil(),
+    };
+    let regexps = completion_regexp_list(env, state);
+
+    let mut matches = Vec::new();
+    for (key, raw, extra) in collection_candidates(&coll) {
+        if !key.starts_with(&prefix) {
+            continue;
+        }
+        if !regexps.is_empty() && !matches_regexps(&key, &regexps) {
+            continue;
+        }
+        if !predicate_accepts(&pred, &raw, extra.as_ref(), env, editor, macros, state)? {
+            continue;
+        }
+        matches.push(key);
+    }
+    let mut result = LispObject::nil();
+    for m in matches.into_iter().rev() {
+        result = LispObject::cons(LispObject::string(&m), result);
+    }
+    Ok(obj_to_value(result))
+}
+
+pub(super) fn eval_test_completion(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let args_obj = value_to_obj(args);
+    let s_obj = value_to_obj(eval(
+        obj_to_value(args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?),
+        env,
+        editor,
+        macros,
+        state,
+    )?);
+    let s = match &s_obj {
+        LispObject::String(s) => s.to_string(),
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    let coll = value_to_obj(eval(
+        obj_to_value(args_obj.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
+        env,
+        editor,
+        macros,
+        state,
+    )?);
+    let pred = match args_obj.nth(2) {
+        Some(p) => value_to_obj(eval(obj_to_value(p), env, editor, macros, state)?),
+        None => LispObject::nil(),
+    };
+    let regexps = completion_regexp_list(env, state);
+
+    for (key, raw, extra) in collection_candidates(&coll) {
+        if key != s {
+            continue;
+        }
+        if !regexps.is_empty() && !matches_regexps(&key, &regexps) {
+            continue;
+        }
+        if !predicate_accepts(&pred, &raw, extra.as_ref(), env, editor, macros, state)? {
+            continue;
+        }
+        return Ok(obj_to_value(LispObject::t()));
+    }
+    Ok(obj_to_value(LispObject::nil()))
+}

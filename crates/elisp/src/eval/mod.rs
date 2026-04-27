@@ -2997,6 +2997,27 @@ pub(super) fn eval_inner(
                 "load" => builtins::eval_load(obj_to_value(cdr), env, editor, macros, state),
                 "mapcar" => eval_mapcar(obj_to_value(cdr), env, editor, macros, state),
                 "mapc" => eval_mapc(obj_to_value(cdr), env, editor, macros, state),
+                "try-completion" => builtins::eval_try_completion(
+                    obj_to_value(cdr),
+                    env,
+                    editor,
+                    macros,
+                    state,
+                ),
+                "all-completions" => builtins::eval_all_completions(
+                    obj_to_value(cdr),
+                    env,
+                    editor,
+                    macros,
+                    state,
+                ),
+                "test-completion" => builtins::eval_test_completion(
+                    obj_to_value(cdr),
+                    env,
+                    editor,
+                    macros,
+                    state,
+                ),
                 "dolist" => eval_dolist(obj_to_value(cdr), env, editor, macros, state),
                 "dotimes" => eval_dotimes(obj_to_value(cdr), env, editor, macros, state),
                 "maphash" => {
@@ -5019,11 +5040,30 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
-                    match arg {
-                        LispObject::String(s) => Ok(obj_to_value(LispObject::symbol(&s))),
-                        LispObject::Symbol(_) => Ok(obj_to_value(arg)),
-                        _ => Err(ElispError::WrongTypeArgument("string".to_string())),
+                    let sym = match arg {
+                        LispObject::String(ref s) => LispObject::symbol(s),
+                        LispObject::Symbol(_) => arg.clone(),
+                        _ => {
+                            return Err(ElispError::WrongTypeArgument("string".to_string()));
+                        }
+                    };
+                    // Optional second arg: obarray. We model obarrays as
+                    // hash tables (`obarray-make` returns a hash table); if
+                    // a hash-table obarray is given, register the symbol
+                    // there so completion can iterate it.
+                    if let Some(ob_expr) = cdr.nth(1) {
+                        let ob = value_to_obj(eval(
+                            obj_to_value(ob_expr),
+                            env,
+                            editor,
+                            macros,
+                            state,
+                        )?);
+                        if let LispObject::HashTable(ht) = &ob {
+                            ht.lock().put(&sym, sym.clone());
+                        }
                     }
+                    Ok(obj_to_value(sym))
                 }
                 "intern-soft" => {
                     let arg = value_to_obj(eval(

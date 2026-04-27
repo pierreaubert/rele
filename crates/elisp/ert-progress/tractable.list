@@ -1,0 +1,45 @@
+# Emacs ERT test files we actively try to pass.
+# One absolute path per line. Lines starting with # are ignored.
+# Update this when reclassifying a file from skip to tractable (or vice versa).
+# After editing, re-run ./refresh.sh.
+
+/Volumes/home_ext1/Src/emacs/test/src/alloc-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/buffer-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/callint-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/casefiddle-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/category-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/character-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/charset-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/chartab-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/cmds-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/coding-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/data-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/decompress-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/doc-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/editfns-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/eval-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/floatfns-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/font-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/image-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/indent-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/inotify-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/json-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/keyboard-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/keymap-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/lcms-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/lread-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/marker-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/minibuf-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/process-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/profiler-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/search-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/sqlite-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/syntax-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/terminal-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/textprop-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/thread-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/treesit-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/undo-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/xdisp-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/xfaces-tests.el
+/Volumes/home_ext1/Src/emacs/test/src/xml-tests.el
