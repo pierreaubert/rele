@@ -1181,7 +1181,20 @@ pub(super) fn eval_defvar(
     if !is_bound {
         if let Some(value_expr) = args_obj.nth(1) {
             let value = value_to_obj(eval(obj_to_value(value_expr), env, editor, macros, state)?);
-            state.global_env.write().define_id(id, value.clone());
+            // If this variable is currently let-bound, defvar updates only the
+            // toplevel default — not the active dynamic binding. The toplevel
+            // value lives in the bottom-most specpdl entry's "saved" slot,
+            // which `unwind_specpdl` will restore when the outermost let exits.
+            let bottom_idx = state
+                .specpdl
+                .read()
+                .iter()
+                .position(|(sid, _)| *sid == id);
+            if let Some(idx) = bottom_idx {
+                state.specpdl.write()[idx].1 = Some(value.clone());
+            } else {
+                state.global_env.write().define_id(id, value.clone());
+            }
             // Mirror to the value cell so fresh envs elsewhere can see it.
             state.set_value_cell(id, value);
             state.put_plist(

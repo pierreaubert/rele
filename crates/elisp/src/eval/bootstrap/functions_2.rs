@@ -1242,5 +1242,18 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("lisp-el-font-lock-keywords-2", LispObject::nil());
     interp.define("oclosure", LispObject::nil());
     interp.define("loop", LispObject::nil());
+    // Reset after-load-alist so user code observes an empty alist. The
+    // bootstrap stub-evaluator (primitives_modules::register) executes many
+    // `with-eval-after-load` forms; their entries are an implementation detail
+    // and should not be visible to user code that inspects after-load-alist.
+    {
+        let sym = crate::obarray::intern("after-load-alist");
+        interp
+            .state
+            .global_env
+            .write()
+            .set_id(sym, LispObject::nil());
+        interp.state.set_value_cell(sym, LispObject::nil());
+    }
     interp
 }

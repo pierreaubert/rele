@@ -2070,7 +2070,7 @@ pub fn register(interp: &mut Interpreter) {
 (defun ical:fix-blank-lines () nil)
 (defun ical:fix-hyphenated-dates () nil)
 (defun ical:fix-missing-mailtos () nil)
-(defun ical:make-date-time (&rest args) args)
+(defun ical:make-date-time (&rest _args) nil)
 (defun ical:parse ()
   (let ((raw (buffer-substring-no-properties (point) (point-max))))
     (if (not (string-match-p "BEGIN:VCALENDAR" raw))
