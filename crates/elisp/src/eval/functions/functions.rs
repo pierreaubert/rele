@@ -180,7 +180,8 @@ fn stateful_type_of(args: &LispObject, state: &InterpreterState) -> ElispResult<
         let guard = v.lock();
         if let Some(first) = guard.first()
             && let Some(sym) = first.as_symbol()
-            && crate::primitives_eieio::get_class_for_state(state, &sym).is_some()
+            && (crate::primitives_eieio::get_class_for_state(state, &sym).is_some()
+                || crate::primitives::core::records::is_record_tag(&sym))
         {
             return Ok(LispObject::symbol(&sym));
         }

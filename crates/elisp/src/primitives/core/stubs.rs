@@ -753,7 +753,6 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
             Ok(LispObject::string(&ch.to_string()))
         }
         "char-resolve-modifiers" => Ok(args.first().unwrap_or(LispObject::nil())),
-        "char-table-subtype" => Ok(LispObject::nil()),
         "charset-after" => Ok(LispObject::symbol("unicode")),
         "split-char" => Ok(LispObject::nil()),
         "get-unused-iso-final-char" => Ok(LispObject::nil()),
@@ -791,7 +790,15 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "clear-charset-maps" | "declare-equiv-charset" => Ok(LispObject::nil()),
 
         // Records / finalizers
-        "make-record" | "make-finalizer" => Ok(LispObject::nil()),
+        "make-record" => make_record_impl(args),
+        "make-finalizer" => {
+            crate::primitives::core::records::register_record_tag("finalizer");
+            let func = args.first().unwrap_or_else(LispObject::nil);
+            let items = vec![LispObject::symbol("finalizer"), func];
+            Ok(LispObject::Vector(std::sync::Arc::new(
+                crate::eval::SyncRefCell::new(items),
+            )))
+        }
         "make-ring" => Ok(LispObject::nil()),
         "ring-convert-sequence-to-ring" => Ok(LispObject::nil()),
 
@@ -829,4 +836,26 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         _ => return None,
     };
     Some(r)
+}
+
+fn make_record_impl(args: &LispObject) -> ElispResult<LispObject> {
+    let tag = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let length = args
+        .nth(1)
+        .ok_or(ElispError::WrongNumberOfArguments)?
+        .as_integer()
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
+    let init = args.nth(2).unwrap_or_else(LispObject::nil);
+    let length = usize::try_from(length).unwrap_or(0);
+    if let Some(t) = tag.as_symbol() {
+        crate::primitives::core::records::register_record_tag(&t);
+    }
+    let mut items = Vec::with_capacity(length + 1);
+    items.push(tag);
+    for _ in 0..length {
+        items.push(init.clone());
+    }
+    Ok(LispObject::Vector(std::sync::Arc::new(
+        crate::eval::SyncRefCell::new(items),
+    )))
 }

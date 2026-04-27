@@ -502,21 +502,72 @@ pub fn char_table_range(table: &LispObject, code: &LispObject) -> ElispResult<Li
     if !is_char_table(table) {
         return Ok(LispObject::nil());
     }
-    let Some(code) = code.as_integer() else {
-        return Ok(LispObject::nil());
-    };
     let guard = h.lock();
-    Ok(guard
-        .data
-        .get(&HashKey::Integer(code))
-        .cloned()
-        .or_else(|| {
-            guard
+    let default = || {
+        guard
+            .data
+            .get(&HashKey::Integer(CHAR_TABLE_DEFAULT))
+            .cloned()
+            .unwrap_or_else(LispObject::nil)
+    };
+    if code.is_nil() {
+        return Ok(default());
+    }
+    if let Some(code) = code.as_integer() {
+        return Ok(guard
+            .data
+            .get(&HashKey::Integer(code))
+            .cloned()
+            .unwrap_or_else(default));
+    }
+    if let Some((from, to)) = code.destructure_cons() {
+        let Some(start) = from.as_integer() else {
+            return Ok(LispObject::nil());
+        };
+        let Some(end) = to.as_integer() else {
+            return Ok(LispObject::nil());
+        };
+        let start = start.clamp(0, MAX_CHAR_CODE);
+        let end = end.clamp(0, MAX_CHAR_CODE);
+        if start > end {
+            return Ok(LispObject::nil());
+        }
+        // Return the common value if every code in [start..=end] maps to
+        // the same value; otherwise nil. Matches Emacs's behavior of
+        // returning the uniform value when the range was set with
+        // set-char-table-range.
+        let first = guard
+            .data
+            .get(&HashKey::Integer(start))
+            .cloned()
+            .unwrap_or_else(default);
+        for code in (start + 1)..=end {
+            let v = guard
                 .data
-                .get(&HashKey::Integer(CHAR_TABLE_DEFAULT))
+                .get(&HashKey::Integer(code))
                 .cloned()
-        })
-        .unwrap_or_else(LispObject::nil))
+                .unwrap_or_else(default);
+            if !v.eq(&first) {
+                return Ok(LispObject::nil());
+            }
+        }
+        return Ok(first);
+    }
+    Ok(LispObject::nil())
+}
+
+pub fn char_table_subtype(table: &LispObject) -> LispObject {
+    let LispObject::HashTable(h) = table else {
+        return LispObject::nil();
+    };
+    if !is_char_table(table) {
+        return LispObject::nil();
+    }
+    h.lock()
+        .data
+        .get(&HashKey::Integer(CHAR_TABLE_MARKER))
+        .cloned()
+        .unwrap_or_else(LispObject::nil)
 }
 
 pub fn char_table_set_parent(table: &LispObject, parent: LispObject) -> ElispResult<LispObject> {

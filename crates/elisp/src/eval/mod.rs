@@ -4402,14 +4402,16 @@ pub(super) fn eval_inner(
                     ))))
                 }
                 "recordp" => {
-                    let _arg = eval(
+                    let arg = value_to_obj(eval(
                         obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
                         env,
                         editor,
                         macros,
                         state,
-                    )?;
-                    Ok(Value::nil())
+                    )?);
+                    let is_record = matches!(&arg, LispObject::Vector(v)
+                        if matches!(v.lock().first(), Some(LispObject::Symbol(_))));
+                    Ok(obj_to_value(LispObject::from(is_record)))
                 }
                 "bool-vector-p" => {
                     let arg = value_to_obj(eval(
@@ -4848,7 +4850,10 @@ pub(super) fn eval_inner(
                         }
                         Ok(state.list_from_objects_reversed(items))
                     } else {
-                        Ok(obj_to_value(arg))
+                        let args_list = LispObject::cons(arg, LispObject::nil());
+                        let copied =
+                            crate::primitives::core::list::prim_copy_sequence(&args_list)?;
+                        Ok(obj_to_value(copied))
                     }
                 }
                 "autoload" => {
@@ -5723,6 +5728,18 @@ pub(super) fn eval_inner(
                     Ok(obj_to_value(crate::primitives::core::char_table_range(
                         &table, &code,
                     )?))
+                }
+                "char-table-subtype" => {
+                    let table = value_to_obj(eval(
+                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?);
+                    Ok(obj_to_value(crate::primitives::core::char_table_subtype(
+                        &table,
+                    )))
                 }
                 "set-char-table-parent" => {
                     let table = value_to_obj(eval(

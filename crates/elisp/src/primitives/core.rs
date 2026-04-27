@@ -8,11 +8,11 @@ mod file_ops;
 mod hash;
 mod io;
 pub(crate) mod keymaps;
-mod list;
+pub mod list;
 mod math;
 mod misc;
 mod predicates;
-mod records;
+pub mod records;
 mod sequence;
 mod string;
 mod stubs;
@@ -25,6 +25,7 @@ pub use ert::{make_ert_test_obj, set_current_ert_test};
 pub(crate) use vector::{
     bool_vector_length, bool_vector_to_list, char_table_extra_slot, char_table_parent,
     char_table_range, char_table_set_extra_slot, char_table_set_parent, char_table_set_range,
+    char_table_subtype,
     is_bool_vector, is_char_table, make_char_table,
 };
 

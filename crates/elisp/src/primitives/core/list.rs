@@ -396,7 +396,50 @@ pub fn prim_last(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_copy_sequence(args: &LispObject) -> ElispResult<LispObject> {
     let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    Ok(arg.clone())
+    match &arg {
+        LispObject::Nil => Ok(LispObject::nil()),
+        LispObject::Cons(_) => {
+            // Shallow-copy the cons spine.
+            let mut items = Vec::new();
+            let mut tail = LispObject::nil();
+            let mut cur = arg.clone();
+            let mut steps: u64 = 0;
+            loop {
+                match cur {
+                    LispObject::Cons(ref cell) => {
+                        steps += 1;
+                        if steps > MAX_LIST_WALK {
+                            return Err(ElispError::EvalError(
+                                "copy-sequence: list appears to be circular".to_string(),
+                            ));
+                        }
+                        let (car, cdr) = cell.lock().clone();
+                        items.push(car);
+                        cur = cdr;
+                    }
+                    LispObject::Nil => break,
+                    other => {
+                        // Dotted-tail terminator.
+                        tail = other;
+                        break;
+                    }
+                }
+            }
+            let mut result = tail;
+            for item in items.into_iter().rev() {
+                result = LispObject::cons(item, result);
+            }
+            Ok(result)
+        }
+        LispObject::Vector(v) => {
+            let cloned = v.lock().clone();
+            Ok(LispObject::Vector(std::sync::Arc::new(
+                crate::eval::SyncRefCell::new(cloned),
+            )))
+        }
+        LispObject::String(s) => Ok(LispObject::string(s)),
+        _ => Ok(arg.clone()),
+    }
 }
 
 pub fn prim_cadr(args: &LispObject) -> ElispResult<LispObject> {
