@@ -2,12 +2,17 @@ use std::path::{Path, PathBuf};
 
 use rele_server::CancellationFlag;
 use rele_server::document::buffer_list::name_from_path;
+use rele_server::emacs::search::MatchData;
 use rele_server::lsp::{LspBufferState, LspConfig, LspEvent, LspRegistry, position::uri_from_path};
-use rele_server::minibuffer::{MiniBufferPrompt, MiniBufferResult, MiniBufferState};
+use rele_server::minibuffer::{
+    MiniBufferPrompt, MiniBufferResult, MiniBufferState, PathCompletionKind,
+    path_completion_candidates,
+};
 use rele_server::syntax::{Highlighter, TreeSitterHighlighter, language_for_extension};
 use rele_server::{
-    BufferId, BufferKind, CommandArgs, DocumentBuffer, EditHistory, EditorCore, EditorCursor,
-    KillRing, LispCommandDispatch, LispHost, MacroState, StoredBuffer,
+    BufferId, BufferKind, CommandArgs, CommandPlan, DocumentBuffer, EditHistory, EditorCore,
+    EditorCursor, InteractiveSpec, KillRing, LispCommandDispatch, LispHost, MacroState,
+    StoredBuffer,
 };
 use tokio::sync::mpsc;
 
@@ -32,68 +37,17 @@ fn special_buffer_attrs(name: &str) -> Option<(BufferKind, bool)> {
     }
 }
 
-#[derive(Clone, Copy)]
-enum PathCompletionKind {
-    FilesAndDirectories,
-    DirectoriesOnly,
+fn major_mode_for_kind(kind: &BufferKind) -> &'static str {
+    match kind {
+        BufferKind::Dired => "dired-mode",
+        BufferKind::BufferList => "Buffer-menu-mode",
+        BufferKind::Scratch => "lisp-interaction-mode",
+        BufferKind::File => "text-mode",
+    }
 }
 
-fn path_completion_candidates(
-    base_dir: &Path,
-    input: &str,
-    kind: PathCompletionKind,
-) -> Vec<String> {
-    let input_path = Path::new(input);
-    let input_ends_with_separator = input.ends_with(std::path::MAIN_SEPARATOR);
-    let (typed_dir, prefix) = if input_ends_with_separator {
-        (PathBuf::from(input), String::new())
-    } else {
-        (
-            input_path
-                .parent()
-                .unwrap_or_else(|| Path::new(""))
-                .to_path_buf(),
-            input_path
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_default(),
-        )
-    };
-    let search_dir = if typed_dir.as_os_str().is_empty() {
-        base_dir.to_path_buf()
-    } else if typed_dir.is_absolute() {
-        typed_dir.clone()
-    } else {
-        base_dir.join(&typed_dir)
-    };
-    let prefix_lower = prefix.to_lowercase();
-    #[allow(clippy::disallowed_methods)]
-    let Ok(entries) = std::fs::read_dir(search_dir) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !prefix_lower.is_empty() && !name.to_lowercase().starts_with(&prefix_lower) {
-            continue;
-        }
-        let is_dir = entry.file_type().is_ok_and(|file_type| file_type.is_dir());
-        if matches!(kind, PathCompletionKind::DirectoriesOnly) && !is_dir {
-            continue;
-        }
-        let candidate_path = if typed_dir.as_os_str().is_empty() {
-            PathBuf::from(&name)
-        } else {
-            typed_dir.join(&name)
-        };
-        let mut candidate = candidate_path.to_string_lossy().to_string();
-        if is_dir && !candidate.ends_with(std::path::MAIN_SEPARATOR) {
-            candidate.push(std::path::MAIN_SEPARATOR);
-        }
-        out.push(candidate);
-    }
-    out.sort_by_key(|candidate| candidate.to_lowercase());
-    out
+fn plural(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
 }
 
 /// What to do with the mini-buffer's `Submitted(text)` / `Cancelled`
@@ -111,6 +65,21 @@ pub enum PendingMiniBufferAction {
     Dired,
     /// Run the command whose name is typed (M-x / Esc-x).
     RunCommand,
+    /// Run a command with a string argument supplied by a prompt.
+    RunCommandWithInput { name: String },
+    /// Run a command after collecting several string prompts in sequence.
+    RunCommandWithInputs {
+        name: String,
+        prompts: Vec<String>,
+        values: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryReplaceState {
+    pub from: String,
+    pub to: String,
+    pub replacements: usize,
 }
 
 /// Application state for the TUI client.
@@ -127,6 +96,7 @@ pub struct TuiAppState {
     pub current_buffer_name: String,
     pub current_buffer_kind: BufferKind,
     pub current_buffer_read_only: bool,
+    pub current_major_mode: Option<String>,
 
     // ---- Inactive buffers ----
     pub stored_buffers: Vec<StoredBuffer>,
@@ -134,6 +104,7 @@ pub struct TuiAppState {
 
     // ---- Editor subsystems ----
     pub kill_ring: KillRing,
+    pub search_match_data: MatchData,
     pub macros: MacroState,
     pub commands: CommandRegistry,
     pub lisp_host: LispHost,
@@ -154,6 +125,7 @@ pub struct TuiAppState {
     pub universal_arg: Option<usize>,
     pub meta_pending: bool,
     pub c_x_pending: bool,
+    pub c_x_r_pending: bool,
     /// `M-g` prefix: the next key is interpreted as the second of a
     /// goto chord (`M-g n` = next diagnostic, `M-g p` = previous, …).
     pub m_g_pending: bool,
@@ -182,6 +154,7 @@ pub struct TuiAppState {
     /// What command to dispatch on submit. `None` when the minibuffer
     /// is closed.
     pub pending_minibuffer_action: Option<PendingMiniBufferAction>,
+    pub query_replace: Option<QueryReplaceState>,
 
     // ---- Syntax highlighting ----
     /// Tree-sitter highlighter for the active buffer, if its language
@@ -220,9 +193,11 @@ impl TuiAppState {
             current_buffer_name: "*scratch*".to_string(),
             current_buffer_kind: BufferKind::Scratch,
             current_buffer_read_only: false,
+            current_major_mode: Some("lisp-interaction-mode".to_string()),
             stored_buffers: Vec::new(),
             next_buffer_id: 1,
             kill_ring: KillRing::default(),
+            search_match_data: MatchData::default(),
             macros: MacroState::default(),
             commands,
             lisp_host: LispHost::new(EditorCore::new()),
@@ -233,11 +208,13 @@ impl TuiAppState {
             universal_arg: None,
             meta_pending: false,
             c_x_pending: false,
+            c_x_r_pending: false,
             m_g_pending: false,
             message: None,
             should_quit: false,
             minibuffer: MiniBufferState::default(),
             pending_minibuffer_action: None,
+            query_replace: None,
             // Default layout: main buffer on top, *Diagnostics* panel
             // below fixed at 5 lines tall. Focus starts on the
             // buffer. Users can delete *Diagnostics* with `C-x 0`
@@ -267,9 +244,11 @@ impl TuiAppState {
         let mut state = Self::new();
         state.current_buffer_name = name_from_path(&path);
         state.current_buffer_kind = BufferKind::File;
+        state.current_major_mode = None;
         state.document = DocumentBuffer::from_file(path, content);
         state.refresh_buffer_highlighter();
         state.sync_lisp_core_from_state();
+        state.activate_mode_for_current_buffer_if_needed();
         state
     }
 
@@ -282,10 +261,12 @@ impl TuiAppState {
             current_buffer_name: self.current_buffer_name.clone(),
             current_buffer_kind: self.current_buffer_kind.clone(),
             current_buffer_read_only: self.current_buffer_read_only,
+            current_major_mode: self.current_major_mode.clone(),
             stored_buffers: self.stored_buffers.clone(),
             next_buffer_id: self.next_buffer_id,
             lsp_state: self.lsp_buffer_state.clone(),
             kill_ring: self.kill_ring.clone(),
+            search_match_data: self.search_match_data.clone(),
             scroll_line: self.scroll_line,
             last_edit_was_char_insert: self.last_edit_was_char_insert,
             last_move_was_vertical: self.last_move_was_vertical,
@@ -304,6 +285,7 @@ impl TuiAppState {
     fn sync_state_from_lisp_core(&mut self) {
         let before_buffer_id = self.current_buffer_id;
         let before_kind = self.current_buffer_kind.clone();
+        let before_major_mode = self.current_major_mode.clone();
         let before_doc_version = self.document.version();
         let before_path = self.document.file_path().cloned();
         let mut core = self.lisp_host.core_snapshot();
@@ -317,10 +299,12 @@ impl TuiAppState {
         self.current_buffer_name = core.current_buffer_name;
         self.current_buffer_kind = core.current_buffer_kind;
         self.current_buffer_read_only = core.current_buffer_read_only;
+        self.current_major_mode = core.current_major_mode;
         self.stored_buffers = core.stored_buffers;
         self.next_buffer_id = core.next_buffer_id;
         self.lsp_buffer_state = core.lsp_state;
         self.kill_ring = core.kill_ring;
+        self.search_match_data = core.search_match_data;
         self.scroll_line = core.scroll_line;
         self.last_edit_was_char_insert = core.last_edit_was_char_insert;
         self.last_move_was_vertical = core.last_move_was_vertical;
@@ -328,10 +312,12 @@ impl TuiAppState {
 
         let buffer_changed =
             before_buffer_id != self.current_buffer_id || before_kind != self.current_buffer_kind;
+        let mode_changed = before_major_mode != self.current_major_mode;
         let doc_changed = before_doc_version != self.document.version();
         let path_changed = before_path != self.document.file_path().cloned();
+        let should_activate_mode = path_changed && self.current_buffer_kind == BufferKind::File;
 
-        if buffer_changed || path_changed {
+        if buffer_changed || path_changed || mode_changed {
             self.refresh_buffer_highlighter();
         }
         if path_changed && self.current_buffer_kind == BufferKind::File {
@@ -339,6 +325,9 @@ impl TuiAppState {
         } else if doc_changed {
             self.notify_highlighter();
             self.lsp_did_change();
+        }
+        if should_activate_mode {
+            self.activate_mode_for_current_buffer_if_needed();
         }
 
         if keyboard_quit_requested {
@@ -377,12 +366,25 @@ impl TuiAppState {
         self.sync_state_from_lisp_core();
     }
 
+    fn activate_mode_for_current_buffer_if_needed(&mut self) {
+        let path = self.document.file_path().cloned();
+        if path.is_none() {
+            return;
+        }
+
+        self.sync_lisp_core_from_state();
+        let result = self.lisp_host.activate_mode_for_path(path.as_deref());
+        self.sync_state_from_lisp_core();
+
+        if let Err((idx, error)) = result {
+            self.message = Some(format!("mode load failed at form {idx}: {error:?}"));
+            self.sync_lisp_core_from_state();
+        }
+    }
+
     pub fn command_completion_candidates(&self) -> Vec<String> {
-        let mut candidates = self.commands.names().to_vec();
-        candidates.extend(self.lisp_host.user_command_names());
-        candidates.sort();
-        candidates.dedup();
-        candidates
+        self.lisp_host
+            .command_completion_candidates(self.commands.names().iter().cloned())
     }
 
     // ---- Buffer list ----
@@ -444,6 +446,7 @@ impl TuiAppState {
             cursor: std::mem::replace(&mut self.cursor, incoming.cursor),
             kind: std::mem::replace(&mut self.current_buffer_kind, incoming.kind),
             read_only: std::mem::replace(&mut self.current_buffer_read_only, incoming.read_only),
+            major_mode: std::mem::replace(&mut self.current_major_mode, incoming.major_mode),
             scroll_line: std::mem::replace(&mut self.scroll_line, incoming.scroll_line),
             last_edit_was_char_insert: std::mem::replace(
                 &mut self.last_edit_was_char_insert,
@@ -495,6 +498,7 @@ impl TuiAppState {
             {
                 buffer.kind = kind;
                 buffer.read_only = read_only;
+                buffer.major_mode = Some(major_mode_for_kind(&buffer.kind).to_string());
             }
             return id;
         }
@@ -505,6 +509,7 @@ impl TuiAppState {
         if let Some((kind, read_only)) = special_buffer_attrs(name) {
             buffer.kind = kind;
             buffer.read_only = read_only;
+            buffer.major_mode = Some(major_mode_for_kind(&buffer.kind).to_string());
         }
         self.stored_buffers.push(buffer);
         id
@@ -514,6 +519,8 @@ impl TuiAppState {
         if let Some((kind, read_only)) = special_buffer_attrs(&self.current_buffer_name) {
             self.current_buffer_kind = kind;
             self.current_buffer_read_only = read_only;
+            self.current_major_mode =
+                Some(major_mode_for_kind(&self.current_buffer_kind).to_string());
         }
     }
 
@@ -527,6 +534,7 @@ impl TuiAppState {
             // switch_to_buffer_id already refreshes the highlighter.
             self.switch_to_buffer_id(id);
             self.lsp_did_open();
+            self.activate_mode_for_current_buffer_if_needed();
             self.run_hook_logged("find-file-hook");
             return;
         }
@@ -545,6 +553,7 @@ impl TuiAppState {
             cursor: std::mem::replace(&mut self.cursor, EditorCursor::new()),
             kind: std::mem::replace(&mut self.current_buffer_kind, BufferKind::File),
             read_only: std::mem::replace(&mut self.current_buffer_read_only, false),
+            major_mode: std::mem::replace(&mut self.current_major_mode, None),
             scroll_line: std::mem::replace(&mut self.scroll_line, 0),
             last_edit_was_char_insert: std::mem::replace(
                 &mut self.last_edit_was_char_insert,
@@ -558,6 +567,7 @@ impl TuiAppState {
         // New buffer, possibly new language — pick the grammar.
         self.refresh_buffer_highlighter();
         self.lsp_did_open();
+        self.activate_mode_for_current_buffer_if_needed();
         self.run_hook_logged("find-file-hook");
     }
 
@@ -893,18 +903,112 @@ impl TuiAppState {
                 if text.is_empty() {
                     return;
                 }
-                // A command name is valid if either a Rust handler
-                // is registered OR a user-authored elisp defun owns
-                // the symbol. `run_command` knows how to dispatch
-                // both; we just gate the "No such command" message
-                // on the union of the two registries.
-                if self.commands.get(&text).is_some()
-                    || self.lisp_host.is_user_defined_command(&text)
-                {
-                    self.run_command(&text, CommandArgs::default());
+                self.dispatch_command_by_name(&text);
+            }
+            PendingMiniBufferAction::RunCommandWithInput { name } => {
+                self.run_command_with_string(&name, text);
+            }
+            PendingMiniBufferAction::RunCommandWithInputs {
+                name,
+                mut prompts,
+                mut values,
+            } => {
+                values.push(text);
+                if prompts.is_empty() {
+                    self.dispatch_multi_string_command(&name, values);
                 } else {
-                    self.message = Some(format!("No such command: {text}"));
+                    let prompt = prompts.remove(0);
+                    self.minibuffer_open(
+                        MiniBufferPrompt::FreeText { label: prompt },
+                        Vec::new(),
+                        PendingMiniBufferAction::RunCommandWithInputs {
+                            name,
+                            prompts,
+                            values,
+                        },
+                    );
                 }
+            }
+        }
+    }
+
+    fn dispatch_multi_string_command(&mut self, name: &str, values: Vec<String>) {
+        if name == "query-replace" && values.len() >= 2 {
+            self.query_replace_start(values[0].clone(), values[1].clone());
+        } else {
+            self.run_command_with_strings(name, values);
+        }
+    }
+
+    fn dispatch_command_by_name(&mut self, name: &str) {
+        let rust_interactive = self.commands.get(name).map(|cmd| cmd.interactive.clone());
+        match self.lisp_host.plan_command(name, rust_interactive) {
+            CommandPlan::Run => self.run_command(name, CommandArgs::default()),
+            CommandPlan::Prompt(interactive) => {
+                self.dispatch_interactive_command(name.to_string(), interactive);
+            }
+            CommandPlan::Missing => {
+                self.message = Some(format!("No such command: {name}"));
+            }
+        }
+    }
+
+    fn dispatch_interactive_command(&mut self, name: String, interactive: InteractiveSpec) {
+        match interactive {
+            InteractiveSpec::None => {
+                self.run_command(&name, CommandArgs::default());
+            }
+            InteractiveSpec::File { prompt: _ } => {
+                let pending = PendingMiniBufferAction::RunCommandWithInput { name };
+                #[allow(clippy::disallowed_methods)]
+                let base_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let candidates = path_completion_candidates(
+                    &base_dir,
+                    "",
+                    PathCompletionKind::FilesAndDirectories,
+                );
+                self.minibuffer_open(MiniBufferPrompt::FindFile { base_dir }, candidates, pending);
+            }
+            InteractiveSpec::Buffer { prompt: _ } => {
+                let pending = PendingMiniBufferAction::RunCommandWithInput { name };
+                self.minibuffer_open(MiniBufferPrompt::SwitchBuffer, self.buffer_names(), pending);
+            }
+            InteractiveSpec::String { prompt } => {
+                let pending = PendingMiniBufferAction::RunCommandWithInput { name };
+                self.minibuffer_open(
+                    MiniBufferPrompt::FreeText { label: prompt },
+                    Vec::new(),
+                    pending,
+                );
+            }
+            InteractiveSpec::StringList { mut prompts } => {
+                if prompts.is_empty() {
+                    self.run_command(&name, CommandArgs::default());
+                    return;
+                }
+                let prompt = prompts.remove(0);
+                let pending = PendingMiniBufferAction::RunCommandWithInputs {
+                    name,
+                    prompts,
+                    values: Vec::new(),
+                };
+                self.minibuffer_open(
+                    MiniBufferPrompt::FreeText { label: prompt },
+                    Vec::new(),
+                    pending,
+                );
+            }
+            InteractiveSpec::Line => {
+                let pending = PendingMiniBufferAction::RunCommandWithInput { name };
+                self.minibuffer_open(MiniBufferPrompt::GotoLine, Vec::new(), pending);
+            }
+            InteractiveSpec::Confirm { prompt } => {
+                let pending = PendingMiniBufferAction::RunCommandWithInput { name };
+                self.minibuffer_open(
+                    MiniBufferPrompt::YesNo { label: prompt },
+                    Vec::new(),
+                    pending,
+                );
             }
         }
     }
@@ -932,8 +1036,10 @@ impl TuiAppState {
         self.cancel_flag.cancel();
         self.universal_arg = None;
         self.c_x_pending = false;
+        self.c_x_r_pending = false;
         self.meta_pending = false;
         self.m_g_pending = false;
+        self.query_replace = None;
         self.cursor.clear_selection();
         if self.minibuffer.active {
             self.minibuffer_cancel();
@@ -972,6 +1078,114 @@ impl TuiAppState {
 
     pub fn run_command_with_string(&mut self, name: &str, s: String) {
         self.run_command(name, CommandArgs::default().with_string(s));
+    }
+
+    pub fn run_command_with_strings(&mut self, name: &str, strings: Vec<String>) {
+        self.run_command(name, CommandArgs::default().with_strings(strings));
+    }
+
+    fn mutate_lisp_core<R>(&mut self, f: impl FnOnce(&mut EditorCore) -> R) -> R {
+        self.sync_lisp_core_from_state();
+        let core = self.lisp_host.core();
+        let result = {
+            let mut core = core.lock();
+            f(&mut core)
+        };
+        self.sync_state_from_lisp_core();
+        result
+    }
+
+    pub fn search_forward_literal(&mut self, needle: &str) -> bool {
+        self.mutate_lisp_core(|core| core.search_forward(needle).is_some())
+    }
+
+    pub fn search_backward_literal(&mut self, needle: &str) -> bool {
+        self.mutate_lisp_core(|core| core.search_backward(needle).is_some())
+    }
+
+    pub fn replace_current_match(&mut self, replacement: &str) -> bool {
+        self.mutate_lisp_core(|core| core.replace_match(replacement))
+    }
+
+    pub fn query_replace_start(&mut self, from: String, to: String) {
+        if from.is_empty() {
+            self.message = Some("Cannot query replace empty string".to_string());
+            return;
+        }
+        self.query_replace = Some(QueryReplaceState {
+            from,
+            to,
+            replacements: 0,
+        });
+        self.query_replace_find_next();
+    }
+
+    pub fn query_replace_accept_current(&mut self, finish: bool) {
+        let Some(mut query) = self.query_replace.take() else {
+            return;
+        };
+        if self.replace_current_match(&query.to) {
+            query.replacements += 1;
+        }
+        if finish {
+            self.message = Some(format!(
+                "Replaced {} occurrence{}",
+                query.replacements,
+                plural(query.replacements)
+            ));
+        } else {
+            self.query_replace = Some(query);
+            self.query_replace_find_next();
+        }
+    }
+
+    pub fn query_replace_skip_current(&mut self) {
+        if self.query_replace.is_some() {
+            self.query_replace_find_next();
+        }
+    }
+
+    pub fn query_replace_replace_all_remaining(&mut self) {
+        let Some(query) = self.query_replace.take() else {
+            return;
+        };
+        let mut replacements = query.replacements;
+        loop {
+            if !self.replace_current_match(&query.to) {
+                break;
+            }
+            replacements += 1;
+            if !self.search_forward_literal(&query.from) {
+                break;
+            }
+        }
+        self.message = Some(format!(
+            "Replaced {replacements} occurrence{}",
+            plural(replacements)
+        ));
+    }
+
+    pub fn query_replace_cancel(&mut self) {
+        self.query_replace = None;
+        self.message = Some("Quit".to_string());
+    }
+
+    fn query_replace_find_next(&mut self) {
+        let Some(query) = self.query_replace.as_ref() else {
+            return;
+        };
+        let from = query.from.clone();
+        let to = query.to.clone();
+        let replacements = query.replacements;
+        if self.search_forward_literal(&from) {
+            self.message = Some(format!("Query replace {from:?} with {to:?}: y n ! . q"));
+        } else {
+            self.query_replace = None;
+            self.message = Some(format!(
+                "Replaced {replacements} occurrence{}",
+                plural(replacements)
+            ));
+        }
     }
 
     /// Run `post-command-hook`. Suppressed during macro replay so a
@@ -1036,6 +1250,8 @@ impl TuiAppState {
             self.document.remove(start, end);
             self.cursor.position = start;
             self.cursor.clear_selection();
+        } else {
+            self.cursor.clear_selection();
         }
 
         self.document.insert(self.cursor.position, text);
@@ -1057,12 +1273,15 @@ impl TuiAppState {
             self.document.remove(start, end);
             self.cursor.position = start;
             self.cursor.clear_selection();
-        } else if self.cursor.position > 0 {
-            self.history
-                .push_undo(self.document.snapshot(), self.cursor.position);
-            self.cursor.position -= 1;
-            self.document
-                .remove(self.cursor.position, self.cursor.position + 1);
+        } else {
+            self.cursor.clear_selection();
+            if self.cursor.position > 0 {
+                self.history
+                    .push_undo(self.document.snapshot(), self.cursor.position);
+                self.cursor.position -= 1;
+                self.document
+                    .remove(self.cursor.position, self.cursor.position + 1);
+            }
         }
         self.lsp_completion_visible = false;
         self.update_preferred_column();
@@ -1079,11 +1298,14 @@ impl TuiAppState {
             self.document.remove(start, end);
             self.cursor.position = start;
             self.cursor.clear_selection();
-        } else if self.cursor.position < self.document.len_chars() {
-            self.history
-                .push_undo(self.document.snapshot(), self.cursor.position);
-            self.document
-                .remove(self.cursor.position, self.cursor.position + 1);
+        } else {
+            self.cursor.clear_selection();
+            if self.cursor.position < self.document.len_chars() {
+                self.history
+                    .push_undo(self.document.snapshot(), self.cursor.position);
+                self.document
+                    .remove(self.cursor.position, self.cursor.position + 1);
+            }
         }
         self.lsp_completion_visible = false;
         self.update_preferred_column();
@@ -1174,6 +1396,7 @@ impl TuiAppState {
     pub fn move_left(&mut self, extend: bool) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
+        let extend = extend || self.cursor.anchor.is_some();
         if !extend && let Some((start, _)) = self.cursor.selection() {
             self.cursor.position = start;
             self.cursor.clear_selection();
@@ -1189,6 +1412,7 @@ impl TuiAppState {
     pub fn move_right(&mut self, extend: bool) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
+        let extend = extend || self.cursor.anchor.is_some();
         if !extend && let Some((_, end)) = self.cursor.selection() {
             self.cursor.position = end;
             self.cursor.clear_selection();
@@ -1203,6 +1427,7 @@ impl TuiAppState {
 
     pub fn move_up(&mut self, extend: bool) {
         self.last_edit_was_char_insert = false;
+        let extend = extend || self.cursor.anchor.is_some();
         if self.document.len_chars() == 0 {
             return;
         }
@@ -1240,6 +1465,7 @@ impl TuiAppState {
 
     pub fn move_down(&mut self, extend: bool) {
         self.last_edit_was_char_insert = false;
+        let extend = extend || self.cursor.anchor.is_some();
         if self.document.len_chars() == 0 {
             return;
         }
@@ -1278,6 +1504,7 @@ impl TuiAppState {
     pub fn move_to_line_start(&mut self, extend: bool) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
+        let extend = extend || self.cursor.anchor.is_some();
         if self.document.len_chars() == 0 {
             return;
         }
@@ -1291,6 +1518,7 @@ impl TuiAppState {
     pub fn move_to_line_end(&mut self, extend: bool) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
+        let extend = extend || self.cursor.anchor.is_some();
         if self.document.len_chars() == 0 {
             return;
         }
@@ -1312,6 +1540,7 @@ impl TuiAppState {
     pub fn move_to_buffer_start(&mut self, extend: bool) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
+        let extend = extend || self.cursor.anchor.is_some();
         self.cursor.move_to(0, extend);
         self.update_preferred_column();
     }
@@ -1319,6 +1548,7 @@ impl TuiAppState {
     pub fn move_to_buffer_end(&mut self, extend: bool) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
+        let extend = extend || self.cursor.anchor.is_some();
         self.cursor.move_to(self.document.len_chars(), extend);
         self.update_preferred_column();
     }
@@ -1775,6 +2005,7 @@ mod tests {
 
         assert!(candidates.iter().any(|name| name == "next-line"));
         assert!(candidates.iter().any(|name| name == "save-buffer"));
+        assert!(candidates.iter().any(|name| name == "rust-mode"));
     }
 
     #[test]
@@ -1936,6 +2167,24 @@ mod tests {
     }
 
     #[test]
+    fn m_x_runs_autoloaded_rust_mode() {
+        let mut s = TuiAppState::new();
+        s.minibuffer_open(
+            MiniBufferPrompt::Command,
+            s.command_completion_candidates(),
+            PendingMiniBufferAction::RunCommand,
+        );
+        for ch in "rust-mode".chars() {
+            s.minibuffer.add_char(ch);
+        }
+
+        s.minibuffer_submit();
+
+        assert_eq!(s.current_major_mode.as_deref(), Some("rust-mode"));
+        assert!(!s.minibuffer.active);
+    }
+
+    #[test]
     fn m_x_unknown_command_reports_message() {
         let mut s = TuiAppState::new();
         s.minibuffer_open(
@@ -2001,6 +2250,11 @@ mod tests {
             s.buffer_highlighter.is_some(),
             ".rs file should pick up the rust grammar"
         );
+        assert_eq!(s.current_major_mode.as_deref(), Some("rust-mode"));
+        assert_eq!(
+            rele_elisp::lookup_mode_key(s.lisp_host.interpreter(), "rust-mode", "C-c C-c"),
+            Some("rust-compile".to_string())
+        );
 
         // Trigger a parse + query.
         s.ensure_highlight_fresh();
@@ -2013,6 +2267,29 @@ mod tests {
         assert!(
             ranges.iter().any(|(line, r)| *line == 0 && !r.is_empty()),
             "expected highlight ranges on line 0, got {ranges:?}"
+        );
+    }
+
+    #[test]
+    fn elisp_find_file_loads_rust_mode() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("via-elisp.rs");
+        #[allow(clippy::disallowed_methods)] // test fixture
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        let path = path
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let expr = format!("(find-file \"{path}\")");
+
+        let mut s = TuiAppState::new();
+        s.eval_lisp(rele_elisp::read(&expr).unwrap())
+            .expect("find-file should evaluate");
+
+        assert_eq!(s.current_major_mode.as_deref(), Some("rust-mode"));
+        assert_eq!(
+            rele_elisp::lookup_mode_key(s.lisp_host.interpreter(), "rust-mode", "C-c C-c"),
+            Some("rust-compile".to_string())
         );
     }
 

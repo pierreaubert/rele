@@ -101,6 +101,18 @@ fn handle_key(state: &mut TuiAppState, key: KeyEvent) {
         return;
     }
 
+    if state.query_replace.is_some() {
+        handle_query_replace_key(state, key);
+        return;
+    }
+
+    // Handle C-x r prefix (rectangle commands).
+    if state.c_x_r_pending {
+        state.c_x_r_pending = false;
+        handle_cx_r_key(state, key);
+        return;
+    }
+
     // Handle C-x prefix
     if state.c_x_pending {
         state.c_x_pending = false;
@@ -147,6 +159,32 @@ fn handle_key(state: &mut TuiAppState, key: KeyEvent) {
         }
         KeyCode::Char('d') if ctrl => state.run_command("delete-char", CommandArgs::default()),
         KeyCode::Char('k') if ctrl => state.run_command("kill-line", CommandArgs::default()),
+        KeyCode::Char('s') if ctrl => {
+            state.minibuffer_open(
+                MiniBufferPrompt::FreeText {
+                    label: "Search".to_string(),
+                },
+                Vec::new(),
+                PendingMiniBufferAction::RunCommandWithInput {
+                    name: "search-forward".to_string(),
+                },
+            );
+        }
+        KeyCode::Char('r') if ctrl => {
+            state.minibuffer_open(
+                MiniBufferPrompt::FreeText {
+                    label: "Search backward".to_string(),
+                },
+                Vec::new(),
+                PendingMiniBufferAction::RunCommandWithInput {
+                    name: "search-backward".to_string(),
+                },
+            );
+        }
+        KeyCode::Char('w') if ctrl => state.run_command("kill-region", CommandArgs::default()),
+        KeyCode::Char('y') if ctrl => state.run_command("yank", CommandArgs::default()),
+        KeyCode::Char(' ') if ctrl => state.run_command("set-mark", CommandArgs::default()),
+        KeyCode::Null if ctrl => state.run_command("set-mark", CommandArgs::default()),
         KeyCode::Char('g') if ctrl => {
             // C-g — keyboard-quit. Routes through the elisp defun so
             // `~/.gpui-md.el` users can advise / hook the behaviour.
@@ -207,6 +245,23 @@ fn handle_key(state: &mut TuiAppState, key: KeyEvent) {
         }
 
         _ => {}
+    }
+}
+
+fn handle_query_replace_key(state: &mut TuiAppState, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('g') if ctrl => state.query_replace_cancel(),
+        KeyCode::Esc | KeyCode::Char('q') => state.query_replace_cancel(),
+        KeyCode::Char('y') | KeyCode::Char(' ') => state.query_replace_accept_current(false),
+        KeyCode::Char('.') => state.query_replace_accept_current(true),
+        KeyCode::Char('n') | KeyCode::Backspace | KeyCode::Delete => {
+            state.query_replace_skip_current();
+        }
+        KeyCode::Char('!') => state.query_replace_replace_all_remaining(),
+        _ => {
+            state.message = Some("Query replace: y n ! . q".to_string());
+        }
     }
 }
 
@@ -306,8 +361,37 @@ fn handle_cx_key(state: &mut TuiAppState, key: KeyEvent) {
         KeyCode::Char('o') => {
             state.run_command("other-window", CommandArgs::default());
         }
+        // C-x r — rectangle command prefix.
+        KeyCode::Char('r') => {
+            state.c_x_r_pending = true;
+        }
         _ => {
             state.message = Some(format!("C-x {} is undefined", format_key(key)));
+        }
+    }
+}
+
+fn handle_cx_r_key(state: &mut TuiAppState, key: KeyEvent) {
+    match key.code {
+        // C-x r k/y/d/o/c/t — rectangle management.
+        KeyCode::Char('k') => state.run_command("kill-rectangle", CommandArgs::default()),
+        KeyCode::Char('y') => state.run_command("yank-rectangle", CommandArgs::default()),
+        KeyCode::Char('d') => state.run_command("delete-rectangle", CommandArgs::default()),
+        KeyCode::Char('o') => state.run_command("open-rectangle", CommandArgs::default()),
+        KeyCode::Char('c') => state.run_command("clear-rectangle", CommandArgs::default()),
+        KeyCode::Char('t') => {
+            state.minibuffer_open(
+                MiniBufferPrompt::FreeText {
+                    label: "String rectangle".to_string(),
+                },
+                Vec::new(),
+                PendingMiniBufferAction::RunCommandWithInput {
+                    name: "string-rectangle".to_string(),
+                },
+            );
+        }
+        _ => {
+            state.message = Some(format!("C-x r {} is undefined", format_key(key)));
         }
     }
 }
@@ -395,6 +479,35 @@ fn handle_meta_key(state: &mut TuiAppState, key: KeyEvent) {
         // M-v — backward one screenful.
         KeyCode::Char('v') => {
             state.run_command("scroll-down-command", CommandArgs::default());
+        }
+        // M-d / M-DEL — word kill commands.
+        KeyCode::Char('d') => {
+            state.run_command("kill-word", CommandArgs::default());
+        }
+        KeyCode::Backspace => {
+            state.run_command("backward-kill-word", CommandArgs::default());
+        }
+        // M-w / M-y — kill-ring copy and yank-pop.
+        KeyCode::Char('w') => {
+            state.run_command("kill-ring-save", CommandArgs::default());
+        }
+        KeyCode::Char('y') => {
+            state.run_command("yank-pop", CommandArgs::default());
+        }
+        // M-% — query-replace. The TUI collects both strings, then
+        // enters a one-key confirmation loop.
+        KeyCode::Char('%') => {
+            state.minibuffer_open(
+                MiniBufferPrompt::FreeText {
+                    label: "Query replace".to_string(),
+                },
+                Vec::new(),
+                PendingMiniBufferAction::RunCommandWithInputs {
+                    name: "query-replace".to_string(),
+                    prompts: vec!["Query replace with".to_string()],
+                    values: Vec::new(),
+                },
+            );
         }
         // M-x — execute-extended-command. Opens the minibuffer with
         // command-name completion over the full command registry.
@@ -554,5 +667,274 @@ mod tests {
         assert_eq!(state.current_buffer_name, "*Buffer List*");
         assert!(!state.minibuffer.active);
         assert!(state.document.text().contains("notes.md"));
+    }
+
+    #[test]
+    fn ctrl_w_and_ctrl_y_route_through_elisp_kill_ring() {
+        let mut state = TuiAppState::new();
+        state.insert_text("abcdef");
+        state.cursor.anchor = Some(1);
+        state.cursor.position = 4;
+        state.install_elisp_editor_callbacks();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(state.document.text(), "aef");
+        assert_eq!(state.cursor.position, 1);
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(state.document.text(), "abcdef");
+    }
+
+    #[test]
+    fn meta_w_copies_region_and_ctrl_y_yanks_it() {
+        let mut state = TuiAppState::new();
+        state.insert_text("abcdef");
+        state.cursor.anchor = Some(1);
+        state.cursor.position = 4;
+        state.install_elisp_editor_callbacks();
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE),
+        );
+        assert_eq!(state.document.text(), "abcdef");
+        assert!(!state.cursor.has_selection());
+
+        state.cursor.position = state.document.len_chars();
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(state.document.text(), "abcdefbcd");
+    }
+
+    #[test]
+    fn ctrl_space_sets_mark() {
+        let mut state = TuiAppState::new();
+        state.insert_text("abcdef");
+        state.cursor.position = 3;
+        state.install_elisp_editor_callbacks();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL),
+        );
+
+        assert_eq!(state.cursor.anchor, Some(3));
+    }
+
+    #[test]
+    fn ctrl_space_then_movement_creates_region_for_ctrl_w() {
+        let mut state = TuiAppState::new();
+        state.insert_text("abcdef");
+        state.cursor.position = 1;
+        state.install_elisp_editor_callbacks();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(state.cursor.selection(), Some((1, 3)));
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(state.document.text(), "adef");
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(state.document.text(), "abcdef");
+    }
+
+    #[test]
+    fn cx_r_k_and_y_manage_rectangles_through_elisp() {
+        let mut state = TuiAppState::new();
+        state.insert_text("abcd\nefgh\nijkl");
+        state.cursor.anchor = Some(1);
+        state.cursor.position = 13;
+        state.install_elisp_editor_callbacks();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+        );
+        assert!(state.c_x_r_pending);
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+        );
+
+        assert_eq!(state.document.text(), "ad\neh\nil");
+        assert_eq!(
+            state.kill_ring.rectangle_buffer.as_ref(),
+            Some(&vec!["bc".to_string(), "fg".to_string(), "jk".to_string()])
+        );
+
+        state.cursor.position = 1;
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        );
+
+        assert_eq!(state.document.text(), "abcd\nefgh\nijkl");
+    }
+
+    #[test]
+    fn cx_r_t_prompts_and_runs_string_rectangle() {
+        let mut state = TuiAppState::new();
+        state.insert_text("abcde\nfghij\nklmno");
+        state.cursor.anchor = Some(1);
+        state.cursor.position = 15;
+        state.install_elisp_editor_callbacks();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+        );
+
+        assert!(state.minibuffer.active);
+        assert!(matches!(
+            state.pending_minibuffer_action,
+            Some(PendingMiniBufferAction::RunCommandWithInput { ref name })
+                if name == "string-rectangle"
+        ));
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(state.document.text(), "aXXde\nfXXij\nkXXno");
+    }
+
+    #[test]
+    fn ctrl_s_searches_forward_through_elisp() {
+        let mut state = TuiAppState::new();
+        state.insert_text("alpha beta beta");
+        state.cursor.position = 0;
+        state.install_elisp_editor_callbacks();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        );
+        for ch in "beta".chars() {
+            handle_key(
+                &mut state,
+                KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
+            );
+        }
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(state.cursor.position, 10);
+        assert_eq!(state.search_match_data.groups, vec![Some((6, 10))]);
+    }
+
+    #[test]
+    fn search_backward_literal_moves_to_previous_match() {
+        let mut state = TuiAppState::new();
+        state.insert_text("alpha beta alpha");
+        state.cursor.position = state.document.len_chars();
+
+        assert!(state.search_backward_literal("alpha"));
+
+        assert_eq!(state.cursor.position, 11);
+    }
+
+    #[test]
+    fn meta_percent_query_replace_confirms_each_match() {
+        let mut state = TuiAppState::new();
+        state.insert_text("foo bar foo");
+        state.cursor.position = 0;
+        state.install_elisp_editor_callbacks();
+
+        handle_key(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('%'), KeyModifiers::NONE),
+        );
+        for ch in "foo".chars() {
+            handle_key(
+                &mut state,
+                KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
+            );
+        }
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        for ch in "baz".chars() {
+            handle_key(
+                &mut state,
+                KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
+            );
+        }
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert!(state.query_replace.is_some());
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+        );
+
+        assert!(state.query_replace.is_none());
+        assert_eq!(state.document.text(), "baz bar foo");
     }
 }

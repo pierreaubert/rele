@@ -348,6 +348,24 @@ pub(super) fn eval_kill_word(
     Ok(Value::nil())
 }
 
+pub(super) fn eval_kill_region(
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+) -> ElispResult<Value> {
+    if let Some(cb) = editor.write().as_mut() {
+        cb.kill_region();
+    }
+    Ok(Value::nil())
+}
+
+pub(super) fn eval_copy_region_as_kill(
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+) -> ElispResult<Value> {
+    if let Some(cb) = editor.write().as_mut() {
+        cb.copy_region_as_kill();
+    }
+    Ok(Value::nil())
+}
+
 pub(super) fn eval_yank(
     editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
 ) -> ElispResult<Value> {
@@ -364,6 +382,285 @@ pub(super) fn eval_yank_pop(
         cb.yank_pop();
     }
     Ok(Value::nil())
+}
+
+// ---- Rectangles ----
+
+pub(super) fn eval_delete_rectangle(
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+) -> ElispResult<Value> {
+    if let Some(cb) = editor.write().as_mut() {
+        cb.delete_rectangle();
+    }
+    Ok(Value::nil())
+}
+
+pub(super) fn eval_kill_rectangle(
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+) -> ElispResult<Value> {
+    if let Some(cb) = editor.write().as_mut() {
+        cb.kill_rectangle();
+    }
+    Ok(Value::nil())
+}
+
+pub(super) fn eval_yank_rectangle(
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+) -> ElispResult<Value> {
+    if let Some(cb) = editor.write().as_mut() {
+        cb.yank_rectangle();
+    }
+    Ok(Value::nil())
+}
+
+pub(super) fn eval_open_rectangle(
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+) -> ElispResult<Value> {
+    if let Some(cb) = editor.write().as_mut() {
+        cb.open_rectangle();
+    }
+    Ok(Value::nil())
+}
+
+pub(super) fn eval_clear_rectangle(
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+) -> ElispResult<Value> {
+    if let Some(cb) = editor.write().as_mut() {
+        cb.clear_rectangle();
+    }
+    Ok(Value::nil())
+}
+
+pub(super) fn eval_string_rectangle(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let args_obj = value_to_obj(args);
+    let text_arg = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let text_val = value_to_obj(eval(obj_to_value(text_arg), env, editor, macros, state)?);
+    let text = match &text_val {
+        LispObject::String(text) => text.clone(),
+        LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    if let Some(cb) = editor.write().as_mut() {
+        cb.string_rectangle(&text);
+    }
+    Ok(Value::nil())
+}
+
+// ---- Search / replace ----
+
+fn eval_string_arg(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<String> {
+    let args_obj = value_to_obj(args);
+    let arg = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let value = value_to_obj(eval(obj_to_value(arg), env, editor, macros, state)?);
+    match value {
+        LispObject::String(text) => Ok(text),
+        LispObject::Symbol(id) => Ok(crate::obarray::symbol_name(id)),
+        _ => Err(ElispError::WrongTypeArgument("string".to_string())),
+    }
+}
+
+fn eval_two_string_args(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<(String, String)> {
+    let args_obj = value_to_obj(args);
+    let first = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let second = args_obj.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let first = value_to_obj(eval(obj_to_value(first), env, editor, macros, state)?);
+    let second = value_to_obj(eval(obj_to_value(second), env, editor, macros, state)?);
+    let first = match first {
+        LispObject::String(text) => text,
+        LispObject::Symbol(id) => crate::obarray::symbol_name(id),
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    let second = match second {
+        LispObject::String(text) => text,
+        LispObject::Symbol(id) => crate::obarray::symbol_name(id),
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    Ok((first, second))
+}
+
+fn eval_args_to_list(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let mut current = value_to_obj(args);
+    let mut values = Vec::new();
+    while let Some((arg, rest)) = current.destructure_cons() {
+        values.push(value_to_obj(eval(
+            obj_to_value(arg),
+            env,
+            editor,
+            macros,
+            state,
+        )?));
+        current = rest;
+    }
+    let mut out = LispObject::nil();
+    for value in values.into_iter().rev() {
+        out = LispObject::cons(value, out);
+    }
+    Ok(out)
+}
+
+fn search_result(result: Option<usize>) -> Value {
+    result
+        .map(|pos| obj_to_value(LispObject::integer(pos as i64)))
+        .unwrap_or_else(Value::nil)
+}
+
+pub(super) fn eval_search_forward(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    if editor.read().is_none() {
+        let args = eval_args_to_list(args, env, editor, macros, state)?;
+        let result = crate::primitives_buffer::call_buffer_primitive("search-forward", &args)
+            .ok_or_else(|| ElispError::VoidFunction("search-forward".to_string()))??;
+        return Ok(obj_to_value(result));
+    }
+    let needle = eval_string_arg(args, env, editor, macros, state)?;
+    let result = editor
+        .write()
+        .as_mut()
+        .and_then(|cb| cb.search_forward(&needle));
+    Ok(search_result(result))
+}
+
+pub(super) fn eval_search_backward(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    if editor.read().is_none() {
+        let args = eval_args_to_list(args, env, editor, macros, state)?;
+        let result = crate::primitives_buffer::call_buffer_primitive("search-backward", &args)
+            .ok_or_else(|| ElispError::VoidFunction("search-backward".to_string()))??;
+        return Ok(obj_to_value(result));
+    }
+    let needle = eval_string_arg(args, env, editor, macros, state)?;
+    let result = editor
+        .write()
+        .as_mut()
+        .and_then(|cb| cb.search_backward(&needle));
+    Ok(search_result(result))
+}
+
+pub(super) fn eval_re_search_forward(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    if editor.read().is_none() {
+        let args = eval_args_to_list(args, env, editor, macros, state)?;
+        let result = crate::primitives_buffer::call_buffer_primitive("re-search-forward", &args)
+            .ok_or_else(|| ElispError::VoidFunction("re-search-forward".to_string()))??;
+        return Ok(obj_to_value(result));
+    }
+    let pattern = eval_string_arg(args, env, editor, macros, state)?;
+    let result = editor
+        .write()
+        .as_mut()
+        .and_then(|cb| cb.re_search_forward(&pattern));
+    Ok(search_result(result))
+}
+
+pub(super) fn eval_re_search_backward(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    if editor.read().is_none() {
+        let args = eval_args_to_list(args, env, editor, macros, state)?;
+        let result = crate::primitives_buffer::call_buffer_primitive("re-search-backward", &args)
+            .ok_or_else(|| ElispError::VoidFunction("re-search-backward".to_string()))??;
+        return Ok(obj_to_value(result));
+    }
+    let pattern = eval_string_arg(args, env, editor, macros, state)?;
+    let result = editor
+        .write()
+        .as_mut()
+        .and_then(|cb| cb.re_search_backward(&pattern));
+    Ok(search_result(result))
+}
+
+pub(super) fn eval_replace_match(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    if editor.read().is_none() {
+        let args = eval_args_to_list(args, env, editor, macros, state)?;
+        let result = crate::primitives_buffer::call_buffer_primitive("replace-match", &args)
+            .ok_or_else(|| ElispError::VoidFunction("replace-match".to_string()))??;
+        return Ok(obj_to_value(result));
+    }
+    let replacement = eval_string_arg(args, env, editor, macros, state)?;
+    let replaced = editor
+        .write()
+        .as_mut()
+        .is_some_and(|cb| cb.replace_match(&replacement));
+    Ok(if replaced { Value::t() } else { Value::nil() })
+}
+
+pub(super) fn eval_replace_string(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let (from, to) = eval_two_string_args(args, env, editor, macros, state)?;
+    let count = editor
+        .write()
+        .as_mut()
+        .map_or(0, |cb| cb.replace_string(&from, &to));
+    Ok(obj_to_value(LispObject::integer(count as i64)))
+}
+
+pub(super) fn eval_query_replace(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let (from, to) = eval_two_string_args(args, env, editor, macros, state)?;
+    let count = editor
+        .write()
+        .as_mut()
+        .map_or(0, |cb| cb.query_replace(&from, &to));
+    Ok(obj_to_value(LispObject::integer(count as i64)))
 }
 
 // ---- Case ----
@@ -482,6 +779,31 @@ pub(super) fn eval_keyboard_quit(
         cb.keyboard_quit();
     }
     Ok(Value::nil())
+}
+
+pub(super) fn eval_set_current_buffer_major_mode(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let args_obj = value_to_obj(args);
+    let mode_arg = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let mode_val = value_to_obj(eval(obj_to_value(mode_arg), env, editor, macros, state)?);
+    let mode = match &mode_val {
+        LispObject::String(s) => s.clone(),
+        LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
+        _ => {
+            return Err(ElispError::WrongTypeArgument(
+                "symbol-or-string".to_string(),
+            ));
+        }
+    };
+    if let Some(cb) = editor.write().as_mut() {
+        cb.set_current_buffer_major_mode(&mode);
+    }
+    Ok(obj_to_value(LispObject::symbol(&mode)))
 }
 
 // ---- Buffer registry bridge (Phase 1) ----
@@ -898,6 +1220,7 @@ fn days_to_ymd(days_since_epoch: i64) -> (i64, i64, i64) {
     (year, m, d)
 }
 
+#[allow(dead_code)]
 pub(super) fn eval_kill_buffer_bridge(
     args: Value,
     env: &Arc<RwLock<Environment>>,

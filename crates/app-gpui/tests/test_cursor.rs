@@ -24,6 +24,7 @@ fn start_and_clear_selection() {
     assert_eq!(c.anchor, Some(5));
     // anchor == position → not really a selection yet
     assert!(!c.has_selection());
+    assert_eq!(c.selection(), None);
 
     c.position = 10;
     assert!(c.has_selection());
@@ -76,4 +77,5 @@ fn has_selection_false_when_anchor_equals_position() {
     let mut c = EditorCursor::at(5);
     c.anchor = Some(5);
     assert!(!c.has_selection());
+    assert_eq!(c.selection(), None);
 }

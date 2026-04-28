@@ -566,27 +566,31 @@ impl Render for EditorPane {
                             "g" if ctrl => state_for_keys.update(cx, |s, _| s.minibuffer_cancel()),
                             "escape" => state_for_keys.update(cx, |s, _| s.minibuffer_cancel()),
                             "enter" => state_for_keys.update(cx, |s, _| s.minibuffer_submit()),
-                            "backspace" => {
-                                state_for_keys.update(cx, |s, _| s.minibuffer.backspace())
-                            }
-                            "delete" => {
-                                state_for_keys.update(cx, |s, _| s.minibuffer.delete_forward())
-                            }
+                            "backspace" => state_for_keys.update(cx, |s, _| {
+                                s.minibuffer.backspace();
+                                s.minibuffer_refresh_completions();
+                            }),
+                            "delete" => state_for_keys.update(cx, |s, _| {
+                                s.minibuffer.delete_forward();
+                                s.minibuffer_refresh_completions();
+                            }),
                             "left" => state_for_keys.update(cx, |s, _| s.minibuffer.move_left()),
                             "right" => state_for_keys.update(cx, |s, _| s.minibuffer.move_right()),
                             "home" => {
                                 state_for_keys.update(cx, |s, _| s.minibuffer.move_to_start())
                             }
                             "end" => state_for_keys.update(cx, |s, _| s.minibuffer.move_to_end()),
-                            "tab" => state_for_keys.update(cx, |s, _| s.minibuffer.complete()),
+                            "tab" => state_for_keys.update(cx, |s, _| s.minibuffer_complete()),
                             "down" => state_for_keys.update(cx, |s, _| s.minibuffer.select_next()),
                             "up" => state_for_keys.update(cx, |s, _| s.minibuffer.select_prev()),
-                            "p" if alt => {
-                                state_for_keys.update(cx, |s, _| s.minibuffer.history_prev())
-                            }
-                            "n" if alt => {
-                                state_for_keys.update(cx, |s, _| s.minibuffer.history_next())
-                            }
+                            "p" if alt => state_for_keys.update(cx, |s, _| {
+                                s.minibuffer.history_prev();
+                                s.minibuffer_refresh_completions();
+                            }),
+                            "n" if alt => state_for_keys.update(cx, |s, _| {
+                                s.minibuffer.history_next();
+                                s.minibuffer_refresh_completions();
+                            }),
                             _ if !ctrl && !cmd && !alt => {
                                 if let Some(ch) = &event.keystroke.key_char {
                                     let ch = ch.clone();
@@ -594,6 +598,7 @@ impl Render for EditorPane {
                                         for c in ch.chars() {
                                             s.minibuffer.add_char(c);
                                         }
+                                        s.minibuffer_refresh_completions();
                                     });
                                 }
                             }

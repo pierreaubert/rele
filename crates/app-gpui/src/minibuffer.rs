@@ -127,6 +127,11 @@ impl MiniBufferState {
         self.prompt = Some(prompt);
     }
 
+    pub fn set_candidates(&mut self, candidates: Vec<String>) {
+        self.candidates = candidates;
+        self.refilter();
+    }
+
     pub fn close(&mut self) {
         self.active = false;
         self.input.clear();
@@ -236,6 +241,13 @@ impl MiniBufferState {
     /// Extend input to the longest common prefix of the filtered candidates.
     pub fn complete(&mut self) {
         if self.filtered.is_empty() {
+            return;
+        }
+        if self.filtered.len() == 1 {
+            let candidate = self.candidates[self.filtered[0]].clone();
+            self.input = candidate;
+            self.cursor_pos = self.input.chars().count();
+            self.refilter();
             return;
         }
         let first = &self.candidates[self.filtered[0]];
@@ -411,6 +423,34 @@ mod tests {
         mb.add_char('f');
         mb.complete();
         assert_eq!(mb.input, "forward-");
+    }
+
+    #[test]
+    fn complete_single_match_fills_candidate() {
+        let mut mb = MiniBufferState::default();
+        mb.open(
+            MiniBufferPrompt::Command,
+            vec!["forward-char".to_string(), "backward-char".to_string()],
+        );
+        mb.add_char('f');
+        mb.complete();
+        assert_eq!(mb.input, "forward-char");
+    }
+
+    #[test]
+    fn set_candidates_refilters_current_input() {
+        let mut mb = MiniBufferState::default();
+        mb.open(
+            MiniBufferPrompt::FindFile {
+                base_dir: ".".into(),
+            },
+            vec![],
+        );
+        mb.add_char('m');
+        mb.set_candidates(vec!["main.rs".to_string(), "lib.rs".to_string()]);
+
+        assert_eq!(mb.filtered.len(), 1);
+        assert_eq!(mb.current_value(), "main.rs");
     }
 
     #[test]

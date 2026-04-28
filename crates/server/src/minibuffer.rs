@@ -11,9 +11,76 @@
 //! - Live prompts (isearch) trigger an `on_input_changed` hook on every edit.
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::isearch::IsearchDirection;
+
+/// Which filesystem entries should be offered for path completion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PathCompletionKind {
+    FilesAndDirectories,
+    DirectoriesOnly,
+}
+
+pub fn path_completion_candidates(
+    base_dir: &Path,
+    input: &str,
+    kind: PathCompletionKind,
+) -> Vec<String> {
+    let input_path = Path::new(input);
+    let input_ends_with_separator = input.ends_with(std::path::MAIN_SEPARATOR);
+    let (typed_dir, prefix) = if input_ends_with_separator {
+        (PathBuf::from(input), String::new())
+    } else {
+        (
+            input_path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .to_path_buf(),
+            input_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        )
+    };
+    let search_dir = if typed_dir.as_os_str().is_empty() {
+        base_dir.to_path_buf()
+    } else if typed_dir.is_absolute() {
+        typed_dir.clone()
+    } else {
+        base_dir.join(&typed_dir)
+    };
+    let prefix_lower = prefix.to_lowercase();
+
+    #[allow(clippy::disallowed_methods)]
+    let Ok(entries) = std::fs::read_dir(search_dir) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !prefix_lower.is_empty() && !name.to_lowercase().starts_with(&prefix_lower) {
+            continue;
+        }
+        let is_dir = entry.file_type().is_ok_and(|file_type| file_type.is_dir());
+        if matches!(kind, PathCompletionKind::DirectoriesOnly) && !is_dir {
+            continue;
+        }
+        let candidate_path = if typed_dir.as_os_str().is_empty() {
+            PathBuf::from(&name)
+        } else {
+            typed_dir.join(&name)
+        };
+        let mut candidate = candidate_path.to_string_lossy().to_string();
+        if is_dir && !candidate.ends_with(std::path::MAIN_SEPARATOR) {
+            candidate.push(std::path::MAIN_SEPARATOR);
+        }
+        out.push(candidate);
+    }
+    out.sort_by_key(|candidate| candidate.to_lowercase());
+    out
+}
 
 /// One kind of mini-buffer prompt. Each variant determines the label, the
 /// candidate source, and the submission semantics.
@@ -506,5 +573,37 @@ mod tests {
         mb.open(MiniBufferPrompt::SwitchBuffer, vec![]);
         mb.add_char('x');
         assert_eq!(mb.current_value(), "x");
+    }
+
+    #[test]
+    fn path_completion_can_filter_directories_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("alpha.txt"), "").expect("write file");
+        std::fs::create_dir(dir.path().join("assets")).expect("create dir");
+
+        let candidates =
+            path_completion_candidates(dir.path(), "a", PathCompletionKind::DirectoriesOnly);
+
+        assert_eq!(
+            candidates,
+            vec![format!("assets{}", std::path::MAIN_SEPARATOR)]
+        );
+    }
+
+    #[test]
+    fn path_completion_keeps_relative_subdir_prefix() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let subdir = dir.path().join("src");
+        std::fs::create_dir(&subdir).expect("create subdir");
+        std::fs::write(subdir.join("main.rs"), "").expect("write file");
+
+        let input = format!("src{}m", std::path::MAIN_SEPARATOR);
+        let candidates =
+            path_completion_candidates(dir.path(), &input, PathCompletionKind::FilesAndDirectories);
+
+        assert_eq!(
+            candidates,
+            vec![format!("src{}main.rs", std::path::MAIN_SEPARATOR)]
+        );
     }
 }

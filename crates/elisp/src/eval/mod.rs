@@ -71,16 +71,19 @@ use builtins::{
 };
 use editor::{
     eval_beginning_of_buffer, eval_buffer_list_bridge, eval_buffer_size, eval_buffer_string,
-    eval_current_buffer_bridge, eval_delete_char, eval_downcase_word, eval_end_of_buffer,
-    eval_exchange_point_and_mark, eval_find_file, eval_forward_char, eval_forward_line,
-    eval_get_buffer_create_bridge, eval_goto_char, eval_insert, eval_insert_directory,
-    eval_keyboard_quit, eval_kill_buffer_bridge, eval_kill_line, eval_kill_word,
-    eval_move_beginning_of_line, eval_move_end_of_line, eval_next_buffer, eval_point,
-    eval_point_max, eval_point_min, eval_previous_buffer, eval_redo_primitive, eval_save_buffer,
-    eval_save_current_buffer, eval_save_excursion, eval_set_buffer_bridge, eval_set_mark,
-    eval_toggle_line_numbers, eval_toggle_preview, eval_toggle_preview_line_numbers,
-    eval_transpose_chars, eval_transpose_words, eval_undo_primitive, eval_upcase_word, eval_yank,
-    eval_yank_pop,
+    eval_clear_rectangle, eval_copy_region_as_kill, eval_current_buffer_bridge, eval_delete_char,
+    eval_delete_rectangle, eval_downcase_word, eval_end_of_buffer, eval_exchange_point_and_mark,
+    eval_find_file, eval_forward_char, eval_forward_line, eval_get_buffer_create_bridge,
+    eval_goto_char, eval_insert, eval_insert_directory, eval_keyboard_quit, eval_kill_line,
+    eval_kill_rectangle, eval_kill_region, eval_kill_word, eval_move_beginning_of_line,
+    eval_move_end_of_line, eval_next_buffer, eval_open_rectangle, eval_point, eval_point_max,
+    eval_point_min, eval_previous_buffer, eval_query_replace, eval_re_search_backward,
+    eval_re_search_forward, eval_redo_primitive, eval_replace_match, eval_replace_string,
+    eval_save_buffer, eval_save_current_buffer, eval_save_excursion, eval_search_backward,
+    eval_search_forward, eval_set_buffer_bridge, eval_set_current_buffer_major_mode, eval_set_mark,
+    eval_string_rectangle, eval_toggle_line_numbers, eval_toggle_preview,
+    eval_toggle_preview_line_numbers, eval_transpose_chars, eval_transpose_words,
+    eval_undo_primitive, eval_upcase_word, eval_yank, eval_yank_pop, eval_yank_rectangle,
 };
 use error_forms::{
     eval_catch, eval_condition_case, eval_error_fn, eval_signal, eval_throw, eval_unwind_protect,
@@ -1689,8 +1692,39 @@ pub(super) fn eval_inner(
                 "editor--kill-word" => {
                     eval_kill_word(obj_to_value(cdr), env, editor, macros, state)
                 }
+                "editor--kill-region" => eval_kill_region(editor),
+                "editor--copy-region-as-kill" => eval_copy_region_as_kill(editor),
                 "editor--yank" => eval_yank(editor),
                 "editor--yank-pop" => eval_yank_pop(editor),
+                "editor--delete-rectangle" => eval_delete_rectangle(editor),
+                "editor--kill-rectangle" => eval_kill_rectangle(editor),
+                "editor--yank-rectangle" => eval_yank_rectangle(editor),
+                "editor--open-rectangle" => eval_open_rectangle(editor),
+                "editor--clear-rectangle" => eval_clear_rectangle(editor),
+                "editor--string-rectangle" => {
+                    eval_string_rectangle(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "search-forward" | "editor--search-forward" => {
+                    eval_search_forward(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "search-backward" | "editor--search-backward" => {
+                    eval_search_backward(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "re-search-forward" | "editor--re-search-forward" => {
+                    eval_re_search_forward(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "re-search-backward" | "editor--re-search-backward" => {
+                    eval_re_search_backward(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "replace-match" | "editor--replace-match" => {
+                    eval_replace_match(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "editor--replace-string" => {
+                    eval_replace_string(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "editor--query-replace" => {
+                    eval_query_replace(obj_to_value(cdr), env, editor, macros, state)
+                }
                 "editor--upcase-word" => eval_upcase_word(editor),
                 "editor--downcase-word" => eval_downcase_word(editor),
                 "editor--transpose-chars" => eval_transpose_chars(editor),
@@ -1703,6 +1737,13 @@ pub(super) fn eval_inner(
                 "editor--toggle-line-numbers" => eval_toggle_line_numbers(editor),
                 "editor--toggle-preview-line-numbers" => eval_toggle_preview_line_numbers(editor),
                 "editor--keyboard-quit" => eval_keyboard_quit(editor),
+                "editor--set-current-buffer-major-mode" => eval_set_current_buffer_major_mode(
+                    obj_to_value(cdr),
+                    env,
+                    editor,
+                    macros,
+                    state,
+                ),
                 "find-file" => eval_find_file(obj_to_value(cdr), env, editor, macros, state),
                 "save-buffer" => eval_save_buffer(editor),
                 "save-excursion" => {
@@ -2391,6 +2432,7 @@ pub(super) fn eval_inner(
                                {parent_call} \
                                (setq major-mode '{n}) \
                                (setq mode-name \"{mode_name_str}\") \
+                               (editor--set-current-buffer-major-mode '{n}) \
                                (run-mode-hooks '{hook_name}))"
                         );
                         if let Ok(func) = crate::read(&mode_fn) {
@@ -5341,36 +5383,6 @@ pub(super) fn eval_inner(
                     let data = state.match_data_as_objects();
                     Ok(state.list_from_objects(data))
                 }
-                "replace-match" => {
-                    let replacement = value_to_obj(eval(
-                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?);
-                    let replacement = replacement
-                        .as_string()
-                        .ok_or_else(|| ElispError::WrongTypeArgument("string".to_string()))?;
-                    let match_region = crate::buffer::with_registry(|r| {
-                        r.match_data.groups.first().copied().flatten()
-                    });
-                    if let Some((start, end)) = match_region {
-                        replace_region_with_overlay_hooks(
-                            start,
-                            end,
-                            replacement,
-                            env,
-                            editor,
-                            macros,
-                            state,
-                        )?;
-                        Ok(obj_to_value(LispObject::t()))
-                    } else {
-                        Ok(Value::nil())
-                    }
-                }
-                "re-search-forward" | "re-search-backward" => Ok(Value::nil()),
                 "version-to-list" => {
                     let ver_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let ver =

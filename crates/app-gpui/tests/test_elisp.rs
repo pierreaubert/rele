@@ -91,8 +91,7 @@ fn elisp_eval_defun_and_call() {
     s.eval_lisp(rele_elisp::read("(defun add (x y) (+ x y))").unwrap())
         .unwrap();
     assert_eq!(
-        s.eval_lisp(rele_elisp::read("(add 3 4)").unwrap())
-            .unwrap(),
+        s.eval_lisp(rele_elisp::read("(add 3 4)").unwrap()).unwrap(),
         rele_elisp::LispObject::integer(7)
     );
 }
@@ -108,10 +107,7 @@ fn elisp_eval_expression_command() {
 fn elisp_primitives_registered() {
     let mut s = MdAppState::new();
     assert!(s.eval_lisp(rele_elisp::read("(+ 1 2)").unwrap()).is_ok());
-    assert!(
-        s.eval_lisp(rele_elisp::read("(cons 1 2)").unwrap())
-            .is_ok()
-    );
+    assert!(s.eval_lisp(rele_elisp::read("(cons 1 2)").unwrap()).is_ok());
     assert!(
         s.eval_lisp(rele_elisp::read("(car '(1 2))").unwrap())
             .is_ok()
@@ -265,6 +261,17 @@ fn elisp_goto_char_past_end_clamps_without_panic() {
     let _ = s.document.char_to_line(s.cursor.position);
 }
 
+#[test]
+fn rust_file_loads_rust_mode() {
+    let s = MdAppState::from_file(std::path::PathBuf::from("example.rs"), "fn main() {}\n");
+
+    assert_eq!(s.current_major_mode.as_deref(), Some("rust-mode"));
+    assert_eq!(
+        rele_elisp::lookup_mode_key(s.lisp_host.interpreter(), "rust-mode", "C-c C-c"),
+        Some("rust-compile".to_string())
+    );
+}
+
 /// Phase 2 — `after-save-hook` runs when the buffer is saved through
 /// the elisp `(save-buffer)` primitive. Uses a hook function that
 /// `setq`'s a sentinel variable; we then read the variable back via
@@ -317,18 +324,13 @@ fn elisp_interactive_string_spec_opens_minibuffer() {
     let mut s = Box::new(MdAppState::new());
     s.install_elisp_editor_callbacks();
     s.eval_lisp(
-            rele_elisp::read(
-                "(defun rele-test-prompt-cmd (x) (interactive \"sSay: \") (insert x))",
-            )
+        rele_elisp::read("(defun rele-test-prompt-cmd (x) (interactive \"sSay: \") (insert x))")
             .unwrap(),
-        )
-        .unwrap();
+    )
+    .unwrap();
     assert!(
-        rele_elisp::interactive_spec_for(
-            "rele-test-prompt-cmd",
-            &s.lisp_host.interpreter().state,
-        )
-        .is_some(),
+        rele_elisp::interactive_spec_for("rele-test-prompt-cmd", &s.lisp_host.interpreter().state,)
+            .is_some(),
         "interactive spec should be discoverable",
     );
     s.run_command_by_name("rele-test-prompt-cmd");
@@ -416,15 +418,15 @@ fn elisp_load_theme_finds_emacs_theme_file() {
 fn elisp_lookup_mode_key_finds_binding() {
     let mut s = state_with("");
     s.eval_lisp(
-            rele_elisp::read(
-                "(progn \
+        rele_elisp::read(
+            "(progn \
                    (defvar fake-mode-map (make-sparse-keymap)) \
                    (define-key fake-mode-map (kbd \"n\") 'next-line) \
                    (define-key fake-mode-map (kbd \"q\") 'quit-window))",
-            )
-            .unwrap(),
         )
-        .expect("set up fake-mode-map");
+        .unwrap(),
+    )
+    .expect("set up fake-mode-map");
     assert_eq!(
         rele_elisp::lookup_mode_key(s.lisp_host.interpreter(), "fake-mode", "n"),
         Some("next-line".to_string()),

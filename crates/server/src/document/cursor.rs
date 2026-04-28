@@ -29,10 +29,10 @@ impl EditorCursor {
 
     /// Returns the selection range as (start, end) if there is a selection.
     pub fn selection(&self) -> Option<(usize, usize)> {
-        self.anchor.map(|anchor| {
+        self.anchor.and_then(|anchor| {
             let start = anchor.min(self.position);
             let end = anchor.max(self.position);
-            (start, end)
+            (start != end).then_some((start, end))
         })
     }
 

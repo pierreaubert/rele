@@ -217,8 +217,41 @@ pub trait EditorCallbacks: Send + Sync {
     /// Kill `n` words forward (negative = backward). Default no-op so
     /// embedders without a kill ring still load the trait cleanly.
     fn kill_word(&mut self, _n: i64) {}
+    fn kill_region(&mut self) {}
+    fn copy_region_as_kill(&mut self) {}
     fn yank(&mut self) {}
     fn yank_pop(&mut self) {}
+
+    // ---- Rectangles ----
+    fn delete_rectangle(&mut self) {}
+    fn kill_rectangle(&mut self) {}
+    fn yank_rectangle(&mut self) {}
+    fn open_rectangle(&mut self) {}
+    fn clear_rectangle(&mut self) {}
+    fn string_rectangle(&mut self, _text: &str) {}
+
+    // ---- Search / replace ----
+    fn search_forward(&mut self, _needle: &str) -> Option<usize> {
+        None
+    }
+    fn search_backward(&mut self, _needle: &str) -> Option<usize> {
+        None
+    }
+    fn re_search_forward(&mut self, _pattern: &str) -> Option<usize> {
+        None
+    }
+    fn re_search_backward(&mut self, _pattern: &str) -> Option<usize> {
+        None
+    }
+    fn replace_match(&mut self, _replacement: &str) -> bool {
+        false
+    }
+    fn replace_string(&mut self, _from: &str, _to: &str) -> usize {
+        0
+    }
+    fn query_replace(&mut self, _from: &str, _to: &str) -> usize {
+        0
+    }
 
     // ---- Case ----
     fn upcase_word(&mut self) {}

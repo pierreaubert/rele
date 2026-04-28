@@ -10,9 +10,10 @@ use parking_lot::Mutex;
 use rele_elisp::{EditorCallbacks, Interpreter, LispObject, add_primitives};
 
 use crate::document::buffer_list::name_from_path;
+use crate::emacs::search::{self, MatchData, SearchDirection};
 use crate::{
-    BufferId, BufferKind, CommandArgs, DocumentBuffer, EditHistory, EditorCursor, KillRing,
-    StoredBuffer,
+    BufferId, BufferKind, CommandArgs, CommandPlan, DocumentBuffer, EditHistory, EditorCursor,
+    InteractiveSpec, KillRing, StoredBuffer,
 };
 
 /// Result of trying to dispatch a command through elisp.
@@ -50,10 +51,12 @@ pub struct EditorCore {
     pub current_buffer_name: String,
     pub current_buffer_kind: BufferKind,
     pub current_buffer_read_only: bool,
+    pub current_major_mode: Option<String>,
     pub stored_buffers: Vec<StoredBuffer>,
     pub next_buffer_id: u64,
     pub lsp_state: Option<crate::lsp::LspBufferState>,
     pub kill_ring: KillRing,
+    pub search_match_data: MatchData,
     pub scroll_line: usize,
     pub last_edit_was_char_insert: bool,
     pub last_move_was_vertical: bool,
@@ -80,10 +83,12 @@ impl EditorCore {
             current_buffer_name: "*scratch*".to_string(),
             current_buffer_kind: BufferKind::Scratch,
             current_buffer_read_only: false,
+            current_major_mode: Some("lisp-interaction-mode".to_string()),
             stored_buffers: Vec::new(),
             next_buffer_id: 1,
             lsp_state: None,
             kill_ring: KillRing::default(),
+            search_match_data: MatchData::default(),
             scroll_line: 0,
             last_edit_was_char_insert: false,
             last_move_was_vertical: false,
@@ -99,6 +104,7 @@ impl EditorCore {
         let mut core = Self::new();
         core.current_buffer_name = name_from_path(&path);
         core.current_buffer_kind = BufferKind::File;
+        core.current_major_mode = None;
         core.document = DocumentBuffer::from_file(path, content);
         core
     }
@@ -117,27 +123,22 @@ impl EditorCore {
     }
 
     pub fn current_major_mode(&self) -> String {
+        if let Some(mode) = &self.current_major_mode {
+            return mode.clone();
+        }
         match self.current_buffer_kind {
             BufferKind::Dired => "dired-mode".to_string(),
             BufferKind::BufferList => "Buffer-menu-mode".to_string(),
             BufferKind::Scratch => "lisp-interaction-mode".to_string(),
-            BufferKind::File => self
-                .document
-                .file_path()
-                .and_then(|path| path.extension())
-                .and_then(|ext| ext.to_str())
-                .map(|ext| match ext {
-                    "el" => "emacs-lisp-mode",
-                    "md" | "markdown" => "markdown-mode",
-                    "rs" => "rust-mode",
-                    _ => "text-mode",
-                })
-                .unwrap_or("text-mode")
-                .to_string(),
+            BufferKind::File => {
+                inferred_major_mode_for_path(self.document.file_path().map(PathBuf::as_path))
+                    .to_string()
+            }
         }
     }
 
     pub fn set_current_major_mode(&mut self, mode: &str) {
+        self.current_major_mode = Some(mode.to_string());
         match mode {
             "dired-mode" => {
                 self.current_buffer_kind = BufferKind::Dired;
@@ -173,8 +174,10 @@ impl EditorCore {
         let mut buffer = StoredBuffer::new_scratch(id);
         buffer.name = name.to_string();
         if let Some((kind, read_only)) = special_buffer_attrs(name) {
+            let major_mode = special_major_mode(&kind);
             buffer.kind = kind;
             buffer.read_only = read_only;
+            buffer.major_mode = Some(major_mode.to_string());
         }
         self.stored_buffers.push(buffer);
         id
@@ -214,6 +217,7 @@ impl EditorCore {
             cursor: std::mem::replace(&mut self.cursor, EditorCursor::new()),
             kind: std::mem::replace(&mut self.current_buffer_kind, BufferKind::File),
             read_only: std::mem::replace(&mut self.current_buffer_read_only, false),
+            major_mode: std::mem::replace(&mut self.current_major_mode, None),
             scroll_line: std::mem::replace(&mut self.scroll_line, 0),
             last_edit_was_char_insert: std::mem::replace(
                 &mut self.last_edit_was_char_insert,
@@ -259,6 +263,8 @@ impl EditorCore {
             self.document.remove(start, end);
             self.cursor.position = start;
             self.cursor.clear_selection();
+        } else {
+            self.cursor.clear_selection();
         }
 
         self.document.insert(self.cursor.position, text);
@@ -288,12 +294,15 @@ impl EditorCore {
             self.document.remove(start, end);
             self.cursor.position = start;
             self.cursor.clear_selection();
-        } else if self.cursor.position > 0 {
-            self.history
-                .push_undo(self.document.snapshot(), self.cursor.position);
-            self.cursor.position -= 1;
-            self.document
-                .remove(self.cursor.position, self.cursor.position + 1);
+        } else {
+            self.cursor.clear_selection();
+            if self.cursor.position > 0 {
+                self.history
+                    .push_undo(self.document.snapshot(), self.cursor.position);
+                self.cursor.position -= 1;
+                self.document
+                    .remove(self.cursor.position, self.cursor.position + 1);
+            }
         }
         self.update_preferred_column();
     }
@@ -307,13 +316,30 @@ impl EditorCore {
             self.document.remove(start, end);
             self.cursor.position = start;
             self.cursor.clear_selection();
-        } else if self.cursor.position < self.document.len_chars() {
-            self.history
-                .push_undo(self.document.snapshot(), self.cursor.position);
-            self.document
-                .remove(self.cursor.position, self.cursor.position + 1);
+        } else {
+            self.cursor.clear_selection();
+            if self.cursor.position < self.document.len_chars() {
+                self.history
+                    .push_undo(self.document.snapshot(), self.cursor.position);
+                self.document
+                    .remove(self.cursor.position, self.cursor.position + 1);
+            }
         }
         self.update_preferred_column();
+    }
+
+    pub fn delete_selection(&mut self) -> Option<String> {
+        let (start, end) = self.cursor.selection()?;
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        self.history
+            .push_undo(self.document.snapshot(), self.cursor.position);
+        let text = self.document.rope().slice(start..end).to_string();
+        self.document.remove(start, end);
+        self.cursor.position = start;
+        self.cursor.clear_selection();
+        self.update_preferred_column();
+        Some(text)
     }
 
     pub fn kill_line(&mut self) {
@@ -426,6 +452,23 @@ impl EditorCore {
         }
     }
 
+    pub fn kill_region(&mut self) {
+        if let Some(text) = self.delete_selection() {
+            self.kill_ring.push(text);
+        }
+    }
+
+    pub fn copy_region_as_kill(&mut self) {
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        if let Some((start, end)) = self.cursor.selection() {
+            let text = self.document.rope().slice(start..end).to_string();
+            self.kill_ring.push(text);
+            self.kill_ring.clear_kill_flag();
+            self.cursor.clear_selection();
+        }
+    }
+
     pub fn yank(&mut self) {
         self.last_edit_was_char_insert = false;
         if let Some(text) = self.kill_ring.yank().map(str::to_string) {
@@ -435,6 +478,8 @@ impl EditorCore {
             if let Some((start, end)) = self.cursor.selection() {
                 self.document.remove(start, end);
                 self.cursor.position = start;
+                self.cursor.clear_selection();
+            } else {
                 self.cursor.clear_selection();
             }
 
@@ -459,6 +504,184 @@ impl EditorCore {
             self.cursor.position = new_end;
             self.kill_ring.mark_yank(start, new_end);
         }
+    }
+
+    pub fn rectangle_selection(&self) -> Option<(usize, usize, usize, usize)> {
+        let anchor = self.cursor.anchor?;
+        if self.document.len_chars() == 0 {
+            return None;
+        }
+        let pos = self.cursor.position.min(self.document.len_chars());
+        let anchor = anchor.min(self.document.len_chars());
+
+        let pos_line = self.document.char_to_line(pos);
+        let pos_col = pos - self.document.line_to_char(pos_line);
+        let anchor_line = self.document.char_to_line(anchor);
+        let anchor_col = anchor - self.document.line_to_char(anchor_line);
+
+        Some((
+            pos_line.min(anchor_line),
+            pos_col.min(anchor_col),
+            pos_line.max(anchor_line),
+            pos_col.max(anchor_col),
+        ))
+    }
+
+    pub fn delete_rectangle(&mut self) {
+        let Some((start_line, start_col, end_line, end_col)) = self.rectangle_selection() else {
+            return;
+        };
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        self.history
+            .push_undo(self.document.snapshot(), self.cursor.position);
+        self.delete_rectangle_range(start_line, start_col, end_line, end_col);
+        self.cursor.clear_selection();
+    }
+
+    pub fn kill_rectangle(&mut self) {
+        let Some((start_line, start_col, end_line, end_col)) = self.rectangle_selection() else {
+            return;
+        };
+        let mut lines = Vec::with_capacity(end_line - start_line + 1);
+        for line_idx in start_line..=end_line {
+            let line_start = self.document.line_to_char(line_idx);
+            let content_len = self.line_content_len(line_idx);
+            let col_start = start_col.min(content_len);
+            let col_end = end_col.min(content_len);
+            lines.push(
+                self.document
+                    .rope()
+                    .slice(line_start + col_start..line_start + col_end)
+                    .to_string(),
+            );
+        }
+        self.kill_ring.rectangle_buffer = Some(lines);
+        self.delete_rectangle();
+    }
+
+    pub fn yank_rectangle(&mut self) {
+        let Some(rectangle) = self.kill_ring.rectangle_buffer.clone() else {
+            return;
+        };
+        if rectangle.is_empty() {
+            return;
+        }
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        self.history
+            .push_undo(self.document.snapshot(), self.cursor.position);
+
+        let pos = self.cursor.position.min(self.document.len_chars());
+        let (start_line, start_col) = if self.document.len_chars() == 0 {
+            (0, 0)
+        } else {
+            let line = self.document.char_to_line(pos);
+            (line, pos - self.document.line_to_char(line))
+        };
+
+        for (idx, rect_line) in rectangle.iter().enumerate() {
+            let target_line = start_line + idx;
+            if target_line >= self.document.len_lines() {
+                let doc_end = self.document.len_chars();
+                self.document
+                    .insert(doc_end, &format!("\n{}", " ".repeat(start_col)));
+                let insert_pos = self.document.len_chars();
+                self.document.insert(insert_pos, rect_line);
+            } else {
+                self.pad_line_to_col(target_line, start_col);
+                let insert_pos = self.document.line_to_char(target_line) + start_col;
+                self.document.insert(insert_pos, rect_line);
+            }
+        }
+        self.cursor.clear_selection();
+        self.update_preferred_column();
+    }
+
+    pub fn open_rectangle(&mut self) {
+        let Some((start_line, start_col, end_line, end_col)) = self.rectangle_selection() else {
+            return;
+        };
+        let width = end_col.saturating_sub(start_col);
+        if width == 0 {
+            return;
+        }
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        self.history
+            .push_undo(self.document.snapshot(), self.cursor.position);
+        let spaces = " ".repeat(width);
+        for line_idx in (start_line..=end_line).rev() {
+            let line_start = self.document.line_to_char(line_idx);
+            let col = start_col.min(self.line_content_len(line_idx));
+            self.document.insert(line_start + col, &spaces);
+        }
+        self.cursor.clear_selection();
+        self.update_preferred_column();
+    }
+
+    pub fn clear_rectangle(&mut self) {
+        let Some((start_line, start_col, end_line, end_col)) = self.rectangle_selection() else {
+            return;
+        };
+        let width = end_col.saturating_sub(start_col);
+        if width == 0 {
+            return;
+        }
+        self.replace_rectangle(start_line, start_col, end_line, end_col, &" ".repeat(width));
+    }
+
+    pub fn string_rectangle(&mut self, text: &str) {
+        let Some((start_line, start_col, end_line, end_col)) = self.rectangle_selection() else {
+            return;
+        };
+        self.replace_rectangle(start_line, start_col, end_line, end_col, text);
+    }
+
+    pub fn search_forward(&mut self, needle: &str) -> Option<usize> {
+        self.search_literal(needle, SearchDirection::Forward)
+    }
+
+    pub fn search_backward(&mut self, needle: &str) -> Option<usize> {
+        self.search_literal(needle, SearchDirection::Backward)
+    }
+
+    pub fn re_search_forward(&mut self, pattern: &str) -> Option<usize> {
+        self.re_search(pattern, SearchDirection::Forward)
+    }
+
+    pub fn re_search_backward(&mut self, pattern: &str) -> Option<usize> {
+        self.re_search(pattern, SearchDirection::Backward)
+    }
+
+    pub fn replace_match(&mut self, replacement: &str) -> bool {
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        self.history
+            .push_undo(self.document.snapshot(), self.cursor.position);
+        let replaced = search::replace_match(
+            &mut self.document,
+            &mut self.cursor,
+            &self.search_match_data,
+            replacement,
+            0,
+        );
+        if replaced {
+            self.cursor.clear_selection();
+            self.update_preferred_column();
+            self.message = Some("Replaced".to_string());
+        } else {
+            self.message = Some("No match data".to_string());
+        }
+        replaced
+    }
+
+    pub fn replace_string(&mut self, from: &str, to: &str) -> usize {
+        self.replace_literal_from_point(from, to, "Replaced")
+    }
+
+    pub fn query_replace(&mut self, from: &str, to: &str) -> usize {
+        self.replace_literal_from_point(from, to, "Query replaced")
     }
 
     pub fn upcase_word(&mut self) {
@@ -590,25 +813,27 @@ impl EditorCore {
     }
 
     pub fn forward_char(&mut self, n: i64) {
+        let extend = self.cursor.anchor.is_some();
         if n > 0 {
             for _ in 0..n as usize {
-                self.move_right(false);
+                self.move_right(extend);
             }
         } else if n < 0 {
             for _ in 0..(-n) as usize {
-                self.move_left(false);
+                self.move_left(extend);
             }
         }
     }
 
     pub fn forward_line(&mut self, n: i64) {
+        let extend = self.cursor.anchor.is_some();
         if n > 0 {
             for _ in 0..n as usize {
-                self.move_down(false);
+                self.move_down(extend);
             }
         } else if n < 0 {
             for _ in 0..(-n) as usize {
-                self.move_up(false);
+                self.move_up(extend);
             }
         }
     }
@@ -616,22 +841,25 @@ impl EditorCore {
     pub fn move_beginning_of_line(&mut self) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
+        let extend = self.cursor.anchor.is_some();
         if self.document.len_chars() == 0 {
-            self.cursor.move_to(0, false);
+            self.cursor.move_to(0, extend);
             self.update_preferred_column();
             return;
         }
         let pos = self.cursor.position.min(self.document.len_chars());
         let line = self.document.char_to_line(pos);
-        self.cursor.move_to(self.document.line_to_char(line), false);
+        self.cursor
+            .move_to(self.document.line_to_char(line), extend);
         self.update_preferred_column();
     }
 
     pub fn move_end_of_line(&mut self) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
+        let extend = self.cursor.anchor.is_some();
         if self.document.len_chars() == 0 {
-            self.cursor.move_to(0, false);
+            self.cursor.move_to(0, extend);
             self.update_preferred_column();
             return;
         }
@@ -644,21 +872,22 @@ impl EditorCore {
             line_end -= 1;
         }
         self.cursor
-            .move_to(line_end.min(self.document.len_chars()), false);
+            .move_to(line_end.min(self.document.len_chars()), extend);
         self.update_preferred_column();
     }
 
     pub fn move_beginning_of_buffer(&mut self) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
-        self.cursor.move_to(0, false);
+        self.cursor.move_to(0, self.cursor.anchor.is_some());
         self.update_preferred_column();
     }
 
     pub fn move_end_of_buffer(&mut self) {
         self.last_edit_was_char_insert = false;
         self.last_move_was_vertical = false;
-        self.cursor.move_to(self.document.len_chars(), false);
+        self.cursor
+            .move_to(self.document.len_chars(), self.cursor.anchor.is_some());
         self.update_preferred_column();
     }
 
@@ -897,6 +1126,7 @@ impl EditorCore {
             cursor: std::mem::replace(&mut self.cursor, incoming.cursor),
             kind: std::mem::replace(&mut self.current_buffer_kind, incoming.kind),
             read_only: std::mem::replace(&mut self.current_buffer_read_only, incoming.read_only),
+            major_mode: std::mem::replace(&mut self.current_major_mode, incoming.major_mode),
             scroll_line: std::mem::replace(&mut self.scroll_line, incoming.scroll_line),
             last_edit_was_char_insert: std::mem::replace(
                 &mut self.last_edit_was_char_insert,
@@ -934,16 +1164,100 @@ impl EditorCore {
             .find(|buffer| buffer.id == id)
             && let Some((kind, read_only)) = special_buffer_attrs(&buffer.name)
         {
+            let major_mode = special_major_mode(&kind);
             buffer.kind = kind;
             buffer.read_only = read_only;
+            buffer.major_mode = Some(major_mode.to_string());
         }
     }
 
     fn apply_special_attrs_for_current_name(&mut self) {
         if let Some((kind, read_only)) = special_buffer_attrs(&self.current_buffer_name) {
+            let major_mode = special_major_mode(&kind);
             self.current_buffer_kind = kind;
             self.current_buffer_read_only = read_only;
+            self.current_major_mode = Some(major_mode.to_string());
         }
+    }
+
+    fn delete_rectangle_range(
+        &mut self,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+    ) {
+        for line_idx in (start_line..=end_line).rev() {
+            let line_start = self.document.line_to_char(line_idx);
+            let content_len = self.line_content_len(line_idx);
+            let col_start = start_col.min(content_len);
+            let col_end = end_col.min(content_len);
+            if col_start < col_end {
+                self.document
+                    .remove(line_start + col_start, line_start + col_end);
+            }
+        }
+    }
+
+    fn replace_rectangle(
+        &mut self,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+        replacement: &str,
+    ) {
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        self.history
+            .push_undo(self.document.snapshot(), self.cursor.position);
+        for line_idx in (start_line..=end_line).rev() {
+            self.replace_rectangle_line(line_idx, start_col, end_col, replacement);
+        }
+        self.cursor.clear_selection();
+        self.update_preferred_column();
+    }
+
+    fn replace_rectangle_line(
+        &mut self,
+        line_idx: usize,
+        start_col: usize,
+        end_col: usize,
+        replacement: &str,
+    ) {
+        let line_start = self.document.line_to_char(line_idx);
+        let content_len = self.line_content_len(line_idx);
+        let col_start = start_col.min(content_len);
+        let col_end = end_col.min(content_len);
+        if col_start < col_end {
+            self.document
+                .remove(line_start + col_start, line_start + col_end);
+        }
+        self.pad_line_to_col(line_idx, start_col);
+        let insert_pos = self.document.line_to_char(line_idx) + start_col;
+        self.document.insert(insert_pos, replacement);
+    }
+
+    fn pad_line_to_col(&mut self, line_idx: usize, col: usize) {
+        let content_len = self.line_content_len(line_idx);
+        if content_len >= col {
+            return;
+        }
+        let line_start = self.document.line_to_char(line_idx);
+        self.document
+            .insert(line_start + content_len, &" ".repeat(col - content_len));
+    }
+
+    fn line_content_len(&self, line_idx: usize) -> usize {
+        let line = self.document.line(line_idx);
+        let mut len = line.len_chars();
+        if len > 0 && line.char(len - 1) == '\n' {
+            len -= 1;
+        }
+        if len > 0 && line.char(len - 1) == '\r' {
+            len -= 1;
+        }
+        len
     }
 
     fn clamp_cursor(&mut self) {
@@ -959,6 +1273,100 @@ impl EditorCore {
         let line = self.document.char_to_line(pos);
         self.cursor.preferred_column = pos - self.document.line_to_char(line);
     }
+
+    fn search_literal(&mut self, needle: &str, direction: SearchDirection) -> Option<usize> {
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        self.cursor.clear_selection();
+        let result = search::search_literal(
+            needle,
+            &self.document,
+            &mut self.cursor,
+            direction,
+            None,
+            &mut self.search_match_data,
+        );
+        self.update_preferred_column();
+        self.message = Some(match result {
+            Some(_) => format!("Search: {needle}"),
+            None => format!("Search failed: {needle}"),
+        });
+        result
+    }
+
+    fn re_search(&mut self, pattern: &str, direction: SearchDirection) -> Option<usize> {
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        self.cursor.clear_selection();
+        let rust_pattern = search::emacs_regex_to_rust(pattern);
+        let result = search::re_search(
+            &rust_pattern,
+            &self.document,
+            &mut self.cursor,
+            direction,
+            None,
+            &mut self.search_match_data,
+        );
+        self.update_preferred_column();
+        self.message = Some(match result {
+            Some(_) => format!("Regexp search: {pattern}"),
+            None => format!("Regexp search failed: {pattern}"),
+        });
+        result
+    }
+
+    fn replace_literal_from_point(&mut self, from: &str, to: &str, verb: &str) -> usize {
+        if from.is_empty() {
+            self.message = Some("Cannot replace empty string".to_string());
+            return 0;
+        }
+
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        let snapshot = self.document.snapshot();
+        let undo_cursor = self.cursor.position;
+        let mut cursor = self.cursor;
+        let mut match_data = MatchData::default();
+        let mut count = 0;
+
+        while search::search_literal(
+            from,
+            &self.document,
+            &mut cursor,
+            SearchDirection::Forward,
+            None,
+            &mut match_data,
+        )
+        .is_some()
+        {
+            if count == 0 {
+                self.history.push_undo(snapshot.clone(), undo_cursor);
+            }
+            if !search::replace_match(&mut self.document, &mut cursor, &match_data, to, 0) {
+                break;
+            }
+            count += 1;
+        }
+
+        self.cursor = cursor;
+        self.search_match_data = match_data;
+        self.cursor.clear_selection();
+        self.update_preferred_column();
+        self.message = Some(format!("{verb} {count} occurrence{}", plural(count)));
+        count
+    }
+}
+
+fn plural(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
+fn list_obj(items: Vec<LispObject>) -> LispObject {
+    let mut out = LispObject::nil();
+    for item in items.into_iter().rev() {
+        out = LispObject::cons(item, out);
+    }
+    out
 }
 
 /// Safe callback object installed into the interpreter.
@@ -1062,12 +1470,72 @@ impl EditorCallbacks for ServerEditorCallbacks {
         self.core.lock().kill_word(n);
     }
 
+    fn kill_region(&mut self) {
+        self.core.lock().kill_region();
+    }
+
+    fn copy_region_as_kill(&mut self) {
+        self.core.lock().copy_region_as_kill();
+    }
+
     fn yank(&mut self) {
         self.core.lock().yank();
     }
 
     fn yank_pop(&mut self) {
         self.core.lock().yank_pop();
+    }
+
+    fn delete_rectangle(&mut self) {
+        self.core.lock().delete_rectangle();
+    }
+
+    fn kill_rectangle(&mut self) {
+        self.core.lock().kill_rectangle();
+    }
+
+    fn yank_rectangle(&mut self) {
+        self.core.lock().yank_rectangle();
+    }
+
+    fn open_rectangle(&mut self) {
+        self.core.lock().open_rectangle();
+    }
+
+    fn clear_rectangle(&mut self) {
+        self.core.lock().clear_rectangle();
+    }
+
+    fn string_rectangle(&mut self, text: &str) {
+        self.core.lock().string_rectangle(text);
+    }
+
+    fn search_forward(&mut self, needle: &str) -> Option<usize> {
+        self.core.lock().search_forward(needle)
+    }
+
+    fn search_backward(&mut self, needle: &str) -> Option<usize> {
+        self.core.lock().search_backward(needle)
+    }
+
+    fn re_search_forward(&mut self, pattern: &str) -> Option<usize> {
+        self.core.lock().re_search_forward(pattern)
+    }
+
+    fn re_search_backward(&mut self, pattern: &str) -> Option<usize> {
+        self.core.lock().re_search_backward(pattern)
+    }
+
+    fn replace_match(&mut self, replacement: &str) -> bool {
+        self.core.lock().replace_match(replacement)
+    }
+
+    fn replace_string(&mut self, from: &str, to: &str) -> usize {
+        self.core.lock().replace_string(from, to)
+    }
+
+    fn query_replace(&mut self, from: &str, to: &str) -> usize {
+        self.core.lock().query_replace(from, to)
     }
 
     fn upcase_word(&mut self) {
@@ -1171,7 +1639,11 @@ impl LispHost {
         let core = Arc::new(Mutex::new(core));
         interpreter.set_editor(Box::new(ServerEditorCallbacks::new(core.clone())));
 
-        Self { interpreter, core }
+        let host = Self { interpreter, core };
+        if let Err((idx, error)) = host.load_default_init() {
+            log::error!("default elisp init failed at form {idx}: {error:?}");
+        }
+        host
     }
 
     pub fn interpreter(&self) -> &Interpreter {
@@ -1202,6 +1674,40 @@ impl LispHost {
         rele_elisp::is_user_defined_elisp_function(name, &self.interpreter.state)
     }
 
+    pub fn is_autoloaded_command(&self, name: &str) -> bool {
+        self.interpreter.state.autoloads.read().contains_key(name)
+    }
+
+    pub fn interactive_spec_for(&self, name: &str) -> Option<InteractiveSpec> {
+        rele_elisp::interactive_spec_for(name, &self.interpreter.state)
+            .as_deref()
+            .and_then(InteractiveSpec::from_elisp_spec)
+    }
+
+    pub fn plan_command(
+        &self,
+        name: &str,
+        rust_interactive: Option<InteractiveSpec>,
+    ) -> CommandPlan {
+        if let Some(interactive) = self.interactive_spec_for(name) {
+            return command_plan_for_interactive(interactive);
+        }
+        if let Some(interactive) = rust_interactive {
+            return command_plan_for_interactive(interactive);
+        }
+        if self.is_user_defined_command(name) {
+            CommandPlan::Run
+        } else if self.is_autoloaded_command(name) {
+            CommandPlan::Run
+        } else {
+            CommandPlan::Missing
+        }
+    }
+
+    pub fn has_command(&self, name: &str, rust_exists: bool) -> bool {
+        rust_exists || self.is_user_defined_command(name) || self.is_autoloaded_command(name)
+    }
+
     pub fn user_command_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self
             .interpreter
@@ -1223,23 +1729,66 @@ impl LispHost {
         names
     }
 
+    pub fn autoload_command_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .interpreter
+            .state
+            .autoloads
+            .read()
+            .keys()
+            .cloned()
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    pub fn command_completion_candidates<I, S>(&self, rust_names: I) -> Vec<String>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut candidates: Vec<String> = rust_names.into_iter().map(Into::into).collect();
+        candidates.extend(self.user_command_names());
+        candidates.extend(self.autoload_command_names());
+        candidates.sort();
+        candidates.dedup();
+        candidates
+    }
+
+    fn load_autoloaded_command(&self, name: &str) -> Result<bool, (usize, rele_elisp::ElispError)> {
+        let Some(file) = self.interpreter.state.autoloads.read().get(name).cloned() else {
+            return Ok(false);
+        };
+        self.load_builtin_library(&file)
+    }
+
     pub fn run_command(
         &self,
         name: &str,
         args: &CommandArgs,
     ) -> Result<LispCommandDispatch, rele_elisp::ElispError> {
         if !self.is_user_defined_command(name) {
+            match self.load_autoloaded_command(name) {
+                Ok(true) => {}
+                Ok(false) => return Ok(LispCommandDispatch::Unhandled),
+                Err((_, error)) => return Err(error),
+            }
+        }
+        if !self.is_user_defined_command(name) {
             return Ok(LispCommandDispatch::Unhandled);
         }
 
-        let arg = match &args.string {
-            Some(value) => LispObject::string(value),
-            None => LispObject::integer(args.count() as i64),
+        let string_args = args.string_args();
+        let call_args = if string_args.is_empty() {
+            vec![LispObject::integer(args.count() as i64)]
+        } else {
+            string_args
+                .into_iter()
+                .map(|value| LispObject::string(&value))
+                .collect()
         };
-        let call = LispObject::cons(
-            LispObject::symbol(name),
-            LispObject::cons(arg, LispObject::nil()),
-        );
+        let call = LispObject::cons(LispObject::symbol(name), list_obj(call_args));
         self.interpreter.eval(call)?;
         Ok(LispCommandDispatch::Handled)
     }
@@ -1250,6 +1799,57 @@ impl LispHost {
 
     pub fn load_builtin_commands(&self) -> Result<LoadReport, (usize, rele_elisp::ElispError)> {
         self.load_source(crate::BUILTIN_COMMANDS_EL, LoadMode::Strict)
+    }
+
+    pub fn load_default_init(&self) -> Result<LoadReport, (usize, rele_elisp::ElispError)> {
+        self.load_source(crate::DEFAULT_INIT_EL, LoadMode::Strict)
+    }
+
+    pub fn load_builtin_library(
+        &self,
+        library: &str,
+    ) -> Result<bool, (usize, rele_elisp::ElispError)> {
+        match library.trim_end_matches(".el") {
+            "rust-mode" => {
+                self.load_source(crate::RUST_MODE_EL, LoadMode::Strict)?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    pub fn auto_mode_for_path(
+        &self,
+        path: Option<&Path>,
+    ) -> Result<Option<String>, (usize, rele_elisp::ElispError)> {
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        let path = path
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let result = self.eval_source(&format!("(rele--auto-mode-for-file \"{path}\")"))?;
+        Ok(match result {
+            LispObject::Symbol(id) => Some(rele_elisp::obarray::symbol_name(id)),
+            LispObject::String(mode) => Some(mode),
+            _ => None,
+        })
+    }
+
+    pub fn activate_mode_for_path(
+        &self,
+        path: Option<&Path>,
+    ) -> Result<Option<String>, (usize, rele_elisp::ElispError)> {
+        let Some(mode) = self.auto_mode_for_path(path)? else {
+            return Ok(None);
+        };
+        if self.core.lock().current_major_mode.as_deref() == Some(mode.as_str()) {
+            return Ok(Some(mode));
+        }
+        self.run_command(&mode, &CommandArgs::default())
+            .map_err(|error| (0, error))?;
+        Ok(Some(mode))
     }
 
     pub fn load_source(
@@ -1333,6 +1933,14 @@ impl LispHost {
     }
 }
 
+fn command_plan_for_interactive(interactive: InteractiveSpec) -> CommandPlan {
+    if matches!(interactive, InteractiveSpec::None) {
+        CommandPlan::Run
+    } else {
+        CommandPlan::Prompt(interactive)
+    }
+}
+
 fn special_buffer_attrs(name: &str) -> Option<(BufferKind, bool)> {
     if name == "*Buffer List*" {
         Some((BufferKind::BufferList, true))
@@ -1341,6 +1949,32 @@ fn special_buffer_attrs(name: &str) -> Option<(BufferKind, bool)> {
     } else {
         None
     }
+}
+
+fn special_major_mode(kind: &BufferKind) -> &'static str {
+    match kind {
+        BufferKind::Dired => "dired-mode",
+        BufferKind::BufferList => "Buffer-menu-mode",
+        BufferKind::Scratch => "lisp-interaction-mode",
+        BufferKind::File => "text-mode",
+    }
+}
+
+fn inferred_major_mode_for_path(path: Option<&Path>) -> &'static str {
+    path.and_then(|path| path.extension())
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            if ext.eq_ignore_ascii_case("el") {
+                "emacs-lisp-mode"
+            } else if ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown") {
+                "markdown-mode"
+            } else if ext.eq_ignore_ascii_case("rs") {
+                "rust-mode"
+            } else {
+                "text-mode"
+            }
+        })
+        .unwrap_or("text-mode")
 }
 
 #[allow(clippy::disallowed_methods)]
@@ -1366,6 +2000,57 @@ mod tests {
     }
 
     #[test]
+    fn rust_mode_loads_for_rust_paths() {
+        let host = LispHost::new(EditorCore::from_file(
+            PathBuf::from("src/main.rs"),
+            "fn main() {}\n",
+        ));
+
+        let mode = host
+            .activate_mode_for_path(Some(Path::new("src/main.rs")))
+            .expect("rust mode activates");
+
+        assert_eq!(mode.as_deref(), Some("rust-mode"));
+        assert_eq!(host.core_snapshot().current_major_mode(), "rust-mode");
+        assert!(!matches!(
+            host.eval_source("(featurep 'rust-mode)")
+                .expect("featurep evaluates"),
+            LispObject::Nil
+        ));
+        assert_eq!(
+            rele_elisp::lookup_mode_key(host.interpreter(), "rust-mode", "C-c C-c"),
+            Some("rust-compile".to_string())
+        );
+    }
+
+    #[test]
+    fn rust_mode_is_autoloaded_for_m_x_before_loading_mode_file() {
+        let host = LispHost::new(EditorCore::new());
+
+        assert!(host.has_command("rust-mode", false));
+        assert!(
+            host.command_completion_candidates(std::iter::empty::<&str>())
+                .iter()
+                .any(|name| name == "rust-mode")
+        );
+        assert!(matches!(
+            host.eval_source("(featurep 'rust-mode)")
+                .expect("featurep evaluates before load"),
+            LispObject::Nil
+        ));
+
+        host.run_command("rust-mode", &CommandArgs::default())
+            .expect("autoloaded rust-mode runs");
+
+        assert_eq!(host.core_snapshot().current_major_mode(), "rust-mode");
+        assert!(!matches!(
+            host.eval_source("(featurep 'rust-mode)")
+                .expect("featurep evaluates after load"),
+            LispObject::Nil
+        ));
+    }
+
+    #[test]
     fn elisp_command_mutates_server_core() {
         let host = LispHost::new(EditorCore::new());
         host.load_builtin_commands().expect("builtin commands load");
@@ -1379,6 +2064,227 @@ mod tests {
     }
 
     #[test]
+    fn kill_region_and_yank_mutate_server_core() {
+        let host = LispHost::new(EditorCore::new());
+        host.load_builtin_commands().expect("builtin commands load");
+        {
+            let mut core = host.core.lock();
+            core.insert_text("abcdef");
+            core.cursor.anchor = Some(1);
+            core.cursor.position = 4;
+        }
+
+        host.run_command("kill-region", &CommandArgs::default())
+            .expect("kill-region dispatch");
+
+        {
+            let core = host.core.lock();
+            assert_eq!(core.document.text(), "aef");
+            assert_eq!(core.cursor.position, 1);
+            assert!(!core.cursor.has_selection());
+        }
+
+        host.run_command("yank", &CommandArgs::default())
+            .expect("yank dispatch");
+
+        assert_eq!(host.core.lock().document.text(), "abcdef");
+    }
+
+    #[test]
+    fn copy_region_as_kill_keeps_text_and_feeds_yank() {
+        let host = LispHost::new(EditorCore::new());
+        host.load_builtin_commands().expect("builtin commands load");
+        {
+            let mut core = host.core.lock();
+            core.insert_text("abcdef");
+            core.cursor.anchor = Some(1);
+            core.cursor.position = 4;
+        }
+
+        host.run_command("copy-region-as-kill", &CommandArgs::default())
+            .expect("copy-region-as-kill dispatch");
+
+        {
+            let mut core = host.core.lock();
+            assert_eq!(core.document.text(), "abcdef");
+            assert!(!core.cursor.has_selection());
+            core.cursor.position = core.document.len_chars();
+        }
+
+        host.run_command("yank", &CommandArgs::default())
+            .expect("yank dispatch");
+
+        assert_eq!(host.core.lock().document.text(), "abcdefbcd");
+    }
+
+    #[test]
+    fn zero_length_mark_is_cleared_by_insert_and_yank() {
+        let mut core = EditorCore::new();
+        core.insert_text("abc");
+        core.cursor.position = 1;
+        core.set_mark();
+        core.insert_text("X");
+
+        assert_eq!(core.document.text(), "aXbc");
+        assert!(!core.cursor.has_selection());
+        assert!(core.cursor.anchor.is_none());
+
+        core.kill_ring.push("Y".to_string());
+        core.set_mark();
+        core.yank();
+
+        assert_eq!(core.document.text(), "aXYbc");
+        assert!(!core.cursor.has_selection());
+        assert!(core.cursor.anchor.is_none());
+    }
+
+    #[test]
+    fn active_mark_extends_region_with_movement() {
+        let mut core = EditorCore::new();
+        core.insert_text("abcdef");
+        core.cursor.position = 1;
+        core.set_mark();
+
+        core.forward_char(2);
+
+        assert_eq!(core.cursor.selection(), Some((1, 3)));
+        core.kill_region();
+        assert_eq!(core.document.text(), "adef");
+    }
+
+    #[test]
+    fn rectangle_commands_round_trip_through_elisp() {
+        let host = LispHost::new(EditorCore::new());
+        host.load_builtin_commands().expect("builtin commands load");
+        {
+            let mut core = host.core.lock();
+            core.insert_text("abcd\nefgh\nijkl");
+            core.cursor.anchor = Some(1);
+            core.cursor.position = 13;
+        }
+
+        host.run_command("kill-rectangle", &CommandArgs::default())
+            .expect("kill-rectangle dispatch");
+
+        {
+            let mut core = host.core.lock();
+            assert_eq!(core.document.text(), "ad\neh\nil");
+            assert_eq!(
+                core.kill_ring.rectangle_buffer.as_ref(),
+                Some(&vec!["bc".to_string(), "fg".to_string(), "jk".to_string()])
+            );
+            core.cursor.position = 1;
+        }
+
+        host.run_command("yank-rectangle", &CommandArgs::default())
+            .expect("yank-rectangle dispatch");
+
+        assert_eq!(host.core.lock().document.text(), "abcd\nefgh\nijkl");
+    }
+
+    #[test]
+    fn clear_open_and_string_rectangle_mutate_server_core() {
+        let host = LispHost::new(EditorCore::new());
+        host.load_builtin_commands().expect("builtin commands load");
+        {
+            let mut core = host.core.lock();
+            core.insert_text("abcde\nfghij\nklmno");
+            core.cursor.anchor = Some(1);
+            core.cursor.position = 15;
+        }
+
+        host.run_command("clear-rectangle", &CommandArgs::default())
+            .expect("clear-rectangle dispatch");
+        assert_eq!(host.core.lock().document.text(), "a  de\nf  ij\nk  no");
+
+        {
+            let mut core = host.core.lock();
+            core.document.set_text("abcde\nfghij\nklmno");
+            core.cursor.anchor = Some(1);
+            core.cursor.position = 15;
+        }
+        host.run_command(
+            "string-rectangle",
+            &CommandArgs::default().with_string("XX".to_string()),
+        )
+        .expect("string-rectangle dispatch");
+        assert_eq!(host.core.lock().document.text(), "aXXde\nfXXij\nkXXno");
+
+        {
+            let mut core = host.core.lock();
+            core.document.set_text("abcde\nfghij\nklmno");
+            core.cursor.anchor = Some(1);
+            core.cursor.position = 15;
+        }
+        host.run_command("open-rectangle", &CommandArgs::default())
+            .expect("open-rectangle dispatch");
+        assert_eq!(
+            host.core.lock().document.text(),
+            "a  bcde\nf  ghij\nk  lmno"
+        );
+    }
+
+    #[test]
+    fn search_forward_and_replace_match_keep_match_data_in_core() {
+        let host = LispHost::new(EditorCore::new());
+        host.load_builtin_commands().expect("builtin commands load");
+        host.core.lock().insert_text("alpha beta beta");
+        host.core.lock().cursor.position = 0;
+
+        host.run_command(
+            "search-forward",
+            &CommandArgs::default().with_string("beta".to_string()),
+        )
+        .expect("search-forward dispatch");
+
+        {
+            let core = host.core.lock();
+            assert_eq!(core.cursor.position, 10);
+            assert_eq!(core.search_match_data.groups, vec![Some((6, 10))]);
+        }
+
+        host.run_command(
+            "replace-match",
+            &CommandArgs::default().with_string("rust".to_string()),
+        )
+        .expect("replace-match dispatch");
+
+        assert_eq!(host.core.lock().document.text(), "alpha rust beta");
+    }
+
+    #[test]
+    fn replace_string_uses_multi_prompt_args() {
+        let host = LispHost::new(EditorCore::new());
+        host.load_builtin_commands().expect("builtin commands load");
+        host.core.lock().insert_text("one two one two");
+        host.core.lock().cursor.position = 0;
+
+        host.run_command(
+            "replace-string",
+            &CommandArgs::default().with_strings(vec!["one".to_string(), "1".to_string()]),
+        )
+        .expect("replace-string dispatch");
+
+        assert_eq!(host.core.lock().document.text(), "1 two 1 two");
+    }
+
+    #[test]
+    fn re_search_forward_accepts_emacs_group_syntax() {
+        let host = LispHost::new(EditorCore::new());
+        host.load_builtin_commands().expect("builtin commands load");
+        host.core.lock().insert_text("alpha beta gamma");
+        host.core.lock().cursor.position = 0;
+
+        host.run_command(
+            "re-search-forward",
+            &CommandArgs::default().with_string("\\(beta\\|delta\\)".to_string()),
+        )
+        .expect("re-search-forward dispatch");
+
+        assert_eq!(host.core.lock().cursor.position, 10);
+    }
+
+    #[test]
     fn user_command_names_include_loaded_defuns_not_primitives() {
         let host = LispHost::new(EditorCore::new());
         host.load_builtin_commands().expect("builtin commands load");
@@ -1387,6 +2293,74 @@ mod tests {
 
         assert!(names.iter().any(|name| name == "next-line"));
         assert!(!names.iter().any(|name| name == "forward-line"));
+    }
+
+    #[test]
+    fn command_completion_candidates_merge_rust_and_elisp_names() {
+        let host = LispHost::new(EditorCore::new());
+        host.load_builtin_commands().expect("builtin commands load");
+
+        let names = host.command_completion_candidates(["save-buffer", "next-line"]);
+
+        assert!(names.iter().any(|name| name == "save-buffer"));
+        assert!(names.iter().any(|name| name == "next-line"));
+        assert_eq!(names.iter().filter(|name| *name == "next-line").count(), 1);
+    }
+
+    #[test]
+    fn plan_command_prefers_elisp_interactive_spec() {
+        let host = LispHost::new(EditorCore::new());
+        host.eval_source("(defun prompt-me (x) (interactive \"sSay\") x)")
+            .expect("defun loads");
+
+        let plan = host.plan_command(
+            "prompt-me",
+            Some(InteractiveSpec::Buffer {
+                prompt: "Rust buffer".to_string(),
+            }),
+        );
+
+        assert_eq!(
+            plan,
+            CommandPlan::Prompt(InteractiveSpec::String {
+                prompt: "Say".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn plan_command_parses_multi_string_interactive_spec() {
+        let host = LispHost::new(EditorCore::new());
+        host.eval_source("(defun prompt-two (a b) (interactive \"sFrom: \\nsTo: \") (list a b))")
+            .expect("defun loads");
+
+        let plan = host.plan_command("prompt-two", None);
+
+        assert_eq!(
+            plan,
+            CommandPlan::Prompt(InteractiveSpec::StringList {
+                prompts: vec!["From: ".to_string(), "To: ".to_string()],
+            })
+        );
+    }
+
+    #[test]
+    fn plan_command_falls_back_to_rust_metadata() {
+        let host = LispHost::new(EditorCore::new());
+
+        let plan = host.plan_command(
+            "find-file",
+            Some(InteractiveSpec::File {
+                prompt: "Find file".to_string(),
+            }),
+        );
+
+        assert_eq!(
+            plan,
+            CommandPlan::Prompt(InteractiveSpec::File {
+                prompt: "Find file".to_string(),
+            })
+        );
     }
 
     #[test]

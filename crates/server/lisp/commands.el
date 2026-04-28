@@ -84,6 +84,18 @@ uses it to control how far to undo but our history is linear."
   "Kill N words backward (default 1)."
   (editor--kill-word (- (or n 1))))
 
+(defun kill-region (&optional _arg)
+  "Kill the active region."
+  (editor--kill-region))
+
+(defun copy-region-as-kill (&optional _arg)
+  "Save the active region to the kill ring without deleting it."
+  (editor--copy-region-as-kill))
+
+(defun kill-ring-save (&optional _arg)
+  "Save the active region to the kill ring without deleting it."
+  (editor--copy-region-as-kill))
+
 (defun yank (&optional _arg)
   "Reinsert the most recently killed text."
   (editor--yank))
@@ -91,6 +103,69 @@ uses it to control how far to undo but our history is linear."
 (defun yank-pop (&optional _arg)
   "Replace just-yanked text with the previous kill-ring entry."
   (editor--yank-pop))
+
+;; ---- Rectangles ----
+
+(defun delete-rectangle (&optional _arg)
+  "Delete the active rectangle without saving it."
+  (editor--delete-rectangle))
+
+(defun kill-rectangle (&optional _arg)
+  "Kill the active rectangle into the rectangle buffer."
+  (editor--kill-rectangle))
+
+(defun yank-rectangle (&optional _arg)
+  "Yank the most recently killed rectangle at point."
+  (editor--yank-rectangle))
+
+(defun open-rectangle (&optional _arg)
+  "Insert spaces in the active rectangle, shifting text right."
+  (editor--open-rectangle))
+
+(defun clear-rectangle (&optional _arg)
+  "Replace the active rectangle with spaces."
+  (editor--clear-rectangle))
+
+(defun string-rectangle (string &optional _arg)
+  "Replace the active rectangle with STRING on each line."
+  (interactive "sString rectangle")
+  (editor--string-rectangle string))
+
+;; ---- Search / replace ----
+
+(defun search-forward (string &optional _bound _noerror _count)
+  "Search forward for STRING."
+  (interactive "sSearch: ")
+  (editor--search-forward string))
+
+(defun search-backward (string &optional _bound _noerror _count)
+  "Search backward for STRING."
+  (interactive "sSearch backward: ")
+  (editor--search-backward string))
+
+(defun re-search-forward (regexp &optional _bound _noerror _count)
+  "Search forward for REGEXP."
+  (interactive "sRegexp search: ")
+  (editor--re-search-forward regexp))
+
+(defun re-search-backward (regexp &optional _bound _noerror _count)
+  "Search backward for REGEXP."
+  (interactive "sRegexp search backward: ")
+  (editor--re-search-backward regexp))
+
+(defun replace-match (replacement &optional _fixedcase _literal _string _subexp)
+  "Replace the most recent search match with REPLACEMENT."
+  (editor--replace-match replacement))
+
+(defun replace-string (from to &optional _delimited _start _end _backward)
+  "Replace literal FROM with TO from point to the end of the buffer."
+  (interactive "sReplace string: \nsReplace string with: ")
+  (editor--replace-string from to))
+
+(defun query-replace (from to &optional _delimited _start _end _backward)
+  "Query replace literal FROM with TO from point to the end of the buffer."
+  (interactive "sQuery replace: \nsQuery replace with: ")
+  (editor--query-replace from to))
 
 ;; ---- Case ----
 

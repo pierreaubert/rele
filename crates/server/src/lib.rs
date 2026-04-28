@@ -23,7 +23,7 @@ pub mod minibuffer;
 pub mod syntax;
 
 pub use cancel::CancellationFlag;
-pub use commands::{CommandArgs, CommandCategory, InteractiveSpec};
+pub use commands::{CommandArgs, CommandCategory, CommandPlan, InteractiveSpec};
 
 /// Built-in elisp command definitions shared by every client.
 ///
@@ -33,6 +33,10 @@ pub use commands::{CommandArgs, CommandCategory, InteractiveSpec};
 /// handler, so keeping one source file keeps TUI and GPUI in lockstep.
 /// Embedded at compile time via `include_str!`.
 pub const BUILTIN_COMMANDS_EL: &str = include_str!("../lisp/commands.el");
+/// Default startup forms shared by every frontend.
+pub const DEFAULT_INIT_EL: &str = include_str!("../lisp/default-init.el");
+/// Minimal built-in major mode for Rust source files.
+pub const RUST_MODE_EL: &str = include_str!("../lisp/modes/rust-mode.el");
 pub use document::kill_ring::KillRing;
 pub use document::{BufferId, BufferKind, DocumentBuffer, EditHistory, EditorCursor, StoredBuffer};
 pub use error::{ServerError, ServerResult};

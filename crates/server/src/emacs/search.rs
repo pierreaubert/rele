@@ -522,6 +522,47 @@ pub fn re_search(
     re_search_re(&re, doc, cursor, direction, bound, match_data)
 }
 
+/// Translate the Emacs regexp surface we need for editor search onto Rust `regex`.
+///
+/// This is intentionally a compatibility layer, not an Emacs regexp engine.
+/// It covers the common syntax differences (`\\(` groups, `\\|`, word
+/// boundaries, buffer anchors, syntax word classes) while leaving unsupported
+/// constructs to fail as normal regex compile errors.
+pub fn emacs_regex_to_rust(emacs: &str) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = emacs.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            match chars[i + 1] {
+                '(' => result.push('('),
+                ')' => result.push(')'),
+                '|' => result.push('|'),
+                '{' => result.push('{'),
+                '}' => result.push('}'),
+                'w' => result.push_str(r"[^\p{White_Space}\p{Punctuation}]"),
+                'b' | '<' | '>' => result.push_str(r"\b"),
+                '`' => result.push_str(r"\A"),
+                '\'' => result.push_str(r"\z"),
+                c => {
+                    result.push('\\');
+                    result.push(c);
+                }
+            }
+            i += 2;
+        } else {
+            match chars[i] {
+                '(' => result.push_str(r"\("),
+                ')' => result.push_str(r"\)"),
+                '|' => result.push_str(r"\|"),
+                c => result.push(c),
+            }
+            i += 1;
+        }
+    }
+    result
+}
+
 // ---- Replace ----
 
 pub fn replace_match(
@@ -752,6 +793,13 @@ mod tests {
     fn test_regexp_quote() {
         assert_eq!(regexp_quote("hello.world"), r"hello\.world");
         assert_eq!(regexp_quote("a+b*c"), r"a\+b\*c");
+    }
+
+    #[test]
+    fn test_emacs_regex_to_rust_group_alternation() {
+        let rust = emacs_regex_to_rust(r"\(foo\|bar\)");
+        assert_eq!(rust, "(foo|bar)");
+        assert!(Regex::new(&rust).unwrap().is_match("bar"));
     }
 
     #[test]

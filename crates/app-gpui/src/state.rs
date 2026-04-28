@@ -13,9 +13,20 @@ use crate::macros::{MacroState, RecordedAction};
 use crate::markdown::SourceMap;
 use crate::minibuffer::{MiniBufferPrompt, MiniBufferResult, MiniBufferState};
 
-use rele_server::{CancellationFlag, EditorCore, LispCommandDispatch, LispHost};
+use rele_server::emacs::search::MatchData;
 use rele_server::lsp::{LspBufferState, LspConfig, LspEvent, LspRegistry, position::uri_from_path};
+use rele_server::minibuffer::{PathCompletionKind, path_completion_candidates};
 use rele_server::syntax::{Highlighter, TreeSitterHighlighter, language_for_extension};
+use rele_server::{CancellationFlag, CommandPlan, EditorCore, LispCommandDispatch, LispHost};
+
+fn major_mode_for_kind(kind: &BufferKind) -> &'static str {
+    match kind {
+        BufferKind::Dired => "dired-mode",
+        BufferKind::BufferList => "Buffer-menu-mode",
+        BufferKind::Scratch => "lisp-interaction-mode",
+        BufferKind::File => "text-mode",
+    }
+}
 
 // ---- Emacs subsystem types ----
 
@@ -65,6 +76,12 @@ pub enum PendingMinibufferAction {
     RunCommand,
     /// Run a specific command with the typed string as its argument.
     RunCommandWithInput { name: String },
+    /// Run a command after collecting several string prompts in sequence.
+    RunCommandWithInputs {
+        name: String,
+        prompts: Vec<String>,
+        values: Vec<String>,
+    },
     /// YesNo confirmation for dired mark execution.
     DiredConfirmDelete,
 }
@@ -223,6 +240,8 @@ pub struct MdAppState {
     pub current_buffer_kind: BufferKind,
     /// Whether the current buffer is read-only.
     pub current_buffer_read_only: bool,
+    /// Explicit major mode set by elisp, when one has been loaded.
+    pub current_major_mode: Option<String>,
     /// Inactive buffers.
     pub stored_buffers: Vec<StoredBuffer>,
     /// Monotonic counter for generating new BufferIds.
@@ -243,6 +262,7 @@ pub struct MdAppState {
     pub replace_bar_visible: bool,
     pub recent_files: Vec<PathBuf>,
     pub kill_ring: KillRing,
+    pub search_match_data: MatchData,
     pub editing_block: Option<String>,
     pub editing_block_text: String,
     /// Tracks consecutive character insertion for undo coalescing.
@@ -320,8 +340,11 @@ impl MdAppState {
         let mut state = Self::new();
         state.current_buffer_name = name_from_path(&path);
         state.current_buffer_kind = BufferKind::File;
+        state.current_major_mode = None;
         state.document = DocumentBuffer::from_file(path, content);
         state.refresh_buffer_highlighter();
+        state.sync_lisp_core_from_state();
+        state.activate_mode_for_current_buffer_if_needed();
         state
     }
 
@@ -363,6 +386,7 @@ impl MdAppState {
             current_buffer_name: "*scratch*".to_string(),
             current_buffer_kind: BufferKind::Scratch,
             current_buffer_read_only: false,
+            current_major_mode: Some("lisp-interaction-mode".to_string()),
             stored_buffers: Vec::new(),
             next_buffer_id: 1,
             keymap_preset: KeymapPreset::Default,
@@ -380,6 +404,7 @@ impl MdAppState {
             replace_bar_visible: false,
             recent_files: Vec::new(),
             kill_ring: KillRing::new(),
+            search_match_data: MatchData::default(),
             editing_block: None,
             editing_block_text: String::new(),
             last_edit_was_char_insert: false,
@@ -423,10 +448,12 @@ impl MdAppState {
             current_buffer_name: self.current_buffer_name.clone(),
             current_buffer_kind: self.current_buffer_kind.clone(),
             current_buffer_read_only: self.current_buffer_read_only,
+            current_major_mode: self.current_major_mode.clone(),
             stored_buffers: self.stored_buffers.clone(),
             next_buffer_id: self.next_buffer_id,
             lsp_state: self.lsp_buffer_state.clone(),
             kill_ring: self.kill_ring.clone(),
+            search_match_data: self.search_match_data.clone(),
             scroll_line: self.editor_scroll_line,
             last_edit_was_char_insert: self.last_edit_was_char_insert,
             last_move_was_vertical: self.last_move_was_vertical,
@@ -445,6 +472,7 @@ impl MdAppState {
     fn sync_state_from_lisp_core(&mut self) {
         let before_buffer_id = self.current_buffer_id;
         let before_kind = self.current_buffer_kind.clone();
+        let before_major_mode = self.current_major_mode.clone();
         let before_doc_version = self.document.version();
         let before_path = self.document.file_path().cloned();
         let mut core = self.lisp_host.core_snapshot();
@@ -464,10 +492,12 @@ impl MdAppState {
         self.current_buffer_name = core.current_buffer_name;
         self.current_buffer_kind = core.current_buffer_kind;
         self.current_buffer_read_only = core.current_buffer_read_only;
+        self.current_major_mode = core.current_major_mode;
         self.stored_buffers = core.stored_buffers;
         self.next_buffer_id = core.next_buffer_id;
         self.lsp_buffer_state = core.lsp_state;
         self.kill_ring = core.kill_ring;
+        self.search_match_data = core.search_match_data;
         self.editor_scroll_line = core.scroll_line;
         self.last_edit_was_char_insert = core.last_edit_was_char_insert;
         self.last_move_was_vertical = core.last_move_was_vertical;
@@ -484,10 +514,12 @@ impl MdAppState {
 
         let buffer_changed =
             before_buffer_id != self.current_buffer_id || before_kind != self.current_buffer_kind;
+        let mode_changed = before_major_mode != self.current_major_mode;
         let doc_changed = before_doc_version != self.document.version();
         let path_changed = before_path != self.document.file_path().cloned();
+        let should_activate_mode = path_changed && self.current_buffer_kind == BufferKind::File;
 
-        if buffer_changed || path_changed {
+        if buffer_changed || path_changed || mode_changed {
             self.last_parsed_version = 0;
             self.refresh_buffer_highlighter();
         }
@@ -497,6 +529,9 @@ impl MdAppState {
             self.last_parsed_version = 0;
             self.notify_highlighter();
             self.lsp_did_change();
+        }
+        if should_activate_mode {
+            self.activate_mode_for_current_buffer_if_needed();
         }
 
         if keyboard_quit_requested {
@@ -531,6 +566,26 @@ impl MdAppState {
             log::error!("hook {name}: {e:?}");
         }
         self.sync_state_from_lisp_core();
+    }
+
+    fn activate_mode_for_current_buffer_if_needed(&mut self) {
+        let path = self.document.file_path().cloned();
+        if path.is_none() {
+            return;
+        }
+
+        self.sync_lisp_core_from_state();
+        let result = self.lisp_host.activate_mode_for_path(path.as_deref());
+        self.sync_state_from_lisp_core();
+
+        if let Err((idx, error)) = result {
+            log::error!("mode load failed at form {idx}: {error:?}");
+        }
+    }
+
+    pub fn command_completion_candidates(&self) -> Vec<String> {
+        self.lisp_host
+            .command_completion_candidates(self.commands.names())
     }
 
     /// Synchronize the server-owned elisp host and load built-in command defuns.
@@ -743,6 +798,7 @@ impl MdAppState {
             cursor: std::mem::replace(&mut self.cursor, incoming.cursor),
             kind: std::mem::replace(&mut self.current_buffer_kind, incoming.kind),
             read_only: std::mem::replace(&mut self.current_buffer_read_only, incoming.read_only),
+            major_mode: std::mem::replace(&mut self.current_major_mode, incoming.major_mode),
             scroll_line: std::mem::replace(&mut self.editor_scroll_line, incoming.scroll_line),
             last_edit_was_char_insert: std::mem::replace(
                 &mut self.last_edit_was_char_insert,
@@ -897,6 +953,7 @@ impl MdAppState {
             self.switch_to_buffer_id(id);
             self.refresh_buffer_highlighter();
             self.lsp_did_open();
+            self.activate_mode_for_current_buffer_if_needed();
             self.run_hook_logged("find-file-hook");
             return id;
         }
@@ -904,6 +961,7 @@ impl MdAppState {
         self.switch_to_buffer_id(id);
         self.refresh_buffer_highlighter();
         self.lsp_did_open();
+        self.activate_mode_for_current_buffer_if_needed();
         self.run_hook_logged("find-file-hook");
         id
     }
@@ -920,6 +978,35 @@ impl MdAppState {
     ) {
         self.minibuffer.open(prompt, candidates);
         self.pending_minibuffer_action = Some(action);
+        self.minibuffer_refresh_completions();
+    }
+
+    pub fn minibuffer_refresh_completions(&mut self) {
+        let Some(prompt) = self.minibuffer.prompt.clone() else {
+            return;
+        };
+        let input = self.minibuffer.input.clone();
+        let candidates = match prompt {
+            MiniBufferPrompt::Command => Some(self.command_completion_candidates()),
+            MiniBufferPrompt::SwitchBuffer | MiniBufferPrompt::KillBuffer => {
+                Some(self.buffer_names())
+            }
+            MiniBufferPrompt::FindFile { base_dir } => Some(path_completion_candidates(
+                &base_dir,
+                &input,
+                PathCompletionKind::FilesAndDirectories,
+            )),
+            _ => None,
+        };
+        if let Some(candidates) = candidates {
+            self.minibuffer.set_candidates(candidates);
+        }
+    }
+
+    pub fn minibuffer_complete(&mut self) {
+        self.minibuffer_refresh_completions();
+        self.minibuffer.complete();
+        self.minibuffer_refresh_completions();
     }
 
     /// Close the mini-buffer without dispatching.
@@ -973,6 +1060,30 @@ impl MdAppState {
                 MiniBufferResult::Submitted(input),
             ) => {
                 self.run_command_with_string(&name, input);
+            }
+            (
+                PendingMinibufferAction::RunCommandWithInputs {
+                    name,
+                    mut prompts,
+                    mut values,
+                },
+                MiniBufferResult::Submitted(input),
+            ) => {
+                values.push(input);
+                if prompts.is_empty() {
+                    self.run_command_with_strings(&name, values);
+                } else {
+                    let prompt = prompts.remove(0);
+                    self.minibuffer_open(
+                        MiniBufferPrompt::FreeText { label: prompt },
+                        Vec::new(),
+                        PendingMinibufferAction::RunCommandWithInputs {
+                            name,
+                            prompts,
+                            values,
+                        },
+                    );
+                }
             }
             (
                 PendingMinibufferAction::RunCommandWithInput { name },
@@ -1035,7 +1146,8 @@ impl MdAppState {
     /// Open a find-file prompt at the current working directory.
     pub fn minibuffer_start_find_file(&mut self) {
         let base_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-        let candidates = list_directory_entries(&base_dir);
+        let candidates =
+            path_completion_candidates(&base_dir, "", PathCompletionKind::FilesAndDirectories);
         self.minibuffer_open(
             MiniBufferPrompt::FindFile { base_dir },
             candidates,
@@ -1045,7 +1157,7 @@ impl MdAppState {
 
     /// Open an M-x command prompt with all registry commands as candidates.
     pub fn minibuffer_start_command(&mut self) {
-        let candidates: Vec<String> = self.commands.names().map(|s| s.to_string()).collect();
+        let candidates = self.command_completion_candidates();
         self.minibuffer_open(
             MiniBufferPrompt::Command,
             candidates,
@@ -1108,6 +1220,7 @@ impl MdAppState {
             cursor: EditorCursor::new(),
             kind: BufferKind::Dired,
             read_only: true,
+            major_mode: Some(major_mode_for_kind(&BufferKind::Dired).to_string()),
             scroll_line: 0,
             last_edit_was_char_insert: false,
             last_move_was_vertical: false,
@@ -1296,32 +1409,12 @@ impl MdAppState {
     /// Run a command by name. If the command is interactive (needs input),
     /// opens the mini-buffer and defers execution until submit.
     pub fn run_command_by_name(&mut self, name: &str) {
-        // First check whether an elisp defun owns the name with an
-        // `(interactive "CODE...")` form — if so, that spec wins over
-        // the Rust registry entry (if any). This lets `~/.gpui-md.el`
-        // users declare prompts the way Emacs does.
-        if self.lisp_host.is_user_defined_command(name)
-            && let Some(spec) =
-                rele_elisp::interactive_spec_for(name, &self.lisp_host.interpreter().state)
-            && let Some(interactive) = interactive_from_spec(&spec)
-        {
-            self.dispatch_interactive(name, interactive);
-            return;
+        let rust_interactive = self.commands.get(name).map(|c| c.interactive.clone());
+        match self.lisp_host.plan_command(name, rust_interactive) {
+            CommandPlan::Run => self.run_command_direct(name, CommandArgs::default()),
+            CommandPlan::Prompt(interactive) => self.dispatch_interactive(name, interactive),
+            CommandPlan::Missing => {}
         }
-        // A user-authored elisp defun with no Rust registry entry
-        // (and no usable interactive spec) still needs to be runnable.
-        // When no Rust command owns the name but an elisp function
-        // cell does, dispatch through the interpreter directly.
-        let interactive = match self.commands.get(name) {
-            Some(c) => c.interactive.clone(),
-            None => {
-                if self.lisp_host.is_user_defined_command(name) {
-                    self.run_command_direct(name, CommandArgs::default());
-                }
-                return;
-            }
-        };
-        self.dispatch_interactive(name, interactive);
     }
 
     fn dispatch_interactive(&mut self, name: &str, interactive: InteractiveSpec) {
@@ -1331,7 +1424,11 @@ impl MdAppState {
             }
             InteractiveSpec::File { prompt: _ } => {
                 let base_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-                let candidates = list_directory_entries(&base_dir);
+                let candidates = path_completion_candidates(
+                    &base_dir,
+                    "",
+                    PathCompletionKind::FilesAndDirectories,
+                );
                 self.minibuffer_open(
                     MiniBufferPrompt::FindFile { base_dir },
                     candidates,
@@ -1356,6 +1453,22 @@ impl MdAppState {
                     Vec::new(),
                     PendingMinibufferAction::RunCommandWithInput {
                         name: name.to_string(),
+                    },
+                );
+            }
+            InteractiveSpec::StringList { mut prompts } => {
+                if prompts.is_empty() {
+                    self.run_command_direct(name, CommandArgs::default());
+                    return;
+                }
+                let prompt = prompts.remove(0);
+                self.minibuffer_open(
+                    MiniBufferPrompt::FreeText { label: prompt },
+                    Vec::new(),
+                    PendingMinibufferAction::RunCommandWithInputs {
+                        name: name.to_string(),
+                        prompts,
+                        values: Vec::new(),
                     },
                 );
             }
@@ -1431,6 +1544,11 @@ impl MdAppState {
     /// Run a command with a string argument obtained from the mini-buffer.
     pub fn run_command_with_string(&mut self, name: &str, s: String) {
         let args = CommandArgs::default().with_string(s);
+        self.run_command_direct(name, args);
+    }
+
+    pub fn run_command_with_strings(&mut self, name: &str, strings: Vec<String>) {
+        let args = CommandArgs::default().with_strings(strings);
         self.run_command_direct(name, args);
     }
 
@@ -3623,48 +3741,4 @@ impl Default for MdAppState {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// List entries in a directory for find-file completion.
-/// Directories are suffixed with "/" to make them visually distinct.
-#[allow(clippy::disallowed_methods)] // TODO(perf): make list_directory_entries async
-/// Translate an Emacs `(interactive "CODE...")` spec string into the
-/// internal `InteractiveSpec` enum that drives our minibuffer
-/// dispatcher.
-///
-/// Returns `None` for unsupported codes so the caller can fall back
-/// to the Rust registry's interactive setting. The first character
-/// of `spec` is the code letter; everything after it is the prompt.
-fn interactive_from_spec(spec: &str) -> Option<InteractiveSpec> {
-    let mut chars = spec.chars();
-    let code = chars.next()?;
-    let prompt: String = chars.collect();
-    match code {
-        // `p` / `P` → prefix arg only, no minibuffer prompt.
-        'p' | 'P' => Some(InteractiveSpec::None),
-        's' => Some(InteractiveSpec::String { prompt }),
-        'f' | 'F' => Some(InteractiveSpec::File { prompt }),
-        'b' | 'B' => Some(InteractiveSpec::Buffer { prompt }),
-        // `n` reads a number; closest match in our spec set is a
-        // free-text string the command can parse itself.
-        'n' => Some(InteractiveSpec::String { prompt }),
-        _ => None,
-    }
-}
-
-fn list_directory_entries(dir: &Path) -> Vec<String> {
-    let mut out = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                let mut s = name.to_string();
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    s.push('/');
-                }
-                out.push(s);
-            }
-        }
-    }
-    out.sort();
-    out
 }

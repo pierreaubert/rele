@@ -1137,6 +1137,7 @@ pub fn make_stdlib_interp() -> Interpreter {
             "(lambda () \
                (setq major-mode '{mode_name}) \
                (setq mode-name \"{mode_name}\") \
+               (editor--set-current-buffer-major-mode '{mode_name}) \
                (run-mode-hooks '{hook_name}))"
         );
         let id = crate::obarray::intern(mode_name);
