@@ -96,8 +96,8 @@ fn test_eval_to_value_self_evaluating() {
     assert_eq!(interp.eval_value(Value::nil()).unwrap(), Value::nil());
     assert_eq!(interp.eval_value(Value::t()).unwrap(), Value::t());
     assert_eq!(
-        interp.eval_value(Value::float(3.14)).unwrap(),
-        Value::float(3.14)
+        interp.eval_value(Value::float(3.25)).unwrap(),
+        Value::float(3.25)
     );
 }
 #[test]

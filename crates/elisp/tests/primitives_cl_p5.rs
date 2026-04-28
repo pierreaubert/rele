@@ -185,9 +185,9 @@ fn test_cl_typep_basic_number() {
 
 #[test]
 fn test_cl_typep_basic_float() {
-    // (cl-typep 3.14 'float)
+    // (cl-typep 3.25 'float)
     let args = LispObject::cons(
-        LispObject::float(3.14),
+        LispObject::float(3.25),
         LispObject::cons(LispObject::symbol("float"), LispObject::nil()),
     );
     let result = primitives_cl::prim_cl_typep(&args).unwrap();

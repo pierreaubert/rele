@@ -77,13 +77,14 @@ use editor::{
     eval_goto_char, eval_insert, eval_insert_directory, eval_keyboard_quit, eval_kill_line,
     eval_kill_rectangle, eval_kill_region, eval_kill_word, eval_move_beginning_of_line,
     eval_move_end_of_line, eval_next_buffer, eval_open_rectangle, eval_point, eval_point_max,
-    eval_point_min, eval_previous_buffer, eval_query_replace, eval_re_search_backward,
-    eval_re_search_forward, eval_redo_primitive, eval_replace_match, eval_replace_string,
-    eval_save_buffer, eval_save_current_buffer, eval_save_excursion, eval_search_backward,
-    eval_search_forward, eval_set_buffer_bridge, eval_set_current_buffer_major_mode, eval_set_mark,
-    eval_string_rectangle, eval_toggle_line_numbers, eval_toggle_preview,
-    eval_toggle_preview_line_numbers, eval_transpose_chars, eval_transpose_words,
-    eval_undo_primitive, eval_upcase_word, eval_yank, eval_yank_pop, eval_yank_rectangle,
+    eval_point_min, eval_previous_buffer, eval_query_replace, eval_query_replace_regexp,
+    eval_re_search_backward, eval_re_search_forward, eval_redo_primitive, eval_replace_match,
+    eval_replace_regexp, eval_replace_string, eval_save_buffer, eval_save_current_buffer,
+    eval_save_excursion, eval_search_backward, eval_search_forward, eval_set_buffer_bridge,
+    eval_set_current_buffer_major_mode, eval_set_mark, eval_string_rectangle,
+    eval_toggle_line_numbers, eval_toggle_preview, eval_toggle_preview_line_numbers,
+    eval_transpose_chars, eval_transpose_words, eval_undo_primitive, eval_upcase_word, eval_yank,
+    eval_yank_pop, eval_yank_rectangle,
 };
 use error_forms::{
     eval_catch, eval_condition_case, eval_error_fn, eval_signal, eval_throw, eval_unwind_protect,
@@ -1724,6 +1725,12 @@ pub(super) fn eval_inner(
                 }
                 "editor--query-replace" => {
                     eval_query_replace(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "editor--replace-regexp" => {
+                    eval_replace_regexp(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "editor--query-replace-regexp" => {
+                    eval_query_replace_regexp(obj_to_value(cdr), env, editor, macros, state)
                 }
                 "editor--upcase-word" => eval_upcase_word(editor),
                 "editor--downcase-word" => eval_downcase_word(editor),

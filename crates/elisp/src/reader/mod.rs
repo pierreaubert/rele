@@ -1473,7 +1473,7 @@ mod tests {
 
     #[test]
     fn test_read_float() {
-        assert_eq!(read("3.14").unwrap(), LispObject::float(3.14));
+        assert_eq!(read("3.25").unwrap(), LispObject::float(3.25));
         assert_eq!(read("-1.5").unwrap(), LispObject::float(-1.5));
         assert_eq!(read("1e10").unwrap(), LispObject::float(1e10));
         assert_eq!(read("1.5e-3").unwrap(), LispObject::float(1.5e-3));

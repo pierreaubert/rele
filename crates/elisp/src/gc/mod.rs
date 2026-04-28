@@ -1654,7 +1654,7 @@ mod tests {
         assert!(heap.root_value(Value::nil()).is_none());
         assert!(heap.root_value(Value::t()).is_none());
         assert!(heap.root_value(Value::fixnum(42)).is_none());
-        assert!(heap.root_value(Value::float(3.14)).is_none());
+        assert!(heap.root_value(Value::float(3.25)).is_none());
         assert!(heap.root_value(Value::symbol_id(0)).is_none());
         // Root stack stays empty because nothing was pushed.
         assert!(heap.root_stack.is_empty());

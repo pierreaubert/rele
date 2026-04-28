@@ -252,6 +252,12 @@ pub trait EditorCallbacks: Send + Sync {
     fn query_replace(&mut self, _from: &str, _to: &str) -> usize {
         0
     }
+    fn replace_regexp(&mut self, _pattern: &str, _replacement: &str) -> usize {
+        0
+    }
+    fn query_replace_regexp(&mut self, _pattern: &str, _replacement: &str) -> usize {
+        0
+    }
 
     // ---- Case ----
     fn upcase_word(&mut self) {}

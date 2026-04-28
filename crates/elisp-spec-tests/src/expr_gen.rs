@@ -172,6 +172,7 @@ pub fn lisp_to_json_val(obj: &LispObject) -> JsonVal {
         }
         LispObject::BytecodeFn(_) => JsonVal::string("<bytecode>"),
         LispObject::HashTable(_) => JsonVal::string("<hash-table>"),
+        LispObject::BigInt(_) => JsonVal::string("<bigint>"),
     }
 }
 

@@ -75,11 +75,18 @@ pub enum PendingMiniBufferAction {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryReplaceKind {
+    Literal,
+    Regexp,
+}
+
 #[derive(Debug, Clone)]
 pub struct QueryReplaceState {
     pub from: String,
     pub to: String,
     pub replacements: usize,
+    pub kind: QueryReplaceKind,
 }
 
 /// Application state for the TUI client.
@@ -933,10 +940,14 @@ impl TuiAppState {
     }
 
     fn dispatch_multi_string_command(&mut self, name: &str, values: Vec<String>) {
-        if name == "query-replace" && values.len() >= 2 {
-            self.query_replace_start(values[0].clone(), values[1].clone());
-        } else {
-            self.run_command_with_strings(name, values);
+        match name {
+            "query-replace" if values.len() >= 2 => {
+                self.query_replace_start(values[0].clone(), values[1].clone());
+            }
+            "query-replace-regexp" if values.len() >= 2 => {
+                self.query_replace_regexp_start(values[0].clone(), values[1].clone());
+            }
+            _ => self.run_command_with_strings(name, values),
         }
     }
 
@@ -1103,11 +1114,27 @@ impl TuiAppState {
         self.mutate_lisp_core(|core| core.search_backward(needle).is_some())
     }
 
+    pub fn search_forward_regexp(&mut self, pattern: &str) -> bool {
+        self.mutate_lisp_core(|core| core.re_search_forward(pattern).is_some())
+    }
+
     pub fn replace_current_match(&mut self, replacement: &str) -> bool {
-        self.mutate_lisp_core(|core| core.replace_match(replacement))
+        self.mutate_lisp_core(|core| core.replace_match_literal(replacement))
+    }
+
+    pub fn replace_current_regexp_match(&mut self, replacement: &str) -> bool {
+        self.mutate_lisp_core(|core| core.replace_match_regexp(replacement))
     }
 
     pub fn query_replace_start(&mut self, from: String, to: String) {
+        self.query_replace_start_with_kind(from, to, QueryReplaceKind::Literal);
+    }
+
+    pub fn query_replace_regexp_start(&mut self, from: String, to: String) {
+        self.query_replace_start_with_kind(from, to, QueryReplaceKind::Regexp);
+    }
+
+    fn query_replace_start_with_kind(&mut self, from: String, to: String, kind: QueryReplaceKind) {
         if from.is_empty() {
             self.message = Some("Cannot query replace empty string".to_string());
             return;
@@ -1116,6 +1143,7 @@ impl TuiAppState {
             from,
             to,
             replacements: 0,
+            kind,
         });
         self.query_replace_find_next();
     }
@@ -1124,7 +1152,7 @@ impl TuiAppState {
         let Some(mut query) = self.query_replace.take() else {
             return;
         };
-        if self.replace_current_match(&query.to) {
+        if self.query_replace_current_match(&query) {
             query.replacements += 1;
         }
         if finish {
@@ -1151,11 +1179,11 @@ impl TuiAppState {
         };
         let mut replacements = query.replacements;
         loop {
-            if !self.replace_current_match(&query.to) {
+            if !self.query_replace_current_match(&query) {
                 break;
             }
             replacements += 1;
-            if !self.search_forward_literal(&query.from) {
+            if !self.query_replace_search_forward(&query) {
                 break;
             }
         }
@@ -1174,17 +1202,45 @@ impl TuiAppState {
         let Some(query) = self.query_replace.as_ref() else {
             return;
         };
-        let from = query.from.clone();
-        let to = query.to.clone();
-        let replacements = query.replacements;
-        if self.search_forward_literal(&from) {
-            self.message = Some(format!("Query replace {from:?} with {to:?}: y n ! . q"));
-        } else {
-            self.query_replace = None;
+        let query = query.clone();
+        if self.query_replace_search_forward(&query) {
+            let label = match query.kind {
+                QueryReplaceKind::Literal => "Query replace",
+                QueryReplaceKind::Regexp => "Query replace regexp",
+            };
             self.message = Some(format!(
-                "Replaced {replacements} occurrence{}",
-                plural(replacements)
+                "{label} {:?} with {:?}: y n ! . q",
+                query.from, query.to
             ));
+        } else {
+            let invalid_regexp = query.kind == QueryReplaceKind::Regexp
+                && self
+                    .message
+                    .as_deref()
+                    .is_some_and(|message| message.starts_with("Invalid regexp:"));
+            self.query_replace = None;
+            if invalid_regexp {
+                return;
+            }
+            self.message = Some(format!(
+                "Replaced {} occurrence{}",
+                query.replacements,
+                plural(query.replacements)
+            ));
+        }
+    }
+
+    fn query_replace_search_forward(&mut self, query: &QueryReplaceState) -> bool {
+        match query.kind {
+            QueryReplaceKind::Literal => self.search_forward_literal(&query.from),
+            QueryReplaceKind::Regexp => self.search_forward_regexp(&query.from),
+        }
+    }
+
+    fn query_replace_current_match(&mut self, query: &QueryReplaceState) -> bool {
+        match query.kind {
+            QueryReplaceKind::Literal => self.replace_current_match(&query.to),
+            QueryReplaceKind::Regexp => self.replace_current_regexp_match(&query.to),
         }
     }
 

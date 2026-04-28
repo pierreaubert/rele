@@ -937,4 +937,31 @@ mod tests {
         assert!(state.query_replace.is_none());
         assert_eq!(state.document.text(), "baz bar foo");
     }
+
+    #[test]
+    fn query_replace_regexp_expands_captures() {
+        let mut state = TuiAppState::new();
+        state.insert_text("foo1 bar2");
+        state.cursor.position = 0;
+        state.install_elisp_editor_callbacks();
+
+        state.query_replace_regexp_start(
+            "\\([a-z]+\\)\\([0-9]\\)".to_string(),
+            "\\2-\\1".to_string(),
+        );
+
+        assert!(state.query_replace.is_some());
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE),
+        );
+
+        assert!(state.query_replace.is_none());
+        assert_eq!(state.document.text(), "1-foo 2-bar");
+    }
 }

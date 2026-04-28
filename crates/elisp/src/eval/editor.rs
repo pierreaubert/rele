@@ -663,6 +663,36 @@ pub(super) fn eval_query_replace(
     Ok(obj_to_value(LispObject::integer(count as i64)))
 }
 
+pub(super) fn eval_replace_regexp(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let (pattern, replacement) = eval_two_string_args(args, env, editor, macros, state)?;
+    let count = editor
+        .write()
+        .as_mut()
+        .map_or(0, |cb| cb.replace_regexp(&pattern, &replacement));
+    Ok(obj_to_value(LispObject::integer(count as i64)))
+}
+
+pub(super) fn eval_query_replace_regexp(
+    args: Value,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    let (pattern, replacement) = eval_two_string_args(args, env, editor, macros, state)?;
+    let count = editor
+        .write()
+        .as_mut()
+        .map_or(0, |cb| cb.query_replace_regexp(&pattern, &replacement));
+    Ok(obj_to_value(LispObject::integer(count as i64)))
+}
+
 // ---- Case ----
 
 pub(super) fn eval_upcase_word(

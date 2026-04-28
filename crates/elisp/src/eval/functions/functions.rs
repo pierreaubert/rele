@@ -823,7 +823,7 @@ fn rest_param_name(params: &LispObject) -> Option<crate::obarray::SymbolId> {
 
 fn only_rest_params(params: &LispObject) -> bool {
     let cur = params.clone();
-    while let Some((param, rest)) = cur.destructure_cons() {
+    if let Some((param, rest)) = cur.destructure_cons() {
         if param.as_symbol().as_deref() == Some("&rest") {
             return rest.rest().map(|tail| tail.is_nil()).unwrap_or(true);
         }

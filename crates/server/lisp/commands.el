@@ -167,6 +167,16 @@ uses it to control how far to undo but our history is linear."
   (interactive "sQuery replace: \nsQuery replace with: ")
   (editor--query-replace from to))
 
+(defun replace-regexp (regexp to &optional _delimited _start _end _backward)
+  "Replace matches for REGEXP with TO from point to the end of the buffer."
+  (interactive "sReplace regexp: \nsReplace regexp with: ")
+  (editor--replace-regexp regexp to))
+
+(defun query-replace-regexp (regexp to &optional _delimited _start _end _backward)
+  "Query replace matches for REGEXP with TO from point to the end of the buffer."
+  (interactive "sQuery replace regexp: \nsQuery replace regexp with: ")
+  (editor--query-replace-regexp regexp to))
+
 ;; ---- Case ----
 
 (defun upcase-word (&optional _n)

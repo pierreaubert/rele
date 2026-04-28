@@ -665,7 +665,7 @@ mod tests {
 
     #[test]
     fn float_roundtrip_normal() {
-        for &f in &[0.0_f64, 1.5, -3.14, 1e100, -1e-100] {
+        for &f in &[0.0_f64, 1.5, -3.25, 1e100, -1e-100] {
             let v = Value::float(f);
             assert!(v.is_float(), "expected float for {f}");
             assert!(!v.is_fixnum());
@@ -705,7 +705,7 @@ mod tests {
         assert!(!Value::fixnum(1).lisp_eq(Value::fixnum(2)));
         assert!(!Value::nil().lisp_eq(Value::t()));
         assert!(!Value::fixnum(0).lisp_eq(Value::nil()));
-        assert!(Value::float(3.14).lisp_eq(Value::float(3.14)));
+        assert!(Value::float(3.25).lisp_eq(Value::float(3.25)));
     }
 
     #[test]
@@ -792,8 +792,8 @@ mod tests {
         assert_eq!(format!("{:?}", Value::fixnum(-1)), "-1");
         assert_eq!(format!("{:?}", Value::character('A')), "?A");
         // Float should display the number
-        let s = format!("{:?}", Value::float(3.14));
-        assert!(s.contains("3.14"), "got: {s}");
+        let s = format!("{:?}", Value::float(3.25));
+        assert!(s.contains("3.25"), "got: {s}");
     }
 
     #[test]
@@ -873,7 +873,7 @@ mod tests {
 
     #[test]
     fn negate_float() {
-        assert_eq!(Value::float(3.14).negate().unwrap().as_float(), Some(-3.14));
+        assert_eq!(Value::float(3.25).negate().unwrap().as_float(), Some(-3.25));
     }
 
     #[test]
@@ -1279,7 +1279,7 @@ mod bridge_tests {
 
     #[test]
     fn bridge_float_roundtrip() {
-        for f in [0.0, 1.5, -3.14, f64::INFINITY] {
+        for f in [0.0, 1.5, -3.25, f64::INFINITY] {
             let v = Value::from_lisp_object(&LispObject::Float(f));
             assert!(v.is_float());
             assert_eq!(v.to_lisp_object(), LispObject::Float(f));

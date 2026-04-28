@@ -323,7 +323,7 @@ fn test_regression_normal_forms_unaffected() {
     assert_eq!(read("nil").unwrap(), LispObject::nil());
     assert_eq!(read("t").unwrap(), LispObject::t());
     assert_eq!(read("42").unwrap(), LispObject::integer(42));
-    assert_eq!(read("3.14").unwrap(), LispObject::float(3.14));
+    assert_eq!(read("3.25").unwrap(), LispObject::float(3.25));
     assert_eq!(read("\"hello\"").unwrap(), LispObject::string("hello"));
     assert_eq!(read("foo").unwrap(), LispObject::symbol("foo"));
     let list = read("(1 2 3)").unwrap();

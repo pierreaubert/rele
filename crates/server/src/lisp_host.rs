@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
+use regex::Regex;
 use rele_elisp::{EditorCallbacks, Interpreter, LispObject, add_primitives};
 
 use crate::document::buffer_list::name_from_path;
@@ -39,6 +40,12 @@ pub struct LoadReport {
     pub parsed_forms: usize,
     pub evaluated_forms: usize,
     pub errors: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReplacementMode {
+    Literal,
+    Regexp,
 }
 
 /// Shared editor state exposed to elisp.
@@ -655,25 +662,15 @@ impl EditorCore {
     }
 
     pub fn replace_match(&mut self, replacement: &str) -> bool {
-        self.last_edit_was_char_insert = false;
-        self.last_move_was_vertical = false;
-        self.history
-            .push_undo(self.document.snapshot(), self.cursor.position);
-        let replaced = search::replace_match(
-            &mut self.document,
-            &mut self.cursor,
-            &self.search_match_data,
-            replacement,
-            0,
-        );
-        if replaced {
-            self.cursor.clear_selection();
-            self.update_preferred_column();
-            self.message = Some("Replaced".to_string());
-        } else {
-            self.message = Some("No match data".to_string());
-        }
-        replaced
+        self.replace_current_match(replacement, ReplacementMode::Regexp)
+    }
+
+    pub fn replace_match_literal(&mut self, replacement: &str) -> bool {
+        self.replace_current_match(replacement, ReplacementMode::Literal)
+    }
+
+    pub fn replace_match_regexp(&mut self, replacement: &str) -> bool {
+        self.replace_current_match(replacement, ReplacementMode::Regexp)
     }
 
     pub fn replace_string(&mut self, from: &str, to: &str) -> usize {
@@ -682,6 +679,54 @@ impl EditorCore {
 
     pub fn query_replace(&mut self, from: &str, to: &str) -> usize {
         self.replace_literal_from_point(from, to, "Query replaced")
+    }
+
+    pub fn replace_regexp(&mut self, pattern: &str, replacement: &str) -> usize {
+        self.replace_regexp_from_point(pattern, replacement, "Replaced")
+    }
+
+    pub fn query_replace_regexp(&mut self, pattern: &str, replacement: &str) -> usize {
+        self.replace_regexp_from_point(pattern, replacement, "Query replaced")
+    }
+
+    fn replace_current_match(&mut self, replacement: &str, mode: ReplacementMode) -> bool {
+        let Some((match_start, match_end)) =
+            self.search_match_data.groups.first().copied().flatten()
+        else {
+            self.message = Some("No match data".to_string());
+            return false;
+        };
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        let expanded = match mode {
+            ReplacementMode::Literal => replacement.to_string(),
+            ReplacementMode::Regexp => {
+                expand_match_replacement(replacement, &self.document, &self.search_match_data)
+            }
+        };
+        let len_before = self.document.len_chars();
+        self.history
+            .push_undo(self.document.snapshot(), self.cursor.position);
+        let replaced = search::replace_match(
+            &mut self.document,
+            &mut self.cursor,
+            &self.search_match_data,
+            &expanded,
+            0,
+        );
+        if replaced {
+            if match_start == match_end && match_end < len_before {
+                let replacement_len = expanded.chars().count();
+                self.cursor.position =
+                    (match_start + replacement_len + 1).min(self.document.len_chars());
+            }
+            self.cursor.clear_selection();
+            self.update_preferred_column();
+            self.message = Some("Replaced".to_string());
+        } else {
+            self.message = Some("No match data".to_string());
+        }
+        replaced
     }
 
     pub fn upcase_word(&mut self) {
@@ -1299,8 +1344,12 @@ impl EditorCore {
         self.last_move_was_vertical = false;
         self.cursor.clear_selection();
         let rust_pattern = search::emacs_regex_to_rust(pattern);
-        let result = search::re_search(
-            &rust_pattern,
+        let Ok(re) = Regex::new(&rust_pattern) else {
+            self.message = Some(format!("Invalid regexp: {pattern}"));
+            return None;
+        };
+        let result = search::re_search_re(
+            &re,
             &self.document,
             &mut self.cursor,
             direction,
@@ -1355,10 +1404,111 @@ impl EditorCore {
         self.message = Some(format!("{verb} {count} occurrence{}", plural(count)));
         count
     }
+
+    fn replace_regexp_from_point(&mut self, pattern: &str, replacement: &str, verb: &str) -> usize {
+        let rust_pattern = search::emacs_regex_to_rust(pattern);
+        let Ok(re) = Regex::new(&rust_pattern) else {
+            self.message = Some(format!("Invalid regexp: {pattern}"));
+            return 0;
+        };
+
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        let snapshot = self.document.snapshot();
+        let undo_cursor = self.cursor.position;
+        let mut cursor = self.cursor;
+        let mut match_data = MatchData::default();
+        let mut count = 0;
+
+        while search::re_search_re(
+            &re,
+            &self.document,
+            &mut cursor,
+            SearchDirection::Forward,
+            None,
+            &mut match_data,
+        )
+        .is_some()
+        {
+            let Some((match_start, match_end)) = match_data.groups.first().copied().flatten()
+            else {
+                break;
+            };
+            let len_before = self.document.len_chars();
+            let expanded = expand_match_replacement(replacement, &self.document, &match_data);
+            if count == 0 {
+                self.history.push_undo(snapshot.clone(), undo_cursor);
+            }
+            if !search::replace_match(&mut self.document, &mut cursor, &match_data, &expanded, 0) {
+                break;
+            }
+            count += 1;
+
+            if match_start == match_end {
+                if match_end >= len_before {
+                    break;
+                }
+                let replacement_len = expanded.chars().count();
+                cursor.position =
+                    (match_start + replacement_len + 1).min(self.document.len_chars());
+            }
+        }
+
+        self.cursor = cursor;
+        self.search_match_data = match_data;
+        self.cursor.clear_selection();
+        self.update_preferred_column();
+        self.message = Some(format!("{verb} {count} occurrence{}", plural(count)));
+        count
+    }
 }
 
 fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
+}
+
+fn expand_match_replacement(
+    replacement: &str,
+    doc: &DocumentBuffer,
+    match_data: &MatchData,
+) -> String {
+    let mut out = String::new();
+    let mut chars = replacement.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('&') => {
+                if let Some(value) = match_data.match_string(0, doc) {
+                    out.push_str(&value);
+                }
+            }
+            Some(group @ '0'..='9') => {
+                let index = match group {
+                    '0' => 0,
+                    '1' => 1,
+                    '2' => 2,
+                    '3' => 3,
+                    '4' => 4,
+                    '5' => 5,
+                    '6' => 6,
+                    '7' => 7,
+                    '8' => 8,
+                    '9' => 9,
+                    _ => unreachable!("group is constrained by the match arm"),
+                };
+                if let Some(value) = match_data.match_string(index, doc) {
+                    out.push_str(&value);
+                }
+            }
+            Some('\\') => out.push('\\'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 fn list_obj(items: Vec<LispObject>) -> LispObject {
@@ -1536,6 +1686,14 @@ impl EditorCallbacks for ServerEditorCallbacks {
 
     fn query_replace(&mut self, from: &str, to: &str) -> usize {
         self.core.lock().query_replace(from, to)
+    }
+
+    fn replace_regexp(&mut self, pattern: &str, replacement: &str) -> usize {
+        self.core.lock().replace_regexp(pattern, replacement)
+    }
+
+    fn query_replace_regexp(&mut self, pattern: &str, replacement: &str) -> usize {
+        self.core.lock().query_replace_regexp(pattern, replacement)
     }
 
     fn upcase_word(&mut self) {
@@ -2266,6 +2424,46 @@ mod tests {
         .expect("replace-string dispatch");
 
         assert_eq!(host.core.lock().document.text(), "1 two 1 two");
+    }
+
+    #[test]
+    fn replace_regexp_expands_capture_references() {
+        let host = LispHost::new(EditorCore::new());
+        host.load_builtin_commands().expect("builtin commands load");
+        host.core.lock().insert_text("abc-123 def-456");
+        host.core.lock().cursor.position = 0;
+
+        host.run_command(
+            "replace-regexp",
+            &CommandArgs::default().with_strings(vec![
+                "\\([a-z]+\\)-\\([0-9]+\\)".to_string(),
+                "\\2/\\1".to_string(),
+            ]),
+        )
+        .expect("replace-regexp dispatch");
+
+        assert_eq!(host.core.lock().document.text(), "123/abc 456/def");
+    }
+
+    #[test]
+    fn replace_match_expands_recent_regexp_match() {
+        let host = LispHost::new(EditorCore::new());
+        host.load_builtin_commands().expect("builtin commands load");
+        host.core.lock().insert_text("alpha beta");
+        host.core.lock().cursor.position = 0;
+
+        host.run_command(
+            "re-search-forward",
+            &CommandArgs::default().with_string("\\([a-z]+\\)".to_string()),
+        )
+        .expect("re-search-forward dispatch");
+        host.run_command(
+            "replace-match",
+            &CommandArgs::default().with_string("\\1-\\&".to_string()),
+        )
+        .expect("replace-match dispatch");
+
+        assert_eq!(host.core.lock().document.text(), "alpha-alpha beta");
     }
 
     #[test]
