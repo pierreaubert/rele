@@ -81,9 +81,10 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "insert-buffer-substring"
         | "insert-buffer-substring-no-properties" => Ok(LispObject::nil()),
         "window-system" | "redisplay" | "force-mode-line-update" => Ok(LispObject::nil()),
-        "easy-menu-do-define" | "tool-bar-local-item" | "tool-bar-local-item-from-menu" => {
-            Ok(LispObject::nil())
-        }
+        // `easy-menu-do-define` is now a stateful primitive that
+        // populates the menu symbol's value cell — see
+        // `crates/elisp/src/eval/functions/functions.rs`.
+        "tool-bar-local-item" | "tool-bar-local-item-from-menu" => Ok(LispObject::nil()),
         "frame-visible-p" | "frame-live-p" | "frame-parameters" => Ok(LispObject::nil()),
         "window-live-p" | "minibufferp" | "minibuffer-window" | "minibuffer-depth"
         | "recursion-depth" => Ok(LispObject::nil()),

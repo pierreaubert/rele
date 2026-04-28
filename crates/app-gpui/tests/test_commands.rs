@@ -80,7 +80,12 @@ fn registry_filter_returns_matches() {
 
 #[test]
 fn toggle_preview_command_flips_flag() {
-    let mut state = MdAppState::new();
+    // `toggle-preview` is an elisp defun in commands.el that calls
+    // `editor--toggle-preview`. The defun + bridge are wired up in
+    // `install_elisp_editor_callbacks`, so pin the state and install
+    // before dispatching (same pattern as `undo_command_reverts_edit`).
+    let mut state = Box::new(MdAppState::new());
+    state.install_elisp_editor_callbacks();
     let before = state.show_preview;
     state.run_command_by_name("toggle-preview");
     assert_eq!(state.show_preview, !before);

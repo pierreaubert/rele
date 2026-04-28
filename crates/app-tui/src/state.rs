@@ -1,150 +1,34 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use rele_elisp::{EditorCallbacks, Interpreter, add_primitives};
 use rele_server::CancellationFlag;
 use rele_server::document::buffer_list::name_from_path;
 use rele_server::lsp::{LspBufferState, LspConfig, LspEvent, LspRegistry, position::uri_from_path};
 use rele_server::minibuffer::{MiniBufferPrompt, MiniBufferResult, MiniBufferState};
 use rele_server::syntax::{Highlighter, TreeSitterHighlighter, language_for_extension};
 use rele_server::{
-    BufferId, BufferKind, CommandArgs, DocumentBuffer, EditHistory, EditorCursor, KillRing,
-    MacroState, StoredBuffer,
+    BufferId, BufferKind, CommandArgs, DocumentBuffer, EditHistory, EditorCore, EditorCursor,
+    KillRing, LispCommandDispatch, LispHost, MacroState, StoredBuffer,
 };
 use tokio::sync::mpsc;
 
 use crate::commands::{CommandRegistry, register_builtin_commands};
 use crate::windows::{SplitSize, Window, WindowContent};
 
-/// Bridge the elisp interpreter uses to manipulate the active buffer.
-///
-/// Bridges the elisp interpreter to live editor state.
-///
-/// # Safety
-/// `state` must point to a valid, pinned `TuiAppState` for the
-/// entire lifetime of this callback. The TUI's `main()` keeps state
-/// on the stack inside `event_loop`, which doesn't move the value.
-/// If that invariant changes (e.g. we start boxing or returning
-/// state), the install-point needs updating.
-struct ElispEditorCallbacks {
-    state: std::ptr::NonNull<TuiAppState>,
-    _exclusive: std::marker::PhantomData<*mut TuiAppState>,
+#[allow(clippy::disallowed_methods)] // explicit user save/quit action on the TUI thread
+fn write_document_to_path(document: &mut DocumentBuffer, path: &Path) -> std::io::Result<()> {
+    let content = document.text();
+    std::fs::write(path, &content)?;
+    document.mark_clean();
+    Ok(())
 }
 
-// SAFETY: TuiAppState lives for the whole process on a single thread
-// (the TUI event loop), so the raw pointer is only ever dereferenced
-// from that thread. The `Send + Sync` bound on `EditorCallbacks` is
-// only needed to satisfy the trait; we never actually cross threads
-// with this callback.
-unsafe impl Send for ElispEditorCallbacks {}
-unsafe impl Sync for ElispEditorCallbacks {}
-
-impl EditorCallbacks for ElispEditorCallbacks {
-    // ---- Queries ----
-    fn buffer_string(&self) -> String {
-        unsafe { self.state.as_ref().document.text() }
-    }
-    fn buffer_size(&self) -> usize {
-        unsafe { self.state.as_ref().document.len_chars() }
-    }
-    fn point(&self) -> usize {
-        unsafe { self.state.as_ref().cursor.position }
-    }
-    fn point_min(&self) -> usize {
-        0
-    }
-    fn point_max(&self) -> usize {
-        unsafe { self.state.as_ref().document.len_chars() }
-    }
-
-    // ---- Mutations ----
-    fn insert(&mut self, text: &str) {
-        unsafe { self.state.as_mut().insert_text(text) }
-    }
-    fn delete_char(&mut self, n: i64) {
-        unsafe {
-            let s = self.state.as_mut();
-            if n > 0 {
-                for _ in 0..n as usize {
-                    s.delete_forward();
-                }
-            } else if n < 0 {
-                for _ in 0..(-n) as usize {
-                    s.backspace();
-                }
-            }
-        }
-    }
-    fn find_file(&mut self, path: &str) -> bool {
-        unsafe {
-            let path_buf = std::path::PathBuf::from(path);
-            #[allow(clippy::disallowed_methods)] // user-initiated
-            if let Ok(content) = std::fs::read_to_string(&path_buf) {
-                self.state.as_mut().open_file_as_buffer(path_buf, &content);
-                true
-            } else {
-                false
-            }
-        }
-    }
-    fn save_buffer(&mut self) -> bool {
-        unsafe { self.state.as_mut().save_file().is_ok() }
-    }
-
-    // ---- Navigation ----
-    fn goto_char(&mut self, pos: usize) {
-        unsafe {
-            let s = self.state.as_mut();
-            s.cursor.position = pos.min(s.document.len_chars());
-            s.cursor.clear_selection();
-        }
-    }
-    fn forward_char(&mut self, n: i64) {
-        unsafe {
-            let s = self.state.as_mut();
-            if n > 0 {
-                for _ in 0..n as usize {
-                    s.move_right(false);
-                }
-            } else if n < 0 {
-                for _ in 0..(-n) as usize {
-                    s.move_left(false);
-                }
-            }
-        }
-    }
-    fn forward_line(&mut self, n: i64) {
-        unsafe {
-            let s = self.state.as_mut();
-            if n > 0 {
-                for _ in 0..n as usize {
-                    s.move_down(false);
-                }
-            } else if n < 0 {
-                for _ in 0..(-n) as usize {
-                    s.move_up(false);
-                }
-            }
-        }
-    }
-    fn move_beginning_of_line(&mut self) {
-        unsafe { self.state.as_mut().move_to_line_start(false) }
-    }
-    fn move_end_of_line(&mut self) {
-        unsafe { self.state.as_mut().move_to_line_end(false) }
-    }
-    fn move_beginning_of_buffer(&mut self) {
-        unsafe { self.state.as_mut().move_to_buffer_start(false) }
-    }
-    fn move_end_of_buffer(&mut self) {
-        unsafe { self.state.as_mut().move_to_buffer_end(false) }
-    }
-
-    // ---- Edit history ----
-    fn undo(&mut self) {
-        unsafe { self.state.as_mut().undo() }
-    }
-    fn redo(&mut self) {
-        unsafe { self.state.as_mut().redo() }
+fn special_buffer_attrs(name: &str) -> Option<(BufferKind, bool)> {
+    if name == "*Buffer List*" {
+        Some((BufferKind::BufferList, true))
+    } else if name.starts_with("*Dired: ") {
+        Some((BufferKind::Dired, true))
+    } else {
+        None
     }
 }
 
@@ -159,6 +43,8 @@ pub enum PendingMiniBufferAction {
     SwitchBuffer,
     /// Kill the buffer whose name is typed (C-x k); empty = current buffer.
     KillBuffer,
+    /// Open a directory in dired (C-x d).
+    Dired,
     /// Run the command whose name is typed (M-x / Esc-x).
     RunCommand,
 }
@@ -186,7 +72,7 @@ pub struct TuiAppState {
     pub kill_ring: KillRing,
     pub macros: MacroState,
     pub commands: CommandRegistry,
-    pub elisp: Interpreter,
+    pub lisp_host: LispHost,
 
     // ---- Viewport ----
     pub scroll_line: usize,
@@ -262,9 +148,6 @@ impl TuiAppState {
         let mut commands = CommandRegistry::new();
         register_builtin_commands(&mut commands);
 
-        let mut interp = Interpreter::new();
-        add_primitives(&mut interp);
-
         Self {
             document: DocumentBuffer::from_text(""),
             cursor: EditorCursor::new(),
@@ -278,7 +161,7 @@ impl TuiAppState {
             kill_ring: KillRing::default(),
             macros: MacroState::default(),
             commands,
-            elisp: interp,
+            lisp_host: LispHost::new(EditorCore::new()),
             scroll_line: 0,
             last_viewport_height: 0,
             last_edit_was_char_insert: false,
@@ -322,7 +205,109 @@ impl TuiAppState {
         state.current_buffer_kind = BufferKind::File;
         state.document = DocumentBuffer::from_file(path, content);
         state.refresh_buffer_highlighter();
+        state.sync_lisp_core_from_state();
         state
+    }
+
+    fn editor_core_snapshot(&self) -> EditorCore {
+        EditorCore {
+            document: self.document.clone(),
+            cursor: self.cursor,
+            history: self.history.clone(),
+            current_buffer_id: self.current_buffer_id,
+            current_buffer_name: self.current_buffer_name.clone(),
+            current_buffer_kind: self.current_buffer_kind.clone(),
+            current_buffer_read_only: self.current_buffer_read_only,
+            stored_buffers: self.stored_buffers.clone(),
+            next_buffer_id: self.next_buffer_id,
+            lsp_state: self.lsp_buffer_state.clone(),
+            kill_ring: self.kill_ring.clone(),
+            scroll_line: self.scroll_line,
+            last_edit_was_char_insert: self.last_edit_was_char_insert,
+            last_move_was_vertical: self.last_move_was_vertical,
+            message: self.message.clone(),
+            keyboard_quit_requested: false,
+        }
+    }
+
+    fn sync_lisp_core_from_state(&mut self) {
+        self.lisp_host.replace_core(self.editor_core_snapshot());
+    }
+
+    fn sync_state_from_lisp_core(&mut self) {
+        let before_buffer_id = self.current_buffer_id;
+        let before_kind = self.current_buffer_kind.clone();
+        let before_doc_version = self.document.version();
+        let before_path = self.document.file_path().cloned();
+        let mut core = self.lisp_host.core_snapshot();
+        let keyboard_quit_requested = core.keyboard_quit_requested;
+        core.keyboard_quit_requested = false;
+
+        self.document = core.document;
+        self.cursor = core.cursor;
+        self.history = core.history;
+        self.current_buffer_id = core.current_buffer_id;
+        self.current_buffer_name = core.current_buffer_name;
+        self.current_buffer_kind = core.current_buffer_kind;
+        self.current_buffer_read_only = core.current_buffer_read_only;
+        self.stored_buffers = core.stored_buffers;
+        self.next_buffer_id = core.next_buffer_id;
+        self.lsp_buffer_state = core.lsp_state;
+        self.kill_ring = core.kill_ring;
+        self.scroll_line = core.scroll_line;
+        self.last_edit_was_char_insert = core.last_edit_was_char_insert;
+        self.last_move_was_vertical = core.last_move_was_vertical;
+        self.message = core.message;
+
+        let buffer_changed =
+            before_buffer_id != self.current_buffer_id || before_kind != self.current_buffer_kind;
+        let doc_changed = before_doc_version != self.document.version();
+        let path_changed = before_path != self.document.file_path().cloned();
+
+        if buffer_changed || path_changed {
+            self.refresh_buffer_highlighter();
+        }
+        if path_changed && self.current_buffer_kind == BufferKind::File {
+            self.lsp_did_open();
+        } else if doc_changed {
+            self.notify_highlighter();
+            self.lsp_did_change();
+        }
+
+        if keyboard_quit_requested {
+            self.keyboard_quit();
+            self.sync_lisp_core_from_state();
+        } else {
+            self.sync_lisp_core_from_state();
+        }
+    }
+
+    pub fn eval_lisp(
+        &mut self,
+        expr: rele_elisp::LispObject,
+    ) -> rele_elisp::ElispResult<rele_elisp::LispObject> {
+        self.sync_lisp_core_from_state();
+        let result = self.lisp_host.eval(expr);
+        self.sync_state_from_lisp_core();
+        result
+    }
+
+    pub fn eval_lisp_source(
+        &mut self,
+        source: &str,
+    ) -> Result<rele_elisp::LispObject, (usize, rele_elisp::ElispError)> {
+        self.sync_lisp_core_from_state();
+        let result = self.lisp_host.eval_source(source);
+        self.sync_state_from_lisp_core();
+        result
+    }
+
+    fn run_hook_logged(&mut self, name: &str) {
+        self.sync_lisp_core_from_state();
+        if let Err(e) = self.lisp_host.run_hooks(name) {
+            log::error!("hook {name}: {e:?}");
+        }
+        self.sync_state_from_lisp_core();
     }
 
     // ---- Buffer list ----
@@ -423,6 +408,40 @@ impl TuiAppState {
         }
     }
 
+    /// Create or fetch a named buffer. Used by elisp
+    /// `(get-buffer-create NAME)` so generated buffers such as dired
+    /// and `*Buffer List*` live in the TUI buffer list.
+    pub fn get_or_create_named_buffer(&mut self, name: &str) -> BufferId {
+        if let Some(id) = self.find_buffer_by_name(name) {
+            if id == self.current_buffer_id {
+                self.apply_special_attrs_for_current_name();
+            } else if let Some(buffer) = self.stored_buffers.iter_mut().find(|b| b.id == id)
+                && let Some((kind, read_only)) = special_buffer_attrs(&buffer.name)
+            {
+                buffer.kind = kind;
+                buffer.read_only = read_only;
+            }
+            return id;
+        }
+
+        let id = self.allocate_buffer_id();
+        let mut buffer = StoredBuffer::new_scratch(id);
+        buffer.name = name.to_string();
+        if let Some((kind, read_only)) = special_buffer_attrs(name) {
+            buffer.kind = kind;
+            buffer.read_only = read_only;
+        }
+        self.stored_buffers.push(buffer);
+        id
+    }
+
+    fn apply_special_attrs_for_current_name(&mut self) {
+        if let Some((kind, read_only)) = special_buffer_attrs(&self.current_buffer_name) {
+            self.current_buffer_kind = kind;
+            self.current_buffer_read_only = read_only;
+        }
+    }
+
     /// Open a file as a buffer. If a buffer for this path is already
     /// open, switches to it; otherwise loads the file into a new
     /// buffer.
@@ -433,6 +452,7 @@ impl TuiAppState {
             // switch_to_buffer_id already refreshes the highlighter.
             self.switch_to_buffer_id(id);
             self.lsp_did_open();
+            self.run_hook_logged("find-file-hook");
             return;
         }
 
@@ -463,6 +483,7 @@ impl TuiAppState {
         // New buffer, possibly new language — pick the grammar.
         self.refresh_buffer_highlighter();
         self.lsp_did_open();
+        self.run_hook_logged("find-file-hook");
     }
 
     /// Kill the current buffer. Refuses if it's the only one.
@@ -471,6 +492,9 @@ impl TuiAppState {
             self.message = Some("Cannot kill the only buffer".to_string());
             return false;
         }
+        // Run kill-buffer-hook before tearing down LSP / removing the
+        // buffer so user code can still inspect it.
+        self.run_hook_logged("kill-buffer-hook");
         // Notify LSP that the buffer is going away before we lose the state.
         self.lsp_did_close();
         // Swap the last stored buffer in, then drop what's now at the end.
@@ -489,6 +513,7 @@ impl TuiAppState {
             return self.kill_current_buffer();
         }
         if let Some(pos) = self.stored_buffers.iter().position(|b| b.name == name) {
+            self.run_hook_logged("kill-buffer-hook");
             self.stored_buffers.remove(pos);
             true
         } else {
@@ -733,12 +758,18 @@ impl TuiAppState {
                 }
             }
             PendingMiniBufferAction::SwitchBuffer => {
-                if !self.switch_to_buffer_by_name(&text) {
-                    self.message = Some(format!("No such buffer: {text}"));
-                }
+                self.run_command_with_string("switch-to-buffer", text);
             }
             PendingMiniBufferAction::KillBuffer => {
                 self.kill_buffer_by_name(&text);
+            }
+            PendingMiniBufferAction::Dired => {
+                let path = if text.trim().is_empty() {
+                    ".".to_string()
+                } else {
+                    text
+                };
+                self.run_command_with_string("dired", path);
             }
             PendingMiniBufferAction::RunCommand => {
                 if text.is_empty() {
@@ -750,7 +781,7 @@ impl TuiAppState {
                 // both; we just gate the "No such command" message
                 // on the union of the two registries.
                 if self.commands.get(&text).is_some()
-                    || rele_elisp::is_user_defined_elisp_function(&text, &self.elisp.state)
+                    || self.lisp_host.is_user_defined_command(&text)
                 {
                     self.run_command(&text, CommandArgs::default());
                 } else {
@@ -760,80 +791,79 @@ impl TuiAppState {
         }
     }
 
-    /// Install the elisp ⇄ editor bridge and load the built-in
-    /// command defuns. Must be called **after** `TuiAppState` has
-    /// been placed in stable memory (heap-boxed or stack-pinned),
-    /// because the bridge stores a raw pointer back to self. Calling
-    /// it before `self` is pinned is Undefined Behaviour.
-    ///
-    /// Called once from `run_tui` in `main.rs` right before entering
-    /// the event loop.
+    /// Synchronize the server-owned elisp host and load the built-in
+    /// command defuns. Kept under the old name because tests and the
+    /// event loop use it as the "elisp is ready" hook.
     pub fn install_elisp_editor_callbacks(&mut self) {
-        // SAFETY: `self` lives on the stack in the event loop for
-        // the duration of the program. The pointer is only ever
-        // dereferenced from the same thread.
-        let callbacks = Box::new(ElispEditorCallbacks {
-            state: std::ptr::NonNull::from(&mut *self),
-            _exclusive: std::marker::PhantomData,
-        });
-        self.elisp.set_editor(callbacks);
-        // Load the built-in elisp command definitions (navigation,
-        // editing, undo/redo wrappers). Errors here would indicate a
-        // bug in the shipped `.el` — surface them in the message line
-        // so they're visible at startup rather than silently swallowed.
-        if let Err(e) = self.load_builtin_elisp() {
-            self.message = Some(format!("elisp init failed: {e:?}"));
+        self.sync_lisp_core_from_state();
+        self.lisp_host.bootstrap_emacs_stdlib_for_dired();
+        if let Err((idx, e)) = self.lisp_host.load_builtin_commands() {
+            self.message = Some(format!("elisp init failed at form {idx}: {e:?}"));
         }
+        self.sync_state_from_lisp_core();
     }
 
-    /// Parse + eval `rele_server::BUILTIN_COMMANDS_EL`, the shared
-    /// elisp source file that defines the built-in commands for every
-    /// client. Embedded at compile time inside `rele-server`.
-    fn load_builtin_elisp(&mut self) -> Result<(), rele_elisp::ElispError> {
-        let forms = rele_elisp::read_all(rele_server::BUILTIN_COMMANDS_EL)?;
-        for form in forms {
-            self.elisp.eval(form)?;
+    // ---- Keyboard quit (C-g) ----
+
+    /// Cancel any in-progress modal state — prefix arg, pending C-x
+    /// or M-g chord, isearch (TODO when TUI grows it), the
+    /// minibuffer (caller decides whether to close it). Sets a
+    /// "Quit" message so the user gets feedback that C-g landed.
+    /// Mirrors `MdAppState::abort` on the GPUI side.
+    pub fn keyboard_quit(&mut self) {
+        self.cancel_flag.cancel();
+        self.universal_arg = None;
+        self.c_x_pending = false;
+        self.meta_pending = false;
+        self.m_g_pending = false;
+        self.cursor.clear_selection();
+        if self.minibuffer.active {
+            self.minibuffer_cancel();
         }
-        Ok(())
+        self.message = Some("Quit".to_string());
     }
 
     // ---- Command dispatch ----
 
     pub fn run_command(&mut self, name: &str, args: CommandArgs) {
-        // Prefer elisp defuns when present: if `(defun name ...)` has
-        // been evaluated (commands.el is loaded at startup), route the
-        // call through `(name count)` in the interpreter so the elisp
-        // implementation is authoritative. Fall back to the Rust
-        // command registry only when no user-defined function is
-        // bound.
-        //
-        // `add_primitives` also populates function cells (every buffer
-        // primitive is registered as `LispObject::primitive(name)`), so
-        // a plain "is function cell set" check would route *every*
-        // command name through elisp — including ones whose Rust
-        // handler is the authoritative implementation. We only want to
-        // route when the cell holds a user-defined lambda, bytecode,
-        // or macro — i.e. anything that is *not* a bare primitive.
-        if rele_elisp::is_user_defined_elisp_function(name, &self.elisp.state) {
-            let call = rele_elisp::LispObject::cons(
-                rele_elisp::LispObject::symbol(name),
-                rele_elisp::LispObject::cons(
-                    rele_elisp::LispObject::integer(args.count() as i64),
-                    rele_elisp::LispObject::nil(),
-                ),
-            );
-            if let Err(e) = self.elisp.eval(call) {
-                self.message = Some(format!("[elisp error in {name}: {e:?}]"));
+        self.sync_lisp_core_from_state();
+        match self.lisp_host.run_command(name, &args) {
+            Ok(LispCommandDispatch::Handled) => {
+                self.sync_state_from_lisp_core();
+                self.run_post_command_hook();
+                return;
             }
-            return;
+            Ok(LispCommandDispatch::Unhandled) => {}
+            Err(e) => {
+                self.sync_state_from_lisp_core();
+                self.message = Some(format!("[elisp error in {name}: {e:?}]"));
+                self.run_post_command_hook();
+                return;
+            }
         }
 
         let handler = self.commands.get(name).map(|c| c.handler.clone());
         if let Some(h) = handler {
             h(self, args);
+            self.sync_lisp_core_from_state();
+            self.run_post_command_hook();
         } else {
             self.message = Some(format!("[Unknown command: {name}]"));
         }
+    }
+
+    pub fn run_command_with_string(&mut self, name: &str, s: String) {
+        self.run_command(name, CommandArgs::default().with_string(s));
+    }
+
+    /// Run `post-command-hook`. Suppressed during macro replay so a
+    /// hook bound to (e.g.) idle autosave doesn't fire once per
+    /// recorded action when `C-x e` plays back the macro.
+    fn run_post_command_hook(&mut self) {
+        if self.macros.applying {
+            return;
+        }
+        self.run_hook_logged("post-command-hook");
     }
 
     // ---- Helpers ----
@@ -1190,12 +1220,12 @@ impl TuiAppState {
             self.message = Some("No file name".to_string());
             return Err(std::io::Error::other("no file name"));
         };
-        let content = self.document.text();
-        match std::fs::write(&path, &content) {
+        self.run_hook_logged("before-save-hook");
+        match write_document_to_path(&mut self.document, &path) {
             Ok(()) => {
-                self.document.mark_clean();
                 self.message = Some(format!("Wrote {}", path.display()));
                 self.lsp_did_save();
+                self.run_hook_logged("after-save-hook");
                 Ok(())
             }
             Err(e) => {
@@ -1203,6 +1233,44 @@ impl TuiAppState {
                 Err(e)
             }
         }
+    }
+
+    /// Save every dirty buffer that has a backing file.
+    ///
+    /// Non-file buffers such as `*scratch*`, `*Diagnostics*`, and
+    /// generated listings are intentionally skipped. This matches the
+    /// quit path's job: protect file-backed edits from being lost,
+    /// while still letting a fresh TUI session exit with `C-x C-c`.
+    pub fn save_dirty_file_buffers(&mut self) -> std::io::Result<usize> {
+        let mut saved = 0;
+
+        if self.document.needs_file_save() {
+            self.save_file()?;
+            saved += 1;
+        }
+
+        for buffer in &mut self.stored_buffers {
+            if !buffer.document.needs_file_save() {
+                continue;
+            }
+            let path = buffer
+                .document
+                .file_path()
+                .cloned()
+                .expect("needs_file_save guarantees a file path");
+            if let Err(e) = write_document_to_path(&mut buffer.document, &path) {
+                self.message = Some(format!("Error saving {}: {e}", path.display()));
+                return Err(e);
+            }
+            saved += 1;
+        }
+
+        self.message = Some(match saved {
+            0 => "No file buffers need saving".to_string(),
+            1 => "Wrote 1 buffer".to_string(),
+            n => format!("Wrote {n} buffers"),
+        });
+        Ok(saved)
     }
 
     // ---- Buffer info helpers ----
@@ -1552,6 +1620,55 @@ mod tests {
     }
 
     #[test]
+    fn switch_to_buffer_command_uses_elisp_buffer_bridge() {
+        let mut s = TuiAppState::new();
+        s.get_or_create_named_buffer("notes.md");
+        s.install_elisp_editor_callbacks();
+
+        s.run_command_with_string("switch-to-buffer", "notes.md".to_string());
+
+        assert_eq!(s.current_buffer_name, "notes.md");
+
+        s.run_command_with_string("switch-to-buffer", "new-scratch".to_string());
+
+        assert_eq!(s.current_buffer_name, "new-scratch");
+    }
+
+    #[test]
+    fn list_buffers_command_builds_buffer_list_buffer() {
+        let mut s = TuiAppState::new();
+        s.get_or_create_named_buffer("notes.md");
+        s.install_elisp_editor_callbacks();
+
+        s.run_command("list-buffers", CommandArgs::default());
+
+        assert_eq!(s.current_buffer_name, "*Buffer List*");
+        assert_eq!(s.current_buffer_kind, BufferKind::BufferList);
+        assert!(s.current_buffer_read_only);
+        let text = s.document.text();
+        assert!(text.contains("*scratch*"));
+        assert!(text.contains("notes.md"));
+    }
+
+    #[test]
+    fn dired_command_builds_dired_buffer_from_elisp() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("entry.txt");
+        #[allow(clippy::disallowed_methods)] // test fixture
+        std::fs::write(&path, "hello").unwrap();
+
+        let mut s = TuiAppState::new();
+        s.install_elisp_editor_callbacks();
+
+        s.run_command_with_string("dired", dir.path().display().to_string());
+
+        assert!(s.current_buffer_name.starts_with("*Dired: "));
+        assert_eq!(s.current_buffer_kind, BufferKind::Dired);
+        assert!(s.current_buffer_read_only);
+        assert!(s.document.text().contains("entry.txt"));
+    }
+
+    #[test]
     fn minibuffer_submit_find_file_opens_buffer() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("greeting.md");
@@ -1764,31 +1881,20 @@ mod tests {
         assert_eq!(s.buffer_highlighter_version, s.document.version());
     }
 
-    /// Regression: `ElispEditorCallbacks::save_buffer` used to
-    /// return true whenever `state.message` didn't start with
-    /// `"Error"`. That heuristic fell over when the message was
-    /// `None` (rendered-then-cleared) or contained an earlier
-    /// non-error status — the callback happily reported success on a
-    /// failed save. The scratch buffer has no file path, so saving
-    /// it is a genuine failure that the old heuristic missed
-    /// (message = "No file name", doesn't start with "Error").
+    /// Regression: elisp `save-buffer` must report nil when the active
+    /// buffer has no file path. The scratch buffer has no file path, so
+    /// saving it is a genuine failure.
     #[test]
     fn elisp_save_buffer_returns_false_when_no_file_name() {
-        use rele_elisp::EditorCallbacks;
-
         let mut s = TuiAppState::new();
-        // Scratch buffer — no file path. save_file must fail.
+        s.install_elisp_editor_callbacks();
         assert!(s.document.file_path().is_none());
 
-        let mut cb = ElispEditorCallbacks {
-            state: std::ptr::NonNull::from(&mut s),
-            _exclusive: std::marker::PhantomData,
-        };
+        let result = s
+            .eval_lisp(rele_elisp::read("(save-buffer)").unwrap())
+            .expect("save-buffer eval");
 
-        assert!(
-            !cb.save_buffer(),
-            "save_buffer must return false when the buffer has no file path"
-        );
+        assert_eq!(result, rele_elisp::LispObject::nil());
     }
 
     /// Regression: M-x used to gate submission on the Rust command
@@ -1804,8 +1910,7 @@ mod tests {
         s.cursor.position = 0;
 
         // Define a defun that isn't registered on the Rust side.
-        s.elisp
-            .eval_source("(defun my-elisp-only-jump (&optional _n) (goto-char 2))")
+        s.eval_lisp_source("(defun my-elisp-only-jump (&optional _n) (goto-char 2))")
             .expect("defun eval");
 
         s.minibuffer_open(
@@ -1842,6 +1947,7 @@ mod tests {
 
         let mut s = TuiAppState::new();
         s.document = DocumentBuffer::from_file(bogus_path, "contents");
+        s.document.insert(s.document.len_chars(), "!");
         s.refresh_buffer_highlighter();
         s.current_buffer_kind = BufferKind::File;
 
@@ -1857,6 +1963,63 @@ mod tests {
             msg.to_lowercase().contains("error") || msg.to_lowercase().contains("cannot"),
             "expected error message, got {msg:?}"
         );
+    }
+
+    #[test]
+    fn save_buffers_kill_terminal_quits_from_scratch_buffer() {
+        let mut s = TuiAppState::new();
+
+        s.run_command("save-buffers-kill-terminal", CommandArgs::default());
+
+        assert!(
+            s.should_quit,
+            "scratch buffers have no file name and should not block C-x C-c"
+        );
+    }
+
+    #[test]
+    fn save_buffers_kill_terminal_saves_dirty_file_before_quit() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        #[allow(clippy::disallowed_methods)] // test fixture
+        std::fs::write(&path, "hello").unwrap();
+
+        let mut s = TuiAppState::from_file(path.clone(), "hello");
+        s.cursor.position = s.document.len_chars();
+        s.insert_text("!");
+
+        s.run_command("save-buffers-kill-terminal", CommandArgs::default());
+
+        assert!(s.should_quit);
+        assert!(!s.document.is_dirty());
+        #[allow(clippy::disallowed_methods)] // test fixture
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(saved, "hello!");
+    }
+
+    #[test]
+    fn save_buffers_kill_terminal_saves_dirty_stored_file_before_quit() {
+        let dir = tempdir().unwrap();
+        let first_path = dir.path().join("first.md");
+        let second_path = dir.path().join("second.md");
+        #[allow(clippy::disallowed_methods)] // test fixture
+        std::fs::write(&first_path, "first").unwrap();
+        #[allow(clippy::disallowed_methods)] // test fixture
+        std::fs::write(&second_path, "second").unwrap();
+
+        let mut s = TuiAppState::from_file(first_path.clone(), "first");
+        s.cursor.position = s.document.len_chars();
+        s.insert_text("!");
+        #[allow(clippy::disallowed_methods)] // test fixture
+        let second_content = std::fs::read_to_string(&second_path).unwrap();
+        s.open_file_as_buffer(second_path, &second_content);
+
+        s.run_command("save-buffers-kill-terminal", CommandArgs::default());
+
+        assert!(s.should_quit);
+        #[allow(clippy::disallowed_methods)] // test fixture
+        let saved = std::fs::read_to_string(&first_path).unwrap();
+        assert_eq!(saved, "first!");
     }
 
     /// Regression: jumping to a definition in a different file used
@@ -2300,7 +2463,7 @@ mod tests {
 
     // ---- Elisp drives navigation ----
     //
-    // These tests install the ElispEditorCallbacks bridge onto a live
+    // These tests synchronize the server-owned Lisp host with a live
     // TuiAppState and verify that (a) the Rust primitives wired into
     // the interpreter actually mutate the buffer, and (b) defuns
     // loaded from `lisp/commands.el` take precedence in
@@ -2323,7 +2486,7 @@ mod tests {
                 rele_elisp::LispObject::nil(),
             ),
         );
-        s.elisp.eval(call).expect("forward-char eval");
+        s.eval_lisp(call).expect("forward-char eval");
         assert_eq!(s.cursor.position, 3);
     }
 

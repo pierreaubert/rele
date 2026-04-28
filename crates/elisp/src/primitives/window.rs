@@ -454,8 +454,48 @@ pub fn prim_define_key(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_global_set_key(args: &LispObject) -> ElispResult<LispObject> {
-    Ok(args.nth(1).unwrap_or(LispObject::nil()))
+    // Two paths reach `(global-set-key)`: the stateful core
+    // `call_primitive` dispatcher (handled by
+    // `core::keymaps::prim_set_current_map_key`, which writes to the
+    // table below) and this one for direct callers. Mirror the same
+    // table write so either entry point honours user bindings.
+    let key = args.first().unwrap_or(LispObject::nil());
+    let cmd = args.nth(1).unwrap_or(LispObject::nil());
+    if let (LispObject::String(key_str), Some(cmd_name)) = (&key, cmd.as_symbol()) {
+        record_global_keybinding(key_str.clone(), cmd_name);
+    }
+    Ok(cmd)
 }
+
+/// Insert `(key, command-name)` into the global keybinding table.
+/// Both `prim_global_set_key` paths funnel through this so the
+/// table stays the single source of truth.
+pub fn record_global_keybinding(key: String, command: String) {
+    if let Ok(mut t) = GLOBAL_KEYBINDINGS.lock() {
+        t.insert(key, command);
+    }
+}
+
+/// Look up the command name bound to `key` by `(global-set-key
+/// KEY 'command)`. Used by client key handlers (TUI / GPUI) to
+/// honour user bindings before falling back to the hard-coded
+/// dispatch table.
+#[must_use]
+pub fn lookup_global_key(key: &str) -> Option<String> {
+    GLOBAL_KEYBINDINGS.lock().ok()?.get(key).cloned()
+}
+
+/// Clear all `global-set-key` bindings. Tests use this so they
+/// don't leak state into other tests sharing the same process.
+pub fn clear_global_keybindings() {
+    if let Ok(mut t) = GLOBAL_KEYBINDINGS.lock() {
+        t.clear();
+    }
+}
+
+static GLOBAL_KEYBINDINGS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, String>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 pub fn prim_local_set_key(args: &LispObject) -> ElispResult<LispObject> {
     Ok(args.nth(1).unwrap_or(LispObject::nil()))

@@ -436,6 +436,24 @@ impl Interpreter {
         let mut e = self.editor.write();
         *e = Some(editor);
     }
+    /// Run all functions on the named hook variable. Equivalent to
+    /// `(run-hooks 'NAME)` in elisp. Errors are returned so the caller
+    /// can log them; lifecycle callers must NOT propagate, because a
+    /// buggy hook should never break the underlying operation
+    /// (`save-buffer`, `find-file`, …).
+    pub fn run_hooks(&self, name: &str) -> ElispResult<()> {
+        let call = LispObject::cons(
+            LispObject::symbol("run-hooks"),
+            LispObject::cons(
+                LispObject::cons(
+                    LispObject::symbol("quote"),
+                    LispObject::cons(LispObject::symbol(name), LispObject::nil()),
+                ),
+                LispObject::nil(),
+            ),
+        );
+        self.eval(call).map(|_| ())
+    }
     /// Set a maximum number of eval operations. 0 means unlimited.
     /// When the limit is reached, eval returns an error.
     pub fn set_eval_ops_limit(&self, limit: u64) {

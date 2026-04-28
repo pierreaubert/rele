@@ -71,6 +71,9 @@ pub(crate) fn call_stateful_primitive(
         "intern" => Some(stateful_intern(args)),
         "intern-soft" => Some(stateful_intern_soft(args, env, state)),
         "set" => Some(stateful_set(args, env, editor, macros, state)),
+        "easy-menu-do-define" => Some(stateful_easy_menu_do_define(
+            args, env, editor, macros, state,
+        )),
         "symbol-value" => Some(stateful_symbol_value(args, env, state)),
         "symbol-function" => Some(stateful_symbol_function(args, env, macros, state)),
         "default-value" => Some(stateful_default_value(args, state)),
@@ -363,6 +366,28 @@ fn stateful_set(
         SetOperation::Set,
     )?;
     Ok(val)
+}
+
+/// `(easy-menu-do-define SYMBOL MAPS DOC MENU)` — Emacs implements
+/// the menu structure dispatch in a defun in `easymenu.el` that
+/// includes `(set symbol keymap)` so callers can later refer to
+/// `dired-mode-foo-menu` etc. by name. We don't render menus, but
+/// we still need that variable populated so loaders don't get
+/// `void-variable` errors. Stash MENU under the symbol's value
+/// cell and skip the rest.
+pub(super) fn stateful_easy_menu_do_define(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let sym = args.first().unwrap_or_else(LispObject::nil);
+    let menu = args.nth(3).unwrap_or_else(LispObject::nil);
+    if let Some(sym_id) = sym.as_symbol_id() {
+        assign_symbol_value(sym_id, menu, env, editor, macros, state, SetOperation::Set)?;
+    }
+    Ok(LispObject::nil())
 }
 
 #[derive(Clone, Copy)]

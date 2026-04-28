@@ -125,6 +125,33 @@ pub fn make_stdlib_interp() -> Interpreter {
         ))),
     );
     interp.define("buffer-invisibility-spec", LispObject::nil());
+    // `menu-bar-separator` is `(defconst menu-bar-separator '("--"))`
+    // in `subr.el`. Define it up front so files that reference it as
+    // a *value* (`dired.el` uses it inside menu definitions) don't hit
+    // void-variable when subr.el's `defconst` hasn't been replayed.
+    interp.define(
+        "menu-bar-separator",
+        LispObject::cons(LispObject::string("--"), LispObject::nil()),
+    );
+    // Defcustoms from uniquify.el / files.el / dired.el that are
+    // referenced before their defining file loads. Define them as
+    // nil so callers that just check (if VAR ...) get the expected
+    // false value.
+    for name in [
+        "uniquify-trailing-separator-flag",
+        "uniquify-buffer-name-style",
+        "uniquify-after-kill-buffer-p",
+        "uniquify-min-dir-content",
+        "uniquify-strip-common-suffix",
+        "uniquify-list-buffers-directory-modes",
+        "find-file-visit-truename",
+        "find-file-existing-other-name",
+        "remote-file-name-inhibit-cache",
+        "default-directory",
+        "buffer-display-table",
+    ] {
+        interp.define(name, LispObject::nil());
+    }
     interp.define("unicode-category-table", LispObject::nil());
     interp.define("case-replace", LispObject::t());
     interp

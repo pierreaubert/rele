@@ -246,83 +246,12 @@ pub fn register_builtin_commands(registry: &mut CommandRegistry) {
         InteractiveSpec::None,
         |s, _| s.redo(),
     );
-    registry.register_fn(
-        "kill-line",
-        "Kill text from point to end of line",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.kill_to_end_of_line(),
-    );
-    registry.register_fn(
-        "kill-word",
-        "Kill the next word",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.kill_word_forward(),
-    );
-    registry.register_fn(
-        "backward-kill-word",
-        "Kill the previous word",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.kill_word_backward(),
-    );
-    registry.register_fn(
-        "yank",
-        "Yank (paste) the last killed text",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.yank(),
-    );
-    registry.register_fn(
-        "yank-pop",
-        "Replace yanked text with the previous kill ring entry",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.yank_pop(),
-    );
-    registry.register_fn(
-        "upcase-word",
-        "Uppercase the next word",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.upcase_word(),
-    );
-    registry.register_fn(
-        "downcase-word",
-        "Lowercase the next word",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.downcase_word(),
-    );
-    registry.register_fn(
-        "transpose-chars",
-        "Transpose the two characters around point",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.transpose_chars(),
-    );
-    registry.register_fn(
-        "transpose-words",
-        "Transpose the two words around point",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.transpose_words(),
-    );
-    registry.register_fn(
-        "set-mark",
-        "Set the mark at point",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.set_mark(),
-    );
-    registry.register_fn(
-        "exchange-point-and-mark",
-        "Exchange the cursor and the mark",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.exchange_point_and_mark(),
-    );
+    // kill-line, kill-word, backward-kill-word, yank, yank-pop,
+    // upcase-word, downcase-word, transpose-chars, transpose-words,
+    // set-mark, exchange-point-and-mark are now defined as elisp
+    // defuns in `crates/server/lisp/commands.el` and dispatched
+    // through `editor--*` primitives that hit the EditorCallbacks
+    // trait.
 
     // ---- Buffer ----
     registry.register_fn(
@@ -355,20 +284,7 @@ pub fn register_builtin_commands(registry: &mut CommandRegistry) {
             }
         },
     );
-    registry.register_fn(
-        "next-buffer",
-        "Switch to the next buffer in the list",
-        Buffer,
-        InteractiveSpec::None,
-        |s, _| s.switch_to_next_buffer(),
-    );
-    registry.register_fn(
-        "previous-buffer",
-        "Switch to the previous buffer in the list",
-        Buffer,
-        InteractiveSpec::None,
-        |s, _| s.switch_to_prev_buffer(),
-    );
+    // next-buffer / previous-buffer are now elisp defuns.
 
     // ---- File ----
     registry.register_fn(
@@ -388,9 +304,15 @@ pub fn register_builtin_commands(registry: &mut CommandRegistry) {
             }
         },
     );
+    // `dired` is now the elisp `dired-cmd` defun in
+    // `crates/server/lisp/commands.el` — it lazy-loads upstream
+    // dired.el and runs the real `(dired path)`. We keep the
+    // legacy Rust dired UI behind `dired-rust` for the transition
+    // period; once Phase 6 lands, this and the supporting
+    // `dired_open` machinery go away entirely.
     registry.register_fn(
-        "dired",
-        "Open a directory browser",
+        "dired-rust",
+        "Open a directory browser (Rust DiredState — legacy)",
         File,
         InteractiveSpec::None,
         |s, _| {
@@ -400,27 +322,8 @@ pub fn register_builtin_commands(registry: &mut CommandRegistry) {
     );
 
     // ---- View ----
-    registry.register_fn(
-        "toggle-preview",
-        "Toggle the preview pane",
-        View,
-        InteractiveSpec::None,
-        |s, _| s.show_preview = !s.show_preview,
-    );
-    registry.register_fn(
-        "toggle-line-numbers",
-        "Toggle editor line numbers",
-        View,
-        InteractiveSpec::None,
-        |s, _| s.show_line_numbers = !s.show_line_numbers,
-    );
-    registry.register_fn(
-        "toggle-preview-line-numbers",
-        "Toggle preview line numbers",
-        View,
-        InteractiveSpec::None,
-        |s, _| s.show_preview_line_numbers = !s.show_preview_line_numbers,
-    );
+    // toggle-preview, toggle-line-numbers, toggle-preview-line-numbers
+    // are now elisp defuns.
 
     // ---- Search ----
     registry.register_fn(

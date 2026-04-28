@@ -122,6 +122,14 @@ fn handle_key(state: &mut TuiAppState, key: KeyEvent) {
         return;
     }
 
+    // User keybindings via `(global-set-key "C-X" 'cmd)` win over the
+    // hard-coded match below. Only single Ctrl-letter bindings today;
+    // chord / Meta forms can be added when a user actually wants them.
+    if let Some(cmd) = lookup_user_global_binding(key) {
+        state.run_command(&cmd, CommandArgs::default());
+        return;
+    }
+
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
 
@@ -140,12 +148,13 @@ fn handle_key(state: &mut TuiAppState, key: KeyEvent) {
         KeyCode::Char('d') if ctrl => state.run_command("delete-char", CommandArgs::default()),
         KeyCode::Char('k') if ctrl => state.run_command("kill-line", CommandArgs::default()),
         KeyCode::Char('g') if ctrl => {
-            // C-g — cancel prefix / clear message
-            state.universal_arg = None;
-            state.c_x_pending = false;
-            state.meta_pending = false;
-            state.m_g_pending = false;
-            state.message = Some("Quit".to_string());
+            // C-g — keyboard-quit. Routes through the elisp defun so
+            // `~/.gpui-md.el` users can advise / hook the behaviour.
+            // The defun bottoms out in `editor--keyboard-quit` which
+            // calls `TuiAppState::keyboard_quit` (cancel-flag flip,
+            // prefix clear, selection clear, minibuffer cancel,
+            // "Quit" message).
+            state.run_command("keyboard-quit", CommandArgs::default());
         }
         KeyCode::Char('x') if ctrl => {
             state.c_x_pending = true;
@@ -202,18 +211,47 @@ fn handle_key(state: &mut TuiAppState, key: KeyEvent) {
 }
 
 /// Handle the second key after C-x prefix.
+/// Translate a `KeyEvent` into the canonical `"C-x"` form Emacs
+/// users pass to `(global-set-key)`, so we can look up a custom
+/// binding. Returns `None` for any key shape we don't yet handle —
+/// today only single Ctrl-letter keys (`Ctrl+letter`).
+fn lookup_user_global_binding(key: KeyEvent) -> Option<String> {
+    if !key.modifiers.contains(KeyModifiers::CONTROL) {
+        return None;
+    }
+    let KeyCode::Char(c) = key.code else {
+        return None;
+    };
+    if !c.is_ascii_alphabetic() {
+        return None;
+    }
+    // Canonical lower-case form; mirrors Emacs `\C-x` notation.
+    let key_str = format!("C-{}", c.to_ascii_lowercase());
+    rele_elisp::lookup_global_key(&key_str)
+}
+
 fn handle_cx_key(state: &mut TuiAppState, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
     match key.code {
         // C-x C-s — save current buffer.
         KeyCode::Char('s') if ctrl => state.run_command("save-buffer", CommandArgs::default()),
-        // C-x C-c — save and quit.
+        // C-x C-c — save file buffers and quit.
         KeyCode::Char('c') if ctrl => {
-            state.run_command("save-buffers-kill-emacs", CommandArgs::default());
+            state.run_command("save-buffers-kill-terminal", CommandArgs::default());
         }
         // C-x u — undo.
         KeyCode::Char('u') => state.run_command("undo", CommandArgs::default()),
+        // C-x B — show the buffer list. Terminals differ here:
+        // some report Shift-b as Char('B'), others as Char('b') +
+        // SHIFT.
+        KeyCode::Char('B') => {
+            state.run_command("list-buffers", CommandArgs::default());
+        }
+        KeyCode::Char('b') if shift => {
+            state.run_command("list-buffers", CommandArgs::default());
+        }
         // C-x C-f — find file (open the minibuffer with a file-path prompt).
         KeyCode::Char('f') if ctrl => {
             #[allow(clippy::disallowed_methods)] // user action on launch
@@ -225,12 +263,22 @@ fn handle_cx_key(state: &mut TuiAppState, key: KeyEvent) {
             );
         }
         // C-x b — switch to buffer (name completion from open buffers).
-        KeyCode::Char('b') => {
+        KeyCode::Char('b') if !shift => {
             let candidates = state.buffer_names();
             state.minibuffer_open(
                 MiniBufferPrompt::SwitchBuffer,
                 candidates,
                 PendingMiniBufferAction::SwitchBuffer,
+            );
+        }
+        // C-x d — dired.
+        KeyCode::Char('d') => {
+            state.minibuffer_open(
+                MiniBufferPrompt::FreeText {
+                    label: "Dired directory".to_string(),
+                },
+                Vec::new(),
+                PendingMiniBufferAction::Dired,
             );
         }
         // C-x k — kill buffer. Empty input kills the current one.
@@ -361,5 +409,112 @@ fn format_key(key: KeyEvent) -> String {
         KeyCode::Backspace => "DEL".to_string(),
         KeyCode::Tab => "TAB".to_string(),
         _ => format!("{:?}", key.code),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cx_cc_quits_from_initial_scratch_buffer() {
+        let mut state = TuiAppState::new();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        assert!(state.c_x_pending);
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        );
+
+        assert!(!state.c_x_pending);
+        assert!(state.should_quit);
+    }
+
+    #[test]
+    fn cx_d_opens_dired_minibuffer() {
+        let mut state = TuiAppState::new();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+        );
+
+        assert!(state.minibuffer.active);
+        assert!(matches!(
+            state.pending_minibuffer_action,
+            Some(PendingMiniBufferAction::Dired)
+        ));
+    }
+
+    #[test]
+    fn cx_b_opens_switch_buffer_minibuffer() {
+        let mut state = TuiAppState::new();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+        );
+
+        assert!(state.minibuffer.active);
+        assert!(matches!(
+            state.pending_minibuffer_action,
+            Some(PendingMiniBufferAction::SwitchBuffer)
+        ));
+    }
+
+    #[test]
+    fn cx_capital_b_shows_buffer_list() {
+        let mut state = TuiAppState::new();
+        state.get_or_create_named_buffer("notes.md");
+        state.install_elisp_editor_callbacks();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT),
+        );
+
+        assert_eq!(state.current_buffer_name, "*Buffer List*");
+        assert_eq!(
+            state.current_buffer_kind,
+            rele_server::BufferKind::BufferList
+        );
+        assert!(state.document.text().contains("notes.md"));
+    }
+
+    #[test]
+    fn cx_shift_b_shows_buffer_list_when_terminal_reports_lowercase() {
+        let mut state = TuiAppState::new();
+        state.get_or_create_named_buffer("notes.md");
+        state.install_elisp_editor_callbacks();
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::SHIFT),
+        );
+
+        assert_eq!(state.current_buffer_name, "*Buffer List*");
+        assert!(!state.minibuffer.active);
+        assert!(state.document.text().contains("notes.md"));
     }
 }

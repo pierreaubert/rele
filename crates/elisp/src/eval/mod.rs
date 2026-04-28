@@ -70,11 +70,17 @@ use builtins::{
     eval_mapc, eval_mapcar, eval_provide, eval_put, eval_require,
 };
 use editor::{
-    eval_beginning_of_buffer, eval_buffer_size, eval_buffer_string, eval_delete_char,
-    eval_end_of_buffer, eval_find_file, eval_forward_char, eval_forward_line, eval_goto_char,
-    eval_insert, eval_move_beginning_of_line, eval_move_end_of_line, eval_point, eval_point_max,
-    eval_point_min, eval_redo_primitive, eval_save_buffer, eval_save_current_buffer,
-    eval_save_excursion, eval_undo_primitive,
+    eval_beginning_of_buffer, eval_buffer_list_bridge, eval_buffer_size, eval_buffer_string,
+    eval_current_buffer_bridge, eval_delete_char, eval_downcase_word, eval_end_of_buffer,
+    eval_exchange_point_and_mark, eval_find_file, eval_forward_char, eval_forward_line,
+    eval_get_buffer_create_bridge, eval_goto_char, eval_insert, eval_insert_directory,
+    eval_keyboard_quit, eval_kill_buffer_bridge, eval_kill_line, eval_kill_word,
+    eval_move_beginning_of_line, eval_move_end_of_line, eval_next_buffer, eval_point,
+    eval_point_max, eval_point_min, eval_previous_buffer, eval_redo_primitive, eval_save_buffer,
+    eval_save_current_buffer, eval_save_excursion, eval_set_buffer_bridge, eval_set_mark,
+    eval_toggle_line_numbers, eval_toggle_preview, eval_toggle_preview_line_numbers,
+    eval_transpose_chars, eval_transpose_words, eval_undo_primitive, eval_upcase_word, eval_yank,
+    eval_yank_pop,
 };
 use error_forms::{
     eval_catch, eval_condition_case, eval_error_fn, eval_signal, eval_throw, eval_unwind_protect,
@@ -1679,6 +1685,24 @@ pub(super) fn eval_inner(
                 "end-of-buffer" => eval_end_of_buffer(editor),
                 "primitive-undo" => eval_undo_primitive(editor),
                 "primitive-redo" => eval_redo_primitive(editor),
+                "editor--kill-line" => eval_kill_line(editor),
+                "editor--kill-word" => {
+                    eval_kill_word(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "editor--yank" => eval_yank(editor),
+                "editor--yank-pop" => eval_yank_pop(editor),
+                "editor--upcase-word" => eval_upcase_word(editor),
+                "editor--downcase-word" => eval_downcase_word(editor),
+                "editor--transpose-chars" => eval_transpose_chars(editor),
+                "editor--transpose-words" => eval_transpose_words(editor),
+                "editor--set-mark" => eval_set_mark(editor),
+                "editor--exchange-point-and-mark" => eval_exchange_point_and_mark(editor),
+                "editor--next-buffer" => eval_next_buffer(editor),
+                "editor--previous-buffer" => eval_previous_buffer(editor),
+                "editor--toggle-preview" => eval_toggle_preview(editor),
+                "editor--toggle-line-numbers" => eval_toggle_line_numbers(editor),
+                "editor--toggle-preview-line-numbers" => eval_toggle_preview_line_numbers(editor),
+                "editor--keyboard-quit" => eval_keyboard_quit(editor),
                 "find-file" => eval_find_file(obj_to_value(cdr), env, editor, macros, state),
                 "save-buffer" => eval_save_buffer(editor),
                 "save-excursion" => {
@@ -1834,27 +1858,9 @@ pub(super) fn eval_inner(
                     state.set_match_data(saved_data, saved_str);
                     result
                 }
-                "current-buffer" => {
-                    let result = crate::primitives_buffer::call_buffer_primitive(
-                        "current-buffer",
-                        &LispObject::nil(),
-                    )
-                    .ok_or_else(|| ElispError::VoidFunction("current-buffer".to_string()))??;
-                    Ok(obj_to_value(result))
-                }
+                "current-buffer" => eval_current_buffer_bridge(editor),
                 "set-buffer" => {
-                    let buf = value_to_obj(eval(
-                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?);
-                    let args = LispObject::cons(buf, LispObject::nil());
-                    let result =
-                        crate::primitives_window::call_window_primitive("set-buffer", &args)
-                            .ok_or_else(|| ElispError::VoidFunction("set-buffer".to_string()))??;
-                    Ok(obj_to_value(result))
+                    eval_set_buffer_bridge(obj_to_value(cdr), env, editor, macros, state)
                 }
                 "buffer-name" => {
                     let args = if let Some(arg) = cdr.first() {
@@ -1884,28 +1890,11 @@ pub(super) fn eval_inner(
                     Ok(obj_to_value(result))
                 }
                 "get-buffer-create" => {
-                    let name = value_to_obj(eval(
-                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?);
-                    let args = LispObject::cons(name, LispObject::nil());
-                    let result =
-                        crate::primitives_buffer::call_buffer_primitive("get-buffer-create", &args)
-                            .ok_or_else(|| {
-                                ElispError::VoidFunction("get-buffer-create".to_string())
-                            })??;
-                    Ok(obj_to_value(result))
+                    eval_get_buffer_create_bridge(obj_to_value(cdr), env, editor, macros, state)
                 }
-                "buffer-list" => {
-                    let result = crate::primitives_buffer::call_buffer_primitive(
-                        "buffer-list",
-                        &LispObject::nil(),
-                    )
-                    .ok_or_else(|| ElispError::VoidFunction("buffer-list".to_string()))??;
-                    Ok(obj_to_value(result))
+                "buffer-list" => eval_buffer_list_bridge(editor),
+                "insert-directory" => {
+                    eval_insert_directory(obj_to_value(cdr), env, editor, macros, state)
                 }
                 "buffer-live-p" => {
                     let buf = value_to_obj(eval(
@@ -1990,6 +1979,14 @@ pub(super) fn eval_inner(
                     result
                 }
                 "erase-buffer" => {
+                    let mut e = editor.write();
+                    if let Some(cb) = e.as_mut()
+                        && let Some(name) = cb.current_buffer_name()
+                    {
+                        cb.set_buffer_text(&name, "");
+                        return Ok(Value::nil());
+                    }
+                    drop(e);
                     crate::buffer::with_current_mut(|b| b.erase());
                     Ok(Value::nil())
                 }
@@ -2997,27 +2994,15 @@ pub(super) fn eval_inner(
                 "load" => builtins::eval_load(obj_to_value(cdr), env, editor, macros, state),
                 "mapcar" => eval_mapcar(obj_to_value(cdr), env, editor, macros, state),
                 "mapc" => eval_mapc(obj_to_value(cdr), env, editor, macros, state),
-                "try-completion" => builtins::eval_try_completion(
-                    obj_to_value(cdr),
-                    env,
-                    editor,
-                    macros,
-                    state,
-                ),
-                "all-completions" => builtins::eval_all_completions(
-                    obj_to_value(cdr),
-                    env,
-                    editor,
-                    macros,
-                    state,
-                ),
-                "test-completion" => builtins::eval_test_completion(
-                    obj_to_value(cdr),
-                    env,
-                    editor,
-                    macros,
-                    state,
-                ),
+                "try-completion" => {
+                    builtins::eval_try_completion(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "all-completions" => {
+                    builtins::eval_all_completions(obj_to_value(cdr), env, editor, macros, state)
+                }
+                "test-completion" => {
+                    builtins::eval_test_completion(obj_to_value(cdr), env, editor, macros, state)
+                }
                 "dolist" => eval_dolist(obj_to_value(cdr), env, editor, macros, state),
                 "dotimes" => eval_dotimes(obj_to_value(cdr), env, editor, macros, state),
                 "maphash" => {
@@ -4872,8 +4857,7 @@ pub(super) fn eval_inner(
                         Ok(state.list_from_objects_reversed(items))
                     } else {
                         let args_list = LispObject::cons(arg, LispObject::nil());
-                        let copied =
-                            crate::primitives::core::list::prim_copy_sequence(&args_list)?;
+                        let copied = crate::primitives::core::list::prim_copy_sequence(&args_list)?;
                         Ok(obj_to_value(copied))
                     }
                 }
@@ -4989,7 +4973,7 @@ pub(super) fn eval_inner(
                         Ok(result) => Ok(obj_to_value(result)),
                         Err(e) if e.is_eval_ops_exceeded() => Err(e),
                         Err(e) => {
-                            eprintln!("byte-code: execution error: {e}");
+                            log::debug!("byte-code: execution error: {e}");
                             Ok(Value::nil())
                         }
                     }
@@ -5052,13 +5036,8 @@ pub(super) fn eval_inner(
                     // a hash-table obarray is given, register the symbol
                     // there so completion can iterate it.
                     if let Some(ob_expr) = cdr.nth(1) {
-                        let ob = value_to_obj(eval(
-                            obj_to_value(ob_expr),
-                            env,
-                            editor,
-                            macros,
-                            state,
-                        )?);
+                        let ob =
+                            value_to_obj(eval(obj_to_value(ob_expr), env, editor, macros, state)?);
                         if let LispObject::HashTable(ht) = &ob {
                             ht.lock().put(&sym, sym.clone());
                         }

@@ -1185,11 +1185,7 @@ pub(super) fn eval_defvar(
             // toplevel default — not the active dynamic binding. The toplevel
             // value lives in the bottom-most specpdl entry's "saved" slot,
             // which `unwind_specpdl` will restore when the outermost let exits.
-            let bottom_idx = state
-                .specpdl
-                .read()
-                .iter()
-                .position(|(sid, _)| *sid == id);
+            let bottom_idx = state.specpdl.read().iter().position(|(sid, _)| *sid == id);
             if let Some(idx) = bottom_idx {
                 state.specpdl.write()[idx].1 = Some(value.clone());
             } else {

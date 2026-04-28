@@ -286,47 +286,356 @@ pub fn prim_file_modes(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_file_attributes(args: &LispObject) -> ElispResult<LispObject> {
-    // (file-attributes FILENAME) — returns a 12-element list. We
-    // provide a stub with reasonable defaults: every slot is nil
-    // except the ones we can fill cheaply.
-    let s = match str_arg(args, 0) {
+    // `(file-attributes FILENAME &optional ID-FORMAT)` — returns the
+    // 12-element list dired and friends consume. ID-FORMAT controls
+    // whether uid/gid come back as integers (default / `'integer`) or
+    // names (`'string`). We use `symlink_metadata` so symlinks aren't
+    // followed (matches Emacs).
+    let path_str = match str_arg(args, 0) {
         Some(s) => s,
         None => return Ok(LispObject::nil()),
     };
-    let meta = match std::fs::metadata(&s) {
+    let id_format = args
+        .nth(1)
+        .and_then(|v| v.as_symbol())
+        .map(|s| s == "string")
+        .unwrap_or(false);
+    let meta = match std::fs::symlink_metadata(&path_str) {
         Ok(m) => m,
         Err(_) => return Ok(LispObject::nil()),
     };
-    let dir = if meta.is_dir() {
+
+    // FILE-TYPE: t for directory, string (target) for symlink, nil
+    // for regular file. dired's listing rendering branches on this.
+    let file_type = if meta.file_type().is_symlink() {
+        std::fs::read_link(&path_str)
+            .ok()
+            .and_then(|target| target.to_str().map(LispObject::string))
+            .unwrap_or(LispObject::nil())
+    } else if meta.is_dir() {
         LispObject::t()
     } else {
         LispObject::nil()
     };
-    // Simple list: (FILE-TYPE nil nil nil nil nil nil SIZE ...).
+
+    let (nlink, uid, gid, ino, dev, mode_bits) = file_attrs_unix(&meta);
+    let (uid_obj, gid_obj) = if id_format {
+        (unix_uid_to_object(uid), unix_gid_to_object(gid))
+    } else {
+        (
+            LispObject::integer(uid as i64),
+            LispObject::integer(gid as i64),
+        )
+    };
+    let mode_string = LispObject::string(&format_mode_string(&meta, mode_bits));
     let size = LispObject::integer(meta.len() as i64);
-    let list = LispObject::cons(
-        dir,
+
+    let atime = system_time_to_emacs_list(meta.accessed().ok());
+    let mtime = system_time_to_emacs_list(meta.modified().ok());
+    let ctime = system_time_to_emacs_list(meta.created().ok());
+
+    // Build the 12-tuple back-to-front via cons.
+    let tail = LispObject::cons(LispObject::integer(dev as i64), LispObject::nil());
+    let tail = LispObject::cons(LispObject::integer(ino as i64), tail);
+    let tail = LispObject::cons(LispObject::nil(), tail); // unused / deprecated
+    let tail = LispObject::cons(mode_string, tail);
+    let tail = LispObject::cons(size, tail);
+    let tail = LispObject::cons(ctime, tail);
+    let tail = LispObject::cons(mtime, tail);
+    let tail = LispObject::cons(atime, tail);
+    let tail = LispObject::cons(gid_obj, tail);
+    let tail = LispObject::cons(uid_obj, tail);
+    let tail = LispObject::cons(LispObject::integer(nlink as i64), tail);
+    Ok(LispObject::cons(file_type, tail))
+}
+
+/// Return `(nlink, uid, gid, inode, device, mode_bits)`.
+/// On Unix these come from `MetadataExt`; on Windows nlink defaults
+/// to 1 and mode_bits is synthesised from the read-only flag.
+#[allow(clippy::cast_possible_wrap)]
+fn file_attrs_unix(meta: &std::fs::Metadata) -> (u64, u32, u32, u64, u64, u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (
+            meta.nlink(),
+            meta.uid(),
+            meta.gid(),
+            meta.ino(),
+            meta.dev(),
+            meta.mode(),
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows: Emacs reports uid=0, gid=0, link-count=1, and a
+        // synthesised mode where the read-only attribute drops the
+        // write bits.
+        let writable = !meta.permissions().readonly();
+        let mode = if meta.is_dir() {
+            if writable { 0o755 } else { 0o555 }
+        } else if writable {
+            0o644
+        } else {
+            0o444
+        };
+        (1, 0, 0, 0, 0, mode)
+    }
+}
+
+#[cfg(unix)]
+fn unix_uid_to_object(uid: u32) -> LispObject {
+    use users::get_user_by_uid;
+    match get_user_by_uid(uid) {
+        Some(user) => LispObject::string(&user.name().to_string_lossy()),
+        None => LispObject::integer(uid as i64),
+    }
+}
+
+#[cfg(unix)]
+fn unix_gid_to_object(gid: u32) -> LispObject {
+    use users::get_group_by_gid;
+    match get_group_by_gid(gid) {
+        Some(group) => LispObject::string(&group.name().to_string_lossy()),
+        None => LispObject::integer(gid as i64),
+    }
+}
+
+#[cfg(not(unix))]
+fn unix_uid_to_object(uid: u32) -> LispObject {
+    LispObject::integer(uid as i64)
+}
+
+#[cfg(not(unix))]
+fn unix_gid_to_object(gid: u32) -> LispObject {
+    LispObject::integer(gid as i64)
+}
+
+/// Render a Unix mode string like "drwxr-xr-x" suitable for dired's
+/// listing column 1. Falls back to a `?` for unknown file types so
+/// the column width stays stable.
+pub(crate) fn format_mode_string(meta: &std::fs::Metadata, mode: u32) -> String {
+    let ft = meta.file_type();
+    let head = if ft.is_dir() {
+        'd'
+    } else if ft.is_symlink() {
+        'l'
+    } else if ft.is_file() {
+        '-'
+    } else {
+        '?'
+    };
+    let bit = |mask: u32, c: char| if mode & mask != 0 { c } else { '-' };
+    format!(
+        "{head}{}{}{}{}{}{}{}{}{}",
+        bit(0o400, 'r'),
+        bit(0o200, 'w'),
+        bit(0o100, 'x'),
+        bit(0o040, 'r'),
+        bit(0o020, 'w'),
+        bit(0o010, 'x'),
+        bit(0o004, 'r'),
+        bit(0o002, 'w'),
+        bit(0o001, 'x'),
+    )
+}
+
+/// Convert a `SystemTime` to Emacs's `(HIGH LOW USEC PSEC)` 4-tuple.
+/// Returns nil when no time is available (some FS don't track ctime
+/// or atime). Emacs callers tolerate either shape.
+fn system_time_to_emacs_list(ts: Option<std::time::SystemTime>) -> LispObject {
+    let Some(ts) = ts else {
+        return LispObject::nil();
+    };
+    let dur = match ts.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d,
+        Err(_) => return LispObject::nil(),
+    };
+    let secs = dur.as_secs();
+    let high = (secs >> 16) as i64;
+    let low = (secs & 0xFFFF) as i64;
+    let usec = (dur.subsec_micros()) as i64;
+    let psec = ((dur.subsec_nanos() % 1000) * 1000) as i64;
+    LispObject::cons(
+        LispObject::integer(high),
         LispObject::cons(
-            LispObject::integer(1), // link count
+            LispObject::integer(low),
             LispObject::cons(
-                LispObject::integer(0), // uid
-                LispObject::cons(
-                    LispObject::integer(0), // gid
-                    LispObject::cons(
-                        LispObject::nil(), // atime
-                        LispObject::cons(
-                            LispObject::nil(), // mtime
-                            LispObject::cons(
-                                LispObject::nil(), // ctime
-                                LispObject::cons(size, LispObject::nil()),
-                            ),
-                        ),
-                    ),
-                ),
+                LispObject::integer(usec),
+                LispObject::cons(LispObject::integer(psec), LispObject::nil()),
             ),
         ),
-    );
-    Ok(list)
+    )
+}
+
+/// `(directory-files-and-attributes DIR &optional FULL MATCH NOSORT ID-FORMAT)`
+/// Returns a list of `(NAME . ATTRS)` pairs — exactly what dired reads
+/// when it builds its initial listing without shelling out to `ls`.
+pub fn prim_directory_files_and_attributes(args: &LispObject) -> ElispResult<LispObject> {
+    let dir = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let full = args.nth(1).map(|a| !a.is_nil()).unwrap_or(false);
+    let id_format_arg = args.nth(4);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(r) => r,
+        Err(_) => return Ok(LispObject::nil()),
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    names.sort();
+    let mut out = LispObject::nil();
+    for name in names.into_iter().rev() {
+        let displayed = if full {
+            format!("{}/{name}", dir.trim_end_matches('/'))
+        } else {
+            name.clone()
+        };
+        let full_path = format!("{}/{name}", dir.trim_end_matches('/'));
+        // Reuse prim_file_attributes by feeding it (path id-format).
+        let attrs_args = LispObject::cons(
+            LispObject::string(&full_path),
+            match &id_format_arg {
+                Some(v) => LispObject::cons(v.clone(), LispObject::nil()),
+                None => LispObject::nil(),
+            },
+        );
+        let attrs = prim_file_attributes(&attrs_args)?;
+        out = LispObject::cons(LispObject::cons(LispObject::string(&displayed), attrs), out);
+    }
+    Ok(out)
+}
+
+/// `(set-file-modes FILENAME MODE &optional FLAG)` — chmod.
+pub fn prim_set_file_modes(args: &LispObject) -> ElispResult<LispObject> {
+    let path = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let mode = int_arg(args, 1, 0o644);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(mode as u32 & 0o7777);
+        std::fs::set_permissions(&path, perms).map_err(|e| ElispError::FileError {
+            operation: "set-file-modes".into(),
+            path,
+            message: e.to_string(),
+        })?;
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows only honors the readonly bit; map mode 0o2** to RO.
+        let writable = mode & 0o200 != 0;
+        if let Ok(meta) = std::fs::metadata(&path) {
+            let mut perms = meta.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(!writable);
+            std::fs::set_permissions(&path, perms).map_err(|e| ElispError::FileError {
+                operation: "set-file-modes".into(),
+                path,
+                message: e.to_string(),
+            })?;
+        }
+    }
+    Ok(LispObject::nil())
+}
+
+/// `(set-file-times FILENAME &optional TIME FLAG)` — touch the mtime
+/// and atime. We accept only float seconds for TIME today; the
+/// `(HIGH LOW USEC PSEC)` tuple shape is a follow-up.
+pub fn prim_set_file_times(args: &LispObject) -> ElispResult<LispObject> {
+    let path = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let when = match args.nth(1) {
+        Some(LispObject::Float(f)) => std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(f),
+        _ => std::time::SystemTime::now(),
+    };
+    let ft = filetime::FileTime::from_system_time(when);
+    // Emacs's set-file-times sets BOTH atime and mtime to the same
+    // value; matching that here. If we ever care about distinguishing
+    // them we can extend the signature.
+    if filetime::set_file_times(&path, ft, ft).is_err() {
+        return Ok(LispObject::nil());
+    }
+    Ok(LispObject::t())
+}
+
+/// `(make-symbolic-link TARGET LINKNAME &optional OK-IF-EXISTS)`
+pub fn prim_make_symbolic_link(args: &LispObject) -> ElispResult<LispObject> {
+    let target = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let link = str_arg(args, 1).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let ok_if_exists = args.nth(2).map(|a| !a.is_nil()).unwrap_or(false);
+    if ok_if_exists {
+        let _ = std::fs::remove_file(&link);
+    }
+    let res = {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, &link)
+        }
+        #[cfg(windows)]
+        {
+            // On Windows symlinks need to know whether the target is
+            // a directory and require either admin privileges or
+            // Developer Mode. Pick file-vs-dir based on the target's
+            // metadata; degrade silently if it doesn't exist yet.
+            let is_dir = std::fs::metadata(&target)
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+            if is_dir {
+                std::os::windows::fs::symlink_dir(&target, &link)
+            } else {
+                std::os::windows::fs::symlink_file(&target, &link)
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "symlinks not supported on this platform",
+            ))
+        }
+    };
+    res.map_err(|e| ElispError::FileError {
+        operation: "make-symbolic-link".into(),
+        path: link,
+        message: e.to_string(),
+    })?;
+    Ok(LispObject::nil())
+}
+
+/// `(add-name-to-file FILE NEWNAME &optional OK-IF-EXISTS)` — hard link.
+pub fn prim_add_name_to_file(args: &LispObject) -> ElispResult<LispObject> {
+    let src = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let dst = str_arg(args, 1).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let ok_if_exists = args.nth(2).map(|a| !a.is_nil()).unwrap_or(false);
+    if ok_if_exists {
+        let _ = std::fs::remove_file(&dst);
+    }
+    std::fs::hard_link(&src, &dst).map_err(|e| ElispError::FileError {
+        operation: "add-name-to-file".into(),
+        path: dst,
+        message: e.to_string(),
+    })?;
+    Ok(LispObject::nil())
+}
+
+/// `(copy-directory DIRECTORY NEWNAME &optional KEEP-TIME PARENTS COPY-CONTENTS)`
+/// Wraps `fs_extra::dir::copy`, which handles the per-platform quirks
+/// `std::fs` doesn't (recursion, overwrite, target-already-exists).
+pub fn prim_copy_directory(args: &LispObject) -> ElispResult<LispObject> {
+    let from = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let to = str_arg(args, 1).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let copy_contents = args.nth(4).map(|a| !a.is_nil()).unwrap_or(false);
+
+    let mut opts = fs_extra::dir::CopyOptions::new();
+    opts.overwrite = true;
+    opts.copy_inside = true;
+    opts.content_only = copy_contents;
+
+    fs_extra::dir::copy(&from, &to, &opts).map_err(|e| ElispError::FileError {
+        operation: "copy-directory".into(),
+        path: from,
+        message: e.to_string(),
+    })?;
+    Ok(LispObject::nil())
 }
 
 pub fn prim_directory_files(args: &LispObject) -> ElispResult<LispObject> {
@@ -831,8 +1140,14 @@ pub fn call_file_primitive(
         "file-executable-p" => prim_file_executable_p(args),
         "file-symlink-p" => prim_file_symlink_p(args),
         "file-modes" => prim_file_modes(args),
+        "set-file-modes" => prim_set_file_modes(args),
+        "set-file-times" => prim_set_file_times(args),
+        "make-symbolic-link" => prim_make_symbolic_link(args),
+        "add-name-to-file" => prim_add_name_to_file(args),
+        "copy-directory" => prim_copy_directory(args),
         "file-attributes" => prim_file_attributes(args),
         "directory-files" => prim_directory_files(args),
+        "directory-files-and-attributes" => prim_directory_files_and_attributes(args),
         "make-directory" => prim_make_directory(args),
         "delete-directory" => prim_delete_directory(args),
         "delete-file" => prim_delete_file(args),
@@ -885,8 +1200,14 @@ pub const FILE_PRIMITIVE_NAMES: &[&str] = &[
     "file-executable-p",
     "file-symlink-p",
     "file-modes",
+    "set-file-modes",
+    "set-file-times",
+    "make-symbolic-link",
+    "add-name-to-file",
+    "copy-directory",
     "file-attributes",
     "directory-files",
+    "directory-files-and-attributes",
     "make-directory",
     "delete-directory",
     "delete-file",

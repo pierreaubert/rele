@@ -716,10 +716,15 @@ impl Render for EditorPane {
                     return;
                 }
 
+                // Clipboard shortcuts: only the *platform* modifier
+                // (Cmd on macOS, the configured "secondary" elsewhere)
+                // — NOT plain Ctrl. Otherwise `Ctrl+X` gets eaten as
+                // "cut" and the Emacs `C-x` chord prefix never fires,
+                // which kills `C-x C-c`, `C-x C-s`, `C-x C-f`, etc.
                 let clipboard_op = match key {
-                    "c" if modifier => Some("copy"),
-                    "x" if modifier && !shift => Some("cut"),
-                    "v" if modifier => Some("paste"),
+                    "c" if cmd => Some("copy"),
+                    "x" if cmd && !shift => Some("cut"),
+                    "v" if cmd => Some("paste"),
                     _ => None,
                 };
 
@@ -751,6 +756,10 @@ impl Render for EditorPane {
                     }
                 } else {
                     let page_lines = page_lines_for_height(viewport_height_for_keys.get());
+                    // Set inside the state.update closure when `C-x C-c`
+                    // fires; checked + acted on after the closure
+                    // returns since `cx.quit()` needs the outer `cx`.
+                    let want_quit = std::cell::Cell::new(false);
                     state_for_keys.update(cx, |s, _cx| {
                         // Esc as Meta prefix (classic Emacs terminal convention):
                         // pressing Escape then a key is equivalent to Alt+key.
@@ -804,6 +813,21 @@ impl Render for EditorPane {
                                 // C-x C-f — find file (minibuffer)
                                 "f" if ctrl => {
                                     s.minibuffer_start_find_file();
+                                }
+                                // C-x C-s — save current buffer.
+                                "s" if ctrl => {
+                                    let _ = s.save_file_from_elisp();
+                                }
+                                // C-x C-c — quit the editor. The
+                                // top-level keymap binds this to
+                                // `Quit` but the per-key on_key_down
+                                // intercepts `C-x` first, which
+                                // shadows the chord; dispatch the
+                                // action directly here so the
+                                // binding works on the first
+                                // keystroke after launch.
+                                "c" if ctrl => {
+                                    want_quit.set(true);
                                 }
                                 // C-x right — next buffer
                                 "right" => {
@@ -1098,6 +1122,12 @@ impl Render for EditorPane {
                             }
                         }
                     });
+                    if want_quit.get() {
+                        // Outside the state.update closure so we can
+                        // touch the App context — `cx.quit()` shuts
+                        // the editor down.
+                        cx.quit();
+                    }
                 }
                 window.refresh();
             })

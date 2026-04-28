@@ -78,6 +78,15 @@ fn page_size(state: &TuiAppState) -> usize {
     if h > 2 { h - 2 } else { 20 }
 }
 
+fn save_buffers_and_quit(state: &mut TuiAppState) {
+    // Don't quit on save failure — the user would silently lose
+    // file-backed edits otherwise. Non-file buffers such as
+    // `*scratch*` are skipped by `save_dirty_file_buffers`.
+    if state.save_dirty_file_buffers().is_ok() {
+        state.should_quit = true;
+    }
+}
+
 /// Register all builtin Emacs-style commands.
 #[allow(clippy::too_many_lines)]
 pub fn register_builtin_commands(registry: &mut CommandRegistry) {
@@ -189,13 +198,9 @@ pub fn register_builtin_commands(registry: &mut CommandRegistry) {
         InteractiveSpec::None,
         |s, _| s.insert_text("\n"),
     );
-    registry.register_fn(
-        "kill-line",
-        "Kill text from cursor to end of line",
-        Editing,
-        InteractiveSpec::None,
-        |s, _| s.kill_line(),
-    );
+    // kill-line is now an elisp defun in
+    // `crates/server/lisp/commands.el`, dispatched through the
+    // `editor--kill-line` primitive.
     registry.register_fn(
         "undo",
         "Undo last edit",
@@ -332,18 +337,18 @@ pub fn register_builtin_commands(registry: &mut CommandRegistry) {
     // ---- Buffer / quit ----
 
     registry.register_fn(
-        "save-buffers-kill-emacs",
-        "Save and quit",
+        "save-buffers-kill-terminal",
+        "Save file buffers and quit",
         Buffer,
         InteractiveSpec::None,
-        |s, _| {
-            // Don't quit on save failure — the user would silently
-            // lose edits otherwise. save_file sets a descriptive
-            // error message on `state.message`.
-            if s.save_file().is_ok() {
-                s.should_quit = true;
-            }
-        },
+        |s, _| save_buffers_and_quit(s),
+    );
+    registry.register_fn(
+        "save-buffers-kill-emacs",
+        "Save file buffers and quit",
+        Buffer,
+        InteractiveSpec::None,
+        |s, _| save_buffers_and_quit(s),
     );
     registry.register_fn(
         "kill-emacs",

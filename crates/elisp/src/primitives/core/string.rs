@@ -515,9 +515,7 @@ pub fn prim_string_width(args: &LispObject) -> ElispResult<LispObject> {
             .ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
         let idx = if n < 0 { len + n } else { n };
         if idx < 0 || idx > len {
-            return Err(ElispError::EvalError(format!(
-                "args-out-of-range: {n}"
-            )));
+            return Err(ElispError::EvalError(format!("args-out-of-range: {n}")));
         }
         Ok(Some(idx))
     }

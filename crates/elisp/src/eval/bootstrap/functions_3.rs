@@ -138,6 +138,55 @@ pub fn load_prerequisites(interp: &Interpreter) {
     if let Ok(s) = std::fs::read_to_string(&format!("{STDLIB_DIR}/subr.el")) {
         let _ = interp.eval_source(&s);
     }
+    apply_post_subr_workarounds(interp);
+}
+
+/// Override a few subr.el helpers that trigger an interpreter bug:
+/// when a `(let ((X val)) ...)` body invokes `mapcar` with a lambda
+/// that does `(setq X new)`, the let binding leaks beyond its
+/// dynamic extent. The upstream `internal--build-bindings` and the
+/// `with-file-name-handler` helpers use exactly that pattern; replace
+/// them with `dolist` versions that loop without a closure.
+///
+/// Replacing the callers is far cheaper than fixing the underlying
+/// closure-vs-let interaction in the evaluator, which has many subtle
+/// invariants (`propagate_lexical_mutations`,
+/// `sync_changed_closure_captures_to_env`, the specpdl). When that
+/// fix lands, this workaround can go away — but the macros used by
+/// `if-let*` / `when-let*` / `and-let*` are heavily exercised by
+/// every Emacs library, so we need them correct *now* to make any
+/// non-trivial stdlib file (dired, files, custom, …) actually run.
+fn apply_post_subr_workarounds(interp: &Interpreter) {
+    let src = r#"
+(defun internal--build-binding (binding prev-var)
+  "Workaround variant: build the binding entry without the `(let ((var
+\\=(car binding))) `(,var (and ,prev-var ,(cadr binding))))' shape
+that triggers the rele backquote/let interaction bug. Construct the
+result via `list' instead of backquote."
+  (let ((b (cond
+            ((symbolp binding) (list binding binding))
+            ((null (cdr binding)) (list (make-symbol "s") (car binding)))
+            ((eq '_ (car binding)) (list (make-symbol "s") (cadr binding)))
+            (t binding))))
+    (when (> (length b) 2)
+      (signal 'error (cons "`let' bindings can have only one value-form" b)))
+    (list (car b)
+          (list 'and prev-var (cadr b)))))
+
+(defun internal--build-bindings (bindings)
+  "Workaround for the rele evaluator bug: rewrite using dolist so the
+let binding for `prev-var` doesn't leak through a mapcar closure."
+  (let ((prev-var t)
+        (out nil))
+    (dolist (binding bindings)
+      (let ((entry (internal--build-binding binding prev-var)))
+        (push entry out)
+        (setq prev-var (car entry))))
+    (nreverse out)))
+"#;
+    if let Err(e) = interp.eval_source(src) {
+        eprintln!("post-subr workaround failed: {e:?}");
+    }
 }
 /// Run a stdlib loading test: parse all forms, eval each, count successes.
 /// If the reader fails to parse the source, returns the reader error.
@@ -352,15 +401,37 @@ pub fn emacs_lisp_dir() -> Option<&'static str> {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Option<String>> = OnceLock::new();
     let slot = CACHED.get_or_init(|| {
+        // Helper: prefer dirs that have `subr.el` source, since
+        // our bytecode VM has gaps on `.elc` files. Fall back to
+        // any dir if no source-bearing one is found.
+        let has_source = |p: &str| std::path::Path::new(&format!("{p}/subr.el")).is_file();
+
         if let Ok(p) = std::env::var("EMACS_LISP_DIR") {
             if std::path::Path::new(&p).is_dir() {
                 return Some(p);
             }
         }
-        let pinned: &[&str] = &["/opt/homebrew/share/emacs/30.2/lisp"];
-        for p in pinned {
-            if std::path::Path::new(p).is_dir() {
+        // Source-tree pins (where `make` was run but not `make install`).
+        // Strongly preferred over installs because they ship `.el`
+        // alongside `.elc` and our interpreter handles `.el` better.
+        let source_pins: &[&str] = &[
+            "/Volumes/home_ext1/Src/emacs/lisp",
+            "/Users/pierre/src/emacs/lisp",
+        ];
+        for p in source_pins {
+            if has_source(p) {
                 return Some((*p).to_string());
+            }
+        }
+        // Installed pins. Used when no source tree is available.
+        let install_pins: &[&str] = &["/opt/homebrew/share/emacs/30.2/lisp"];
+        let mut install_fallback: Option<String> = None;
+        for p in install_pins {
+            if std::path::Path::new(p).is_dir() {
+                if has_source(p) {
+                    return Some((*p).to_string());
+                }
+                install_fallback.get_or_insert_with(|| (*p).to_string());
             }
         }
         let parents: &[&str] = &[
@@ -383,11 +454,14 @@ pub fn emacs_lisp_dir() -> Option<&'static str> {
             for v in versions {
                 let lisp = format!("{parent}/{v}/lisp");
                 if std::path::Path::new(&lisp).is_dir() {
-                    return Some(lisp);
+                    if has_source(&lisp) {
+                        return Some(lisp);
+                    }
+                    install_fallback.get_or_insert(lisp);
                 }
             }
         }
-        None
+        install_fallback
     });
     slot.as_deref()
 }

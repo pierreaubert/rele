@@ -297,9 +297,17 @@ pub fn prim_copy_keymap(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_set_current_map_key(name: &str, args: &LispObject) -> ElispResult<LispObject> {
-    let _ = name;
-    let _key = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let key = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let def = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    // Only `(global-set-key KEY 'cmd)` populates the user keybinding
+    // table that client key handlers consult — `local-set-key` is
+    // per-buffer in Emacs and we don't model that today.
+    if name == "global-set-key"
+        && let LispObject::String(key_str) = &key
+        && let Some(cmd_name) = def.as_symbol()
+    {
+        crate::primitives_window::record_global_keybinding(key_str.clone(), cmd_name);
+    }
     Ok(def)
 }
 

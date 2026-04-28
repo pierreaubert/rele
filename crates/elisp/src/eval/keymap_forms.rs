@@ -151,6 +151,12 @@ fn eval_set_current_map_key(
     let def_form = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     let key = eval_arg(key_form, env, editor, macros, state)?;
     let def = eval_arg(def_form, env, editor, macros, state)?;
+    if slot_name == CURRENT_GLOBAL_MAP_SYMBOL
+        && let LispObject::String(key_str) = &key
+        && let Some(cmd_name) = def.as_symbol()
+    {
+        crate::primitives_window::record_global_keybinding(key_str.clone(), cmd_name);
+    }
     let target = state_map(state, slot_name, true);
     let primitive_args = LispObject::cons(
         target,
@@ -310,6 +316,16 @@ fn set_current_map_key_value(
 ) -> ElispResult<LispObject> {
     let key = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let def = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    // Record user-level `(global-set-key "C-x" 'cmd)` so client key
+    // handlers can consult `lookup_global_key` before their built-in
+    // dispatch table. Skip `local-set-key` — that's per-buffer and
+    // we don't model that today.
+    if slot_name == CURRENT_GLOBAL_MAP_SYMBOL
+        && let LispObject::String(key_str) = &key
+        && let Some(cmd_name) = def.as_symbol()
+    {
+        crate::primitives_window::record_global_keybinding(key_str.clone(), cmd_name);
+    }
     let target = state_map(state, slot_name, true);
     let primitive_args = LispObject::cons(
         target,

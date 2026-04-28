@@ -788,8 +788,48 @@ pub(super) fn eval_load(
         file_str.as_str(),
         "cp51932" | "eucjp-ms" | "treesit" | "international/cp51932" | "international/eucjp-ms"
     );
+    // User code can override the default suffix order by setting
+    // `load-suffixes` (e.g. `(setq load-suffixes '(".el" ".elc"))`
+    // forces source-load even where bytecode would have been
+    // tried first). Useful for the GPUI client which wants to
+    // load `.el` over `.elc` because the bytecode VM has gaps.
+    // Look in both the env (where `setq` writes) and the symbol's
+    // value cell (where bootstrap `interp.define` writes); whichever
+    // has a non-nil binding wins.
+    let load_suffixes_id = crate::obarray::intern("load-suffixes");
+    let env_value = state
+        .global_env
+        .read()
+        .get_id(load_suffixes_id)
+        .unwrap_or(LispObject::nil());
+    let user_suffixes_obj = if !env_value.is_nil() {
+        env_value
+    } else {
+        state
+            .get_value_cell(load_suffixes_id)
+            .unwrap_or(LispObject::nil())
+    };
+    let mut user_suffixes: Vec<String> = Vec::new();
+    {
+        let mut cur = user_suffixes_obj;
+        while let Some((s, rest)) = cur.destructure_cons() {
+            if let Some(suf) = s.as_string() {
+                user_suffixes.push(suf.clone());
+            }
+            cur = rest;
+        }
+    }
+    // Always include "" so absolute / explicit paths resolve.
+    let owned_suffixes: Vec<&str>;
     let suffixes: &[&str] = if nosuffix {
         &["", ".gz"]
+    } else if !user_suffixes.is_empty() {
+        owned_suffixes = user_suffixes
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(""))
+            .collect();
+        &owned_suffixes[..]
     } else if prefer_source {
         &[".el", ".el.gz", ".elc", ""]
     } else {
@@ -853,14 +893,37 @@ pub(super) fn eval_load(
             std::fs::read_to_string(path).ok()
         };
         if let Some(source) = source {
-            eprintln!("load: reading {path} ({} bytes)", source.len());
+            log::debug!("load: reading {path} ({} bytes)", source.len());
             let forms = crate::read_all(&source).map_err(|_| ElispError::FileError {
                 operation: "load".into(),
                 path: path.clone(),
                 message: "read error".into(),
             })?;
-            eprintln!("load: parsed {} forms from {path}", forms.len());
+            log::debug!("load: parsed {} forms from {path}", forms.len());
             let is_elc = path.ends_with(".elc");
+            // Bind `load-file-name` and `load-true-file-name` to the
+            // path being loaded — Emacs convention; many libraries
+            // (themes, autoloads, …) reference these to compute
+            // companion-file paths. Save the prior values to restore
+            // after the load completes.
+            let load_file_sym = crate::obarray::intern("load-file-name");
+            let load_true_sym = crate::obarray::intern("load-true-file-name");
+            let prev_load_file = state.get_value_cell(load_file_sym);
+            let prev_load_true = state.get_value_cell(load_true_sym);
+            // Both env and value-cell paths are consulted by symbol
+            // lookup depending on whether the symbol is special; set
+            // both so theme files (which check `(boundp
+            // 'load-file-name)`) get the answer they expect.
+            state.set_value_cell(load_file_sym, LispObject::string(path));
+            state.set_value_cell(load_true_sym, LispObject::string(path));
+            state
+                .global_env
+                .write()
+                .set_id(load_file_sym, LispObject::string(path));
+            state
+                .global_env
+                .write()
+                .set_id(load_true_sym, LispObject::string(path));
             let forms_count = forms.len();
             let mut ok: usize = 0;
             // Phase 7: be tolerant of per-form errors during load.
@@ -881,7 +944,7 @@ pub(super) fn eval_load(
                     let limit = state
                         .eval_ops_limit
                         .load(std::sync::atomic::Ordering::Relaxed);
-                    eprintln!(
+                    log::warn!(
                         "load {path}: wall-clock timeout at form {i}/{forms_count} (ops={ops}, limit={limit})"
                     );
                     break;
@@ -903,13 +966,13 @@ pub(super) fn eval_load(
                     if e.is_eval_ops_exceeded() {
                         return Err(e);
                     }
-                    eprintln!("load {path}: form {i}: {e}");
+                    log::debug!("load {path}: form {i}: {e}");
                     // Early-abort for .elc: if the first 8 forms all
                     // failed, the bytecode VM almost certainly can't
                     // handle this file. Bail out fast instead of
                     // burning eval-ops on hundreds of doomed forms.
                     if is_elc && ok == 0 && i >= 7 {
-                        eprintln!(
+                        log::warn!(
                             "load {path}: first {} bytecode forms failed, aborting early",
                             i + 1
                         );
@@ -917,6 +980,34 @@ pub(super) fn eval_load(
                     }
                 } else {
                     ok += 1;
+                }
+            }
+            // Restore the previous bindings (or unbind if nothing
+            // was set before — `load` is allowed to nest).
+            match prev_load_file {
+                Some(v) => {
+                    state.set_value_cell(load_file_sym, v.clone());
+                    state.global_env.write().set_id(load_file_sym, v);
+                }
+                None => {
+                    state.set_value_cell(load_file_sym, LispObject::nil());
+                    state
+                        .global_env
+                        .write()
+                        .set_id(load_file_sym, LispObject::nil());
+                }
+            }
+            match prev_load_true {
+                Some(v) => {
+                    state.set_value_cell(load_true_sym, v.clone());
+                    state.global_env.write().set_id(load_true_sym, v);
+                }
+                None => {
+                    state.set_value_cell(load_true_sym, LispObject::nil());
+                    state
+                        .global_env
+                        .write()
+                        .set_id(load_true_sym, LispObject::nil());
                 }
             }
             run_after_load_hooks(&file_str, path, env, editor, macros, state)?;
@@ -1029,7 +1120,10 @@ fn collection_candidates(coll: &LispObject) -> Vec<(String, LispObject, Option<L
                         if p.starts_with('"') && p.ends_with('"') && p.len() >= 2 {
                             let inner = &p[1..p.len() - 1];
                             (inner.to_string(), LispObject::string(inner))
-                        } else if p.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                        } else if p
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c.is_alphabetic() || c == '_')
                         {
                             (p.clone(), LispObject::symbol(p))
                         } else {
@@ -1059,10 +1153,7 @@ fn longest_common_prefix(a: &str, b: &str) -> String {
     out
 }
 
-fn completion_regexp_list(
-    env: &Arc<RwLock<Environment>>,
-    state: &InterpreterState,
-) -> Vec<String> {
+fn completion_regexp_list(env: &Arc<RwLock<Environment>>, state: &InterpreterState) -> Vec<String> {
     let id = crate::obarray::intern("completion-regexp-list");
     // Read the dynamic value: env walks let-bindings first, then falls back
     // to the value cell. `let` on non-special vars only updates env.
@@ -1109,10 +1200,7 @@ fn predicate_accepts(
         return Ok(true);
     }
     let call_args = match extra {
-        Some(e) => LispObject::cons(
-            raw.clone(),
-            LispObject::cons(e.clone(), LispObject::nil()),
-        ),
+        Some(e) => LispObject::cons(raw.clone(), LispObject::cons(e.clone(), LispObject::nil())),
         None => LispObject::cons(raw.clone(), LispObject::nil()),
     };
     // Try the call; if the predicate doesn't accept two args, fall back to

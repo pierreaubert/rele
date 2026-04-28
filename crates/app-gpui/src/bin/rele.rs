@@ -27,9 +27,12 @@ fn main() {
             .scrollable(false)
             .with_theme(true),
         move |cx| {
-            // Register keybindings
+            // Register keybindings — default to the Emacs preset so
+            // basic chord commands (`C-x C-s`, `C-x C-c`, `C-x C-f`,
+            // `M-x`, …) work at first launch. Users can switch to
+            // Default / Vim from the menu if they prefer.
             let provider = MdKeybindingProvider;
-            let bindings = provider.bindings(KeymapPreset::Default);
+            let bindings = provider.bindings(KeymapPreset::Emacs);
             cx.bind_keys(bindings);
 
             // Create state — load first file into the active buffer, rest as
@@ -431,7 +434,14 @@ fn register_actions(cx: &mut App) {
     // Emacs commands
     cx.on_action::<actions::Abort>(|_action, cx| {
         let state = cx.global::<MdGlobalState>().0.clone();
-        state.update(cx, |s, _cx| s.abort());
+        // Route C-g through the elisp `keyboard-quit` defun so
+        // `~/.gpui-md.el` can advise/hook it. The defun bottoms out
+        // in `editor--keyboard-quit` which calls `MdAppState::abort`
+        // (selection clear, isearch abort, palette dismiss, prefix
+        // clear, cancel-flag flip).
+        state.update(cx, |s, _cx| {
+            s.run_command_direct("keyboard-quit", gpui_md::commands::CommandArgs::default());
+        });
     });
 
     cx.on_action::<actions::UpcaseWord>(|_action, cx| {
