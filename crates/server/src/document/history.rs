@@ -6,6 +6,7 @@ use ropey::Rope;
 ///
 /// Uses clone-on-write semantics from ropey's Rope for efficient snapshots.
 /// Each entry stores both the document state and cursor position at that point.
+#[derive(Clone)]
 pub struct EditHistory {
     undo_stack: VecDeque<(Rope, usize)>,
     redo_stack: VecDeque<(Rope, usize)>,

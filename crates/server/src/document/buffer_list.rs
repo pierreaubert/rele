@@ -36,6 +36,7 @@ impl BufferKind {
 
 /// A buffer that is not currently active. The active buffer's data lives
 /// directly on `MdAppState` as `document`/`cursor`/`history`.
+#[derive(Clone)]
 pub struct StoredBuffer {
     pub id: BufferId,
     pub name: String,

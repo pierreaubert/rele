@@ -56,6 +56,7 @@ struct DerivedCache {
 }
 
 /// Rope-backed document buffer with file tracking and dirty state.
+#[derive(Debug)]
 pub struct DocumentBuffer {
     rope: Rope,
     file_path: Option<PathBuf>,
@@ -69,6 +70,20 @@ pub struct DocumentBuffer {
     /// Cached buffer-wide stats (word count, etc.). Invalidated via
     /// `version` bump on every mutation.
     derived: DerivedCache,
+}
+
+impl Clone for DocumentBuffer {
+    fn clone(&self) -> Self {
+        Self {
+            rope: self.rope.clone(),
+            file_path: self.file_path.clone(),
+            dirty: self.dirty,
+            version: self.version,
+            change_journal: self.change_journal.clone(),
+            full_sync_needed: self.full_sync_needed,
+            derived: DerivedCache::default(),
+        }
+    }
 }
 
 impl DocumentBuffer {
@@ -185,6 +200,12 @@ impl DocumentBuffer {
 
     pub fn is_dirty(&self) -> bool {
         self.dirty
+    }
+
+    /// Whether this buffer has unsaved edits that can be written to an
+    /// existing backing file.
+    pub fn needs_file_save(&self) -> bool {
+        self.dirty && self.file_path.is_some()
     }
 
     pub fn mark_clean(&mut self) {
@@ -434,6 +455,22 @@ mod tests {
         let (changes, full) = buf.drain_changes();
         assert!(changes.is_empty());
         assert!(full);
+    }
+
+    #[test]
+    fn needs_file_save_requires_dirty_file_backed_buffer() {
+        let mut scratch = DocumentBuffer::from_text("scratch");
+        assert!(!scratch.needs_file_save());
+        scratch.insert(7, " text");
+        assert!(!scratch.needs_file_save());
+
+        let path = PathBuf::from("note.md");
+        let mut file = DocumentBuffer::from_file(path, "hello");
+        assert!(!file.needs_file_save());
+        file.insert(5, "!");
+        assert!(file.needs_file_save());
+        file.mark_clean();
+        assert!(!file.needs_file_save());
     }
 
     #[test]

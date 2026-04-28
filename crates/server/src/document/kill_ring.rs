@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 
 const MAX_RING_SIZE: usize = 60;
 
+#[derive(Clone)]
 pub struct KillRing {
     ring: VecDeque<String>,
     /// Index for yank-pop cycling (0 = most recent).
