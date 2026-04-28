@@ -59,6 +59,9 @@ pub struct EditorCore {
     pub last_move_was_vertical: bool,
     pub message: Option<String>,
     pub keyboard_quit_requested: bool,
+    pub preview_toggle_requested: bool,
+    pub line_numbers_toggle_requested: bool,
+    pub preview_line_numbers_toggle_requested: bool,
 }
 
 impl Default for EditorCore {
@@ -86,6 +89,9 @@ impl EditorCore {
             last_move_was_vertical: false,
             message: None,
             keyboard_quit_requested: false,
+            preview_toggle_requested: false,
+            line_numbers_toggle_requested: false,
+            preview_line_numbers_toggle_requested: false,
         }
     }
 
@@ -347,6 +353,199 @@ impl EditorCore {
         }
     }
 
+    pub fn kill_word(&mut self, n: i64) {
+        if n > 0 {
+            for _ in 0..n as usize {
+                self.kill_word_forward();
+            }
+        } else if n < 0 {
+            for _ in 0..(-n) as usize {
+                self.kill_word_backward();
+            }
+        }
+    }
+
+    pub fn kill_word_forward(&mut self) {
+        self.last_edit_was_char_insert = false;
+        let start = self.cursor.position.min(self.document.len_chars());
+        let rope = self.document.rope();
+        let len = rope.len_chars();
+        let mut end = start;
+
+        while end < len {
+            let ch = rope.char(end);
+            if ch.is_alphanumeric() || ch == '_' {
+                break;
+            }
+            end += 1;
+        }
+        while end < len {
+            let ch = rope.char(end);
+            if !ch.is_alphanumeric() && ch != '_' {
+                break;
+            }
+            end += 1;
+        }
+
+        if end > start {
+            let killed = self.document.rope().slice(start..end).to_string();
+            self.history.push_undo(self.document.snapshot(), start);
+            self.document.remove(start, end);
+            self.cursor.position = start;
+            self.kill_ring.push(killed);
+        }
+    }
+
+    pub fn kill_word_backward(&mut self) {
+        self.last_edit_was_char_insert = false;
+        let end = self.cursor.position.min(self.document.len_chars());
+        let rope = self.document.rope();
+        let mut start = end;
+
+        while start > 0 {
+            let ch = rope.char(start - 1);
+            if ch.is_alphanumeric() || ch == '_' {
+                break;
+            }
+            start -= 1;
+        }
+        while start > 0 {
+            let ch = rope.char(start - 1);
+            if !ch.is_alphanumeric() && ch != '_' {
+                break;
+            }
+            start -= 1;
+        }
+
+        if end > start {
+            let killed = self.document.rope().slice(start..end).to_string();
+            self.history.push_undo(self.document.snapshot(), end);
+            self.cursor.position = start;
+            self.document.remove(start, end);
+            self.kill_ring.push_prepend(killed);
+        }
+    }
+
+    pub fn yank(&mut self) {
+        self.last_edit_was_char_insert = false;
+        if let Some(text) = self.kill_ring.yank().map(str::to_string) {
+            self.history
+                .push_undo(self.document.snapshot(), self.cursor.position);
+
+            if let Some((start, end)) = self.cursor.selection() {
+                self.document.remove(start, end);
+                self.cursor.position = start;
+                self.cursor.clear_selection();
+            }
+
+            let start = self.cursor.position;
+            self.document.insert(start, &text);
+            let end = start + text.chars().count();
+            self.cursor.position = end;
+            self.kill_ring.mark_yank(start, end);
+        }
+    }
+
+    pub fn yank_pop(&mut self) {
+        self.last_edit_was_char_insert = false;
+        if let Some((start, end)) = self.kill_ring.last_yank_range()
+            && let Some(text) = self.kill_ring.yank_pop().map(str::to_string)
+        {
+            self.history
+                .push_undo(self.document.snapshot(), self.cursor.position);
+            self.document.remove(start, end);
+            self.document.insert(start, &text);
+            let new_end = start + text.chars().count();
+            self.cursor.position = new_end;
+            self.kill_ring.mark_yank(start, new_end);
+        }
+    }
+
+    pub fn upcase_word(&mut self) {
+        self.replace_word_at_point(|word| word.to_uppercase());
+    }
+
+    pub fn downcase_word(&mut self) {
+        self.replace_word_at_point(|word| word.to_lowercase());
+    }
+
+    pub fn transpose_chars(&mut self) {
+        self.last_edit_was_char_insert = false;
+        let pos = self.cursor.position;
+        let len = self.document.len_chars();
+        if len < 2 || pos == 0 {
+            return;
+        }
+
+        let (a, b) = if pos >= len {
+            (len - 2, len - 1)
+        } else {
+            (pos - 1, pos)
+        };
+        let rope = self.document.rope();
+        let ch_a = rope.char(a);
+        let ch_b = rope.char(b);
+        if ch_a == ch_b {
+            self.cursor.position = (b + 1).min(len);
+            return;
+        }
+
+        self.history
+            .push_undo(self.document.snapshot(), self.cursor.position);
+        self.document.remove(a, b + 1);
+        self.document.insert(a, &format!("{ch_b}{ch_a}"));
+        self.cursor.position = (b + 1).min(self.document.len_chars());
+    }
+
+    pub fn transpose_words(&mut self) {
+        self.last_edit_was_char_insert = false;
+        let original_pos = self.cursor.position;
+
+        self.move_word_right(false);
+        let word2_end = self.cursor.position;
+        self.move_word_left(false);
+        let word2_start = self.cursor.position;
+        if word2_start == 0 {
+            self.cursor.position = original_pos;
+            return;
+        }
+
+        self.cursor.position = word2_start;
+        self.move_word_left(false);
+        let word1_start = self.cursor.position;
+        self.move_word_right(false);
+        let word1_end = self.cursor.position;
+
+        if word1_start == word2_start || word1_end > word2_start {
+            self.cursor.position = original_pos;
+            return;
+        }
+
+        let rope = self.document.rope();
+        let word1 = rope.slice(word1_start..word1_end).to_string();
+        let word2 = rope.slice(word2_start..word2_end).to_string();
+
+        self.history
+            .push_undo(self.document.snapshot(), original_pos);
+        self.document.remove(word2_start, word2_end);
+        self.document.insert(word2_start, &word1);
+        self.document.remove(word1_start, word1_end);
+        self.document.insert(word1_start, &word2);
+        self.cursor.position = word2_start + word1.chars().count();
+    }
+
+    pub fn set_mark(&mut self) {
+        self.cursor.anchor = Some(self.cursor.position);
+    }
+
+    pub fn exchange_point_and_mark(&mut self) {
+        if let Some(anchor) = self.cursor.anchor {
+            let old_pos = self.cursor.position;
+            self.cursor.position = anchor;
+            self.cursor.anchor = Some(old_pos);
+        }
+    }
+
     pub fn undo(&mut self) {
         self.last_edit_was_char_insert = false;
         if let Some((snapshot, cursor)) = self
@@ -368,6 +567,19 @@ impl EditorCore {
             self.document.restore(snapshot);
             self.cursor.position = cursor.min(self.document.len_chars());
             self.cursor.clear_selection();
+        }
+    }
+
+    pub fn switch_to_next_buffer(&mut self) {
+        if !self.stored_buffers.is_empty() {
+            self.swap_active_with_stored(0);
+        }
+    }
+
+    pub fn switch_to_previous_buffer(&mut self) {
+        if !self.stored_buffers.is_empty() {
+            let last = self.stored_buffers.len() - 1;
+            self.swap_active_with_stored(last);
         }
     }
 
@@ -495,6 +707,70 @@ impl EditorCore {
             self.cursor.move_to(self.cursor.position + 1, extend);
         }
         self.update_preferred_column();
+    }
+
+    fn move_word_left(&mut self, extend: bool) {
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        let rope = self.document.rope();
+        let mut pos = self.cursor.position.min(rope.len_chars());
+        while pos > 0 {
+            let ch = rope.char(pos - 1);
+            if ch.is_alphanumeric() || ch == '_' {
+                break;
+            }
+            pos -= 1;
+        }
+        while pos > 0 {
+            let ch = rope.char(pos - 1);
+            if !ch.is_alphanumeric() && ch != '_' {
+                break;
+            }
+            pos -= 1;
+        }
+        self.cursor.move_to(pos, extend);
+        self.update_preferred_column();
+    }
+
+    fn move_word_right(&mut self, extend: bool) {
+        self.last_edit_was_char_insert = false;
+        self.last_move_was_vertical = false;
+        let rope = self.document.rope();
+        let len = rope.len_chars();
+        let mut pos = self.cursor.position.min(len);
+        while pos < len {
+            let ch = rope.char(pos);
+            if ch.is_alphanumeric() || ch == '_' {
+                break;
+            }
+            pos += 1;
+        }
+        while pos < len {
+            let ch = rope.char(pos);
+            if !ch.is_alphanumeric() && ch != '_' {
+                break;
+            }
+            pos += 1;
+        }
+        self.cursor.move_to(pos, extend);
+        self.update_preferred_column();
+    }
+
+    fn replace_word_at_point(&mut self, replace: impl FnOnce(&str) -> String) {
+        self.last_edit_was_char_insert = false;
+        let start = self.cursor.position.min(self.document.len_chars());
+        self.move_word_right(false);
+        let end = self.cursor.position;
+        if end <= start || end > self.document.len_chars() {
+            return;
+        }
+
+        let word = self.document.rope().slice(start..end).to_string();
+        let replacement = replace(&word);
+        self.history.push_undo(self.document.snapshot(), start);
+        self.document.remove(start, end);
+        self.document.insert(start, &replacement);
+        self.cursor.position = start + replacement.chars().count();
     }
 
     fn move_up(&mut self, extend: bool) {
@@ -782,6 +1058,62 @@ impl EditorCallbacks for ServerEditorCallbacks {
         self.core.lock().kill_line();
     }
 
+    fn kill_word(&mut self, n: i64) {
+        self.core.lock().kill_word(n);
+    }
+
+    fn yank(&mut self) {
+        self.core.lock().yank();
+    }
+
+    fn yank_pop(&mut self) {
+        self.core.lock().yank_pop();
+    }
+
+    fn upcase_word(&mut self) {
+        self.core.lock().upcase_word();
+    }
+
+    fn downcase_word(&mut self) {
+        self.core.lock().downcase_word();
+    }
+
+    fn transpose_chars(&mut self) {
+        self.core.lock().transpose_chars();
+    }
+
+    fn transpose_words(&mut self) {
+        self.core.lock().transpose_words();
+    }
+
+    fn set_mark(&mut self) {
+        self.core.lock().set_mark();
+    }
+
+    fn exchange_point_and_mark(&mut self) {
+        self.core.lock().exchange_point_and_mark();
+    }
+
+    fn next_buffer(&mut self) {
+        self.core.lock().switch_to_next_buffer();
+    }
+
+    fn previous_buffer(&mut self) {
+        self.core.lock().switch_to_previous_buffer();
+    }
+
+    fn toggle_preview(&mut self) {
+        self.core.lock().preview_toggle_requested = true;
+    }
+
+    fn toggle_line_numbers(&mut self) {
+        self.core.lock().line_numbers_toggle_requested = true;
+    }
+
+    fn toggle_preview_line_numbers(&mut self) {
+        self.core.lock().preview_line_numbers_toggle_requested = true;
+    }
+
     fn current_buffer_name(&self) -> Option<String> {
         Some(self.core.lock().current_buffer_name.clone())
     }
@@ -832,7 +1164,10 @@ impl LispHost {
     pub fn new(core: EditorCore) -> Self {
         let mut interpreter = Interpreter::new();
         add_primitives(&mut interpreter);
+        Self::with_interpreter(core, interpreter)
+    }
 
+    pub fn with_interpreter(core: EditorCore, interpreter: Interpreter) -> Self {
         let core = Arc::new(Mutex::new(core));
         interpreter.set_editor(Box::new(ServerEditorCallbacks::new(core.clone())));
 
@@ -865,6 +1200,27 @@ impl LispHost {
 
     pub fn is_user_defined_command(&self, name: &str) -> bool {
         rele_elisp::is_user_defined_elisp_function(name, &self.interpreter.state)
+    }
+
+    pub fn user_command_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .interpreter
+            .state
+            .symbol_cells
+            .read()
+            .function_cells()
+            .into_iter()
+            .filter_map(|(symbol, cell)| {
+                if matches!(cell, LispObject::Primitive(_)) {
+                    None
+                } else {
+                    Some(rele_elisp::obarray::symbol_name(symbol))
+                }
+            })
+            .collect();
+        names.sort();
+        names.dedup();
+        names
     }
 
     pub fn run_command(
@@ -1020,6 +1376,17 @@ mod tests {
             .expect("next-line dispatch");
 
         assert_eq!(host.core.lock().cursor.position, 6);
+    }
+
+    #[test]
+    fn user_command_names_include_loaded_defuns_not_primitives() {
+        let host = LispHost::new(EditorCore::new());
+        host.load_builtin_commands().expect("builtin commands load");
+
+        let names = host.user_command_names();
+
+        assert!(names.iter().any(|name| name == "next-line"));
+        assert!(!names.iter().any(|name| name == "forward-line"));
     }
 
     #[test]

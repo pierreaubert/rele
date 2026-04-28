@@ -343,8 +343,14 @@ fn handle_minibuffer_key(state: &mut TuiAppState, key: KeyEvent) {
         // Enter — submit.
         KeyCode::Enter => state.minibuffer_submit(),
         // Editing.
-        KeyCode::Backspace => state.minibuffer.backspace(),
-        KeyCode::Delete => state.minibuffer.delete_forward(),
+        KeyCode::Backspace => {
+            state.minibuffer.backspace();
+            state.minibuffer_refresh_completions();
+        }
+        KeyCode::Delete => {
+            state.minibuffer.delete_forward();
+            state.minibuffer_refresh_completions();
+        }
         KeyCode::Left => state.minibuffer.move_left(),
         KeyCode::Right => state.minibuffer.move_right(),
         KeyCode::Home => state.minibuffer.move_to_start(),
@@ -352,12 +358,22 @@ fn handle_minibuffer_key(state: &mut TuiAppState, key: KeyEvent) {
         // Completion list navigation.
         KeyCode::Down => state.minibuffer.select_next(),
         KeyCode::Up => state.minibuffer.select_prev(),
-        KeyCode::Tab => state.minibuffer.complete(),
+        KeyCode::Tab => state.minibuffer_complete(),
+        KeyCode::BackTab => state.minibuffer.select_prev(),
         // History (M-p / M-n).
-        KeyCode::Char('p') if alt => state.minibuffer.history_prev(),
-        KeyCode::Char('n') if alt => state.minibuffer.history_next(),
+        KeyCode::Char('p') if alt => {
+            state.minibuffer.history_prev();
+            state.minibuffer_refresh_completions();
+        }
+        KeyCode::Char('n') if alt => {
+            state.minibuffer.history_next();
+            state.minibuffer_refresh_completions();
+        }
         // Self-insert (no modifiers, or only shift for uppercase).
-        KeyCode::Char(c) if !ctrl && !alt => state.minibuffer.add_char(c),
+        KeyCode::Char(c) if !ctrl && !alt => {
+            state.minibuffer.add_char(c);
+            state.minibuffer_refresh_completions();
+        }
         _ => {}
     }
 }
@@ -383,7 +399,7 @@ fn handle_meta_key(state: &mut TuiAppState, key: KeyEvent) {
         // M-x — execute-extended-command. Opens the minibuffer with
         // command-name completion over the full command registry.
         KeyCode::Char('x') => {
-            let candidates: Vec<String> = state.commands.names().to_vec();
+            let candidates = state.command_completion_candidates();
             state.minibuffer_open(
                 rele_server::minibuffer::MiniBufferPrompt::Command,
                 candidates,
@@ -473,6 +489,28 @@ mod tests {
             state.pending_minibuffer_action,
             Some(PendingMiniBufferAction::SwitchBuffer)
         ));
+    }
+
+    #[test]
+    fn tab_completes_active_minibuffer_candidate() {
+        let mut state = TuiAppState::new();
+        state.get_or_create_named_buffer("notes.md");
+
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+        );
+        handle_key(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+        assert_eq!(state.minibuffer.input, "notes.md");
     }
 
     #[test]

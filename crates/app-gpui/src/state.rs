@@ -1,5 +1,4 @@
 use gpui_keybinding::KeymapPreset;
-use rele_elisp::{EditorCallbacks, Interpreter};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -14,300 +13,9 @@ use crate::macros::{MacroState, RecordedAction};
 use crate::markdown::SourceMap;
 use crate::minibuffer::{MiniBufferPrompt, MiniBufferResult, MiniBufferState};
 
-use rele_server::CancellationFlag;
+use rele_server::{CancellationFlag, EditorCore, LispCommandDispatch, LispHost};
 use rele_server::lsp::{LspBufferState, LspConfig, LspEvent, LspRegistry, position::uri_from_path};
 use rele_server::syntax::{Highlighter, TreeSitterHighlighter, language_for_extension};
-
-/// Run an elisp hook, logging (but not propagating) any error.
-/// Lifecycle callers use this so a buggy hook doesn't break
-/// `save-buffer`, `find-file`, etc.
-fn run_hooks_logged(elisp: &Interpreter, name: &str) {
-    if let Err(e) = elisp.run_hooks(name) {
-        log::error!("hook {name}: {e:?}");
-    }
-}
-
-/// Bridges the elisp interpreter to live editor state.
-///
-/// # Safety
-/// `state` must point to a valid, pinned `MdAppState` for the entire
-/// lifetime of this callback. The install-point
-/// (`install_elisp_editor_callbacks`) takes `&mut self`, so the
-/// pointer is valid as long as the `MdAppState` that created it is
-/// alive and not moved.
-struct ElispEditorCallbacks {
-    state: std::ptr::NonNull<MdAppState>,
-    _exclusive: std::marker::PhantomData<*mut MdAppState>,
-}
-
-// SAFETY: the pointer targets a single MdAppState owned by the GPUI
-// main view — it is only dereferenced from the main thread via the
-// `EditorCallbacks` trait methods. The `Send + Sync` bounds come
-// from the trait; we never actually send the pointer cross-thread.
-unsafe impl Send for ElispEditorCallbacks {}
-unsafe impl Sync for ElispEditorCallbacks {}
-
-impl EditorCallbacks for ElispEditorCallbacks {
-    fn buffer_string(&self) -> String {
-        unsafe { self.state.as_ref().document.text() }
-    }
-
-    fn buffer_size(&self) -> usize {
-        unsafe { self.state.as_ref().document.len_chars() }
-    }
-
-    fn point(&self) -> usize {
-        unsafe { self.state.as_ref().cursor.position }
-    }
-
-    fn insert(&mut self, text: &str) {
-        unsafe { self.state.as_mut().insert_text(text) }
-    }
-
-    fn delete_char(&mut self, n: i64) {
-        unsafe {
-            let s = self.state.as_mut();
-            if n > 0 {
-                for _ in 0..n as usize {
-                    s.delete_forward();
-                }
-            } else if n < 0 {
-                for _ in 0..(-n) as usize {
-                    s.backspace();
-                }
-            }
-        }
-    }
-
-    fn goto_char(&mut self, pos: usize) {
-        unsafe {
-            let s = self.state.as_mut();
-            s.cursor.position = pos.min(s.document.len_chars());
-            s.cursor.clear_selection();
-        }
-    }
-
-    fn forward_char(&mut self, n: i64) {
-        unsafe {
-            let s = self.state.as_mut();
-            if n > 0 {
-                for _ in 0..n as usize {
-                    s.move_right(false);
-                }
-            } else if n < 0 {
-                for _ in 0..(-n) as usize {
-                    s.move_left(false);
-                }
-            }
-        }
-    }
-
-    #[allow(clippy::disallowed_methods)] // TODO(perf): elisp callbacks run in cx.spawn; use spawn_blocking
-    fn find_file(&mut self, path: &str) -> bool {
-        unsafe {
-            let path_buf = std::path::PathBuf::from(path);
-            if let Ok(content) = std::fs::read_to_string(&path_buf) {
-                self.state.as_mut().open_file_as_buffer(path_buf, &content);
-                true
-            } else {
-                false
-            }
-        }
-    }
-
-    fn save_buffer(&mut self) -> bool {
-        unsafe { self.state.as_mut().save_file_from_elisp() }
-    }
-
-    fn point_min(&self) -> usize {
-        0
-    }
-    fn point_max(&self) -> usize {
-        unsafe { self.state.as_ref().document.len_chars() }
-    }
-    fn forward_line(&mut self, n: i64) {
-        unsafe {
-            let s = self.state.as_mut();
-            if n > 0 {
-                for _ in 0..n as usize {
-                    s.move_down(false);
-                }
-            } else if n < 0 {
-                for _ in 0..(-n) as usize {
-                    s.move_up(false);
-                }
-            }
-        }
-    }
-    fn move_beginning_of_line(&mut self) {
-        unsafe { self.state.as_mut().move_to_line_start(false) }
-    }
-    fn move_end_of_line(&mut self) {
-        unsafe { self.state.as_mut().move_to_line_end(false) }
-    }
-    fn move_beginning_of_buffer(&mut self) {
-        unsafe { self.state.as_mut().move_to_doc_start(false) }
-    }
-    fn move_end_of_buffer(&mut self) {
-        unsafe { self.state.as_mut().move_to_doc_end(false) }
-    }
-    fn undo(&mut self) {
-        unsafe { self.state.as_mut().undo() }
-    }
-    fn redo(&mut self) {
-        unsafe { self.state.as_mut().redo() }
-    }
-
-    // ---- Kill ring ----
-    fn kill_line(&mut self) {
-        unsafe { self.state.as_mut().kill_to_end_of_line() }
-    }
-    fn kill_word(&mut self, n: i64) {
-        unsafe {
-            let s = self.state.as_mut();
-            if n > 0 {
-                for _ in 0..n as usize {
-                    s.kill_word_forward();
-                }
-            } else if n < 0 {
-                for _ in 0..(-n) as usize {
-                    s.kill_word_backward();
-                }
-            }
-        }
-    }
-    fn yank(&mut self) {
-        unsafe { self.state.as_mut().yank() }
-    }
-    fn yank_pop(&mut self) {
-        unsafe { self.state.as_mut().yank_pop() }
-    }
-
-    // ---- Case ----
-    fn upcase_word(&mut self) {
-        unsafe { self.state.as_mut().upcase_word() }
-    }
-    fn downcase_word(&mut self) {
-        unsafe { self.state.as_mut().downcase_word() }
-    }
-
-    // ---- Reorder ----
-    fn transpose_chars(&mut self) {
-        unsafe { self.state.as_mut().transpose_chars() }
-    }
-    fn transpose_words(&mut self) {
-        unsafe { self.state.as_mut().transpose_words() }
-    }
-
-    // ---- Mark ----
-    fn set_mark(&mut self) {
-        unsafe { self.state.as_mut().set_mark() }
-    }
-    fn exchange_point_and_mark(&mut self) {
-        unsafe { self.state.as_mut().exchange_point_and_mark() }
-    }
-
-    // ---- Buffer list ----
-    fn next_buffer(&mut self) {
-        unsafe { self.state.as_mut().switch_to_next_buffer() }
-    }
-    fn previous_buffer(&mut self) {
-        unsafe { self.state.as_mut().switch_to_prev_buffer() }
-    }
-
-    // ---- View toggles ----
-    fn toggle_preview(&mut self) {
-        unsafe {
-            let s = self.state.as_mut();
-            s.show_preview = !s.show_preview;
-        }
-    }
-    fn toggle_line_numbers(&mut self) {
-        unsafe {
-            let s = self.state.as_mut();
-            s.show_line_numbers = !s.show_line_numbers;
-        }
-    }
-    fn toggle_preview_line_numbers(&mut self) {
-        unsafe {
-            let s = self.state.as_mut();
-            s.show_preview_line_numbers = !s.show_preview_line_numbers;
-        }
-    }
-
-    // ---- Buffer registry bridge (Phase 1) ----
-
-    fn current_buffer_name(&self) -> Option<String> {
-        unsafe { Some(self.state.as_ref().current_buffer_name.clone()) }
-    }
-
-    fn list_buffer_names(&self) -> Vec<String> {
-        unsafe { self.state.as_ref().buffer_names() }
-    }
-
-    fn switch_to_buffer_by_name(&mut self, name: &str) -> bool {
-        unsafe { self.state.as_mut().switch_to_buffer_by_name(name) }
-    }
-
-    fn get_or_create_buffer(&mut self, name: &str) -> bool {
-        unsafe {
-            let _ = self.state.as_mut().get_or_create_named_buffer(name);
-        }
-        true
-    }
-
-    fn kill_buffer_by_name(&mut self, name: &str) -> bool {
-        unsafe { self.state.as_mut().kill_buffer_by_name(name) }
-    }
-
-    fn set_buffer_text(&mut self, name: &str, text: &str) -> bool {
-        unsafe {
-            let s = self.state.as_mut();
-            // Switching first means the document mutation lands on the
-            // intended buffer. Returning false when the name is unknown
-            // keeps elisp callers explicit about errors.
-            if !s.switch_to_buffer_by_name(name) {
-                return false;
-            }
-            s.document.set_text(text);
-            true
-        }
-    }
-
-    fn keyboard_quit(&mut self) {
-        unsafe { self.state.as_mut().abort() }
-    }
-
-    fn current_buffer_major_mode(&self) -> Option<String> {
-        unsafe {
-            // Map our `BufferKind` onto Emacs's mode names so Phase 4's
-            // `lookup_mode_key` can resolve `dired-mode-map` etc.
-            let s = self.state.as_ref();
-            let mode = match s.current_buffer_kind {
-                crate::document::BufferKind::Dired => "dired-mode",
-                crate::document::BufferKind::BufferList => "Buffer-menu-mode",
-                crate::document::BufferKind::Scratch => "lisp-interaction-mode",
-                crate::document::BufferKind::File => {
-                    // Pick mode from extension. For Phase 4 the only one
-                    // we care about is markdown — the rest fall back to
-                    // text-mode which has near-empty bindings.
-                    s.document
-                        .file_path()
-                        .and_then(|p| p.extension())
-                        .and_then(|e| e.to_str())
-                        .map(|ext| match ext {
-                            "md" | "markdown" => "markdown-mode",
-                            "el" => "emacs-lisp-mode",
-                            "rs" => "rust-mode",
-                            _ => "text-mode",
-                        })
-                        .unwrap_or("text-mode")
-                }
-            };
-            Some(mode.to_string())
-        }
-    }
-}
 
 // ---- Emacs subsystem types ----
 
@@ -559,8 +267,8 @@ pub struct MdAppState {
     pub macros: MacroState,
     /// Command registry — all user-visible commands.
     pub commands: CommandRegistry,
-    /// Elisp interpreter for extension and configuration.
-    pub elisp: Interpreter,
+    /// Server-owned Elisp interpreter plus editor callback state.
+    pub lisp_host: LispHost,
     /// When true, the next character input is consumed as the target for zap-to-char (M-z).
     pub zap_to_char_pending: bool,
     /// When true, the next keystroke is treated as if Alt/Meta were held.
@@ -685,7 +393,7 @@ impl MdAppState {
             dired_states: HashMap::new(),
             macros: MacroState::default(),
             commands,
-            elisp: interp,
+            lisp_host: LispHost::with_interpreter(EditorCore::new(), interp),
             zap_to_char_pending: false,
             meta_pending: false,
             c_x_pending: false,
@@ -702,171 +410,157 @@ impl MdAppState {
             buffer_highlighter_version: u64::MAX,
         };
 
-        // NOTE: We do NOT install elisp editor callbacks here. The callbacks
-        // would capture a raw pointer to `state`, which is a local variable
-        // about to be moved out of this function. The raw pointer would
-        // become dangling the instant we return.
-        //
-        // The caller must pin the state in stable storage (Box, GPUI
-        // Entity, etc.) and then call `install_elisp_editor_callbacks()`
-        // to wire the callbacks up with a valid pointer. The user's
-        // `~/.gpui-md.el` is evaluated from inside
-        // `install_elisp_editor_callbacks` so init forms that touch
-        // the buffer actually take effect.
+        state.sync_lisp_core_from_state();
         state
     }
 
-    /// Install elisp editor callbacks using a raw pointer to `self`.
-    ///
-    /// # Safety contract
-    /// `self` must already live in stable memory — i.e. it must not be
-    /// moved after this call. GPUI entities created via `cx.new(|_| ...)`
-    /// and `Box<MdAppState>` both satisfy this (the heap allocation
-    /// doesn't move even if the handle is moved).
-    ///
-    /// Calling this function when `self` will later be moved is
-    /// Undefined Behaviour.
+    fn editor_core_snapshot(&self) -> EditorCore {
+        EditorCore {
+            document: self.document.clone(),
+            cursor: self.cursor,
+            history: self.history.clone(),
+            current_buffer_id: self.current_buffer_id,
+            current_buffer_name: self.current_buffer_name.clone(),
+            current_buffer_kind: self.current_buffer_kind.clone(),
+            current_buffer_read_only: self.current_buffer_read_only,
+            stored_buffers: self.stored_buffers.clone(),
+            next_buffer_id: self.next_buffer_id,
+            lsp_state: self.lsp_buffer_state.clone(),
+            kill_ring: self.kill_ring.clone(),
+            scroll_line: self.editor_scroll_line,
+            last_edit_was_char_insert: self.last_edit_was_char_insert,
+            last_move_was_vertical: self.last_move_was_vertical,
+            message: None,
+            keyboard_quit_requested: false,
+            preview_toggle_requested: false,
+            line_numbers_toggle_requested: false,
+            preview_line_numbers_toggle_requested: false,
+        }
+    }
+
+    fn sync_lisp_core_from_state(&mut self) {
+        self.lisp_host.replace_core(self.editor_core_snapshot());
+    }
+
+    fn sync_state_from_lisp_core(&mut self) {
+        let before_buffer_id = self.current_buffer_id;
+        let before_kind = self.current_buffer_kind.clone();
+        let before_doc_version = self.document.version();
+        let before_path = self.document.file_path().cloned();
+        let mut core = self.lisp_host.core_snapshot();
+        let keyboard_quit_requested = core.keyboard_quit_requested;
+        let preview_toggle_requested = core.preview_toggle_requested;
+        let line_numbers_toggle_requested = core.line_numbers_toggle_requested;
+        let preview_line_numbers_toggle_requested = core.preview_line_numbers_toggle_requested;
+        core.keyboard_quit_requested = false;
+        core.preview_toggle_requested = false;
+        core.line_numbers_toggle_requested = false;
+        core.preview_line_numbers_toggle_requested = false;
+
+        self.document = core.document;
+        self.cursor = core.cursor;
+        self.history = core.history;
+        self.current_buffer_id = core.current_buffer_id;
+        self.current_buffer_name = core.current_buffer_name;
+        self.current_buffer_kind = core.current_buffer_kind;
+        self.current_buffer_read_only = core.current_buffer_read_only;
+        self.stored_buffers = core.stored_buffers;
+        self.next_buffer_id = core.next_buffer_id;
+        self.lsp_buffer_state = core.lsp_state;
+        self.kill_ring = core.kill_ring;
+        self.editor_scroll_line = core.scroll_line;
+        self.last_edit_was_char_insert = core.last_edit_was_char_insert;
+        self.last_move_was_vertical = core.last_move_was_vertical;
+
+        if preview_toggle_requested {
+            self.show_preview = !self.show_preview;
+        }
+        if line_numbers_toggle_requested {
+            self.show_line_numbers = !self.show_line_numbers;
+        }
+        if preview_line_numbers_toggle_requested {
+            self.show_preview_line_numbers = !self.show_preview_line_numbers;
+        }
+
+        let buffer_changed =
+            before_buffer_id != self.current_buffer_id || before_kind != self.current_buffer_kind;
+        let doc_changed = before_doc_version != self.document.version();
+        let path_changed = before_path != self.document.file_path().cloned();
+
+        if buffer_changed || path_changed {
+            self.last_parsed_version = 0;
+            self.refresh_buffer_highlighter();
+        }
+        if path_changed && self.current_buffer_kind == BufferKind::File {
+            self.lsp_did_open();
+        } else if doc_changed {
+            self.last_parsed_version = 0;
+            self.notify_highlighter();
+            self.lsp_did_change();
+        }
+
+        if keyboard_quit_requested {
+            self.abort();
+        }
+        self.sync_lisp_core_from_state();
+    }
+
+    pub fn eval_lisp(
+        &mut self,
+        expr: rele_elisp::LispObject,
+    ) -> rele_elisp::ElispResult<rele_elisp::LispObject> {
+        self.sync_lisp_core_from_state();
+        let result = self.lisp_host.eval(expr);
+        self.sync_state_from_lisp_core();
+        result
+    }
+
+    pub fn eval_lisp_source(
+        &mut self,
+        source: &str,
+    ) -> Result<rele_elisp::LispObject, (usize, rele_elisp::ElispError)> {
+        self.sync_lisp_core_from_state();
+        let result = self.lisp_host.eval_source(source);
+        self.sync_state_from_lisp_core();
+        result
+    }
+
+    fn run_hook_logged(&mut self, name: &str) {
+        self.sync_lisp_core_from_state();
+        if let Err(e) = self.lisp_host.run_hooks(name) {
+            log::error!("hook {name}: {e:?}");
+        }
+        self.sync_state_from_lisp_core();
+    }
+
+    /// Synchronize the server-owned elisp host and load built-in command defuns.
     pub fn install_elisp_editor_callbacks(&mut self) {
-        // SAFETY: `self` is pinned in the GPUI view for the lifetime
-        // of the application. The pointer is only dereferenced from
-        // the main thread via EditorCallbacks methods.
-        let callbacks = Box::new(ElispEditorCallbacks {
-            state: std::ptr::NonNull::from(&mut *self),
-            _exclusive: std::marker::PhantomData,
-        });
-        self.elisp.set_editor(callbacks);
-        // Phase 3 of the elisp-dired plan: load the Emacs subr.el +
-        // workarounds + add the install's lisp/ directory to load-path
-        // so `(require 'dired)` etc. find their source. Done before
-        // BUILTIN_COMMANDS_EL so the defuns there can rely on
-        // `if-let*`, `when-let*`, `cl-defstruct`, …
-        self.bootstrap_emacs_stdlib_for_dired();
-        // Load the shared elisp command definitions — same `.el`
-        // file as the TUI so both clients run identical logic for
-        // navigation / editing / undo wrappers. Errors from the
-        // shipped source are surfaced in the log; they should never
-        // reach a user build.
-        if let Err(e) = self.load_builtin_elisp() {
-            log::error!("builtin elisp init failed: {e:?}");
+        self.sync_lisp_core_from_state();
+        self.lisp_host.bootstrap_emacs_stdlib_for_dired();
+        if let Err((idx, e)) = self.lisp_host.load_builtin_commands() {
+            log::error!("builtin elisp init failed at form {idx}: {e:?}");
         }
-        // User init runs last — after the editor bridge is attached
-        // and after built-in commands are defined, so `(find-file)`,
-        // `(global-set-key)`, and other editor-aware forms work the
-        // way users expect.
         self.load_user_init_file();
-    }
-
-    /// Bootstrap the Emacs stdlib in our interpreter so libraries like
-    /// dired can be loaded on demand via `(require 'dired)`. We don't
-    /// preload dired itself — it's heavyweight (~5600 lines + many
-    /// dependencies) and `dired-cmd` does the load lazily on first
-    /// invocation.
-    ///
-    /// The bootstrap chain is:
-    /// 1. Load `subr.el` — `if-let*`, `when-let*`, `dolist`, …
-    /// 2. Apply the post-subr workaround that fixes a closure/let
-    ///    interaction bug breaking `if-let*` macro expansion.
-    /// 3. Push the discovered Emacs `lisp/` directory onto `load-path`
-    ///    so `(load X)` / `(require X)` can find files.
-    ///
-    /// Silently no-ops when the Emacs source tree isn't available
-    /// (the `EMACS_LISP_DIR` env var lookup returns nothing). Users
-    /// without an Emacs install still get the bare interpreter and
-    /// the rele-side defuns.
-    fn bootstrap_emacs_stdlib_for_dired(&mut self) {
-        let Some(lisp_dir) = rele_elisp::bootstrap::emacs_lisp_dir() else {
-            return;
-        };
-        // Load subr.el — provides if-let*, when-let*, etc.
-        let subr_path = format!("{lisp_dir}/subr.el");
-        if let Ok(src) = std::fs::read_to_string(&subr_path)
-            && let Err(e) = self.elisp.eval_source(&src)
-        {
-            log::warn!("subr.el bootstrap: {e:?}");
-        }
-        // Apply the workaround for the closure/let bug that breaks
-        // upstream `internal--build-bindings`.
-        let workaround = r#"
-(defun internal--build-binding (binding prev-var)
-  (let ((b (cond
-            ((symbolp binding) (list binding binding))
-            ((null (cdr binding)) (list (make-symbol "s") (car binding)))
-            ((eq '_ (car binding)) (list (make-symbol "s") (cadr binding)))
-            (t binding))))
-    (when (> (length b) 2)
-      (signal 'error (cons "`let' bindings can have only one value-form" b)))
-    (list (car b) (list 'and prev-var (cadr b)))))
-
-(defun internal--build-bindings (bindings)
-  (let ((prev-var t) (out nil))
-    (dolist (binding bindings)
-      (let ((entry (internal--build-binding binding prev-var)))
-        (push entry out)
-        (setq prev-var (car entry))))
-    (nreverse out)))
-"#;
-        if let Err(e) = self.elisp.eval_source(workaround) {
-            log::warn!("if-let* workaround: {e:?}");
-        }
-        // Add lisp/ subdirectories to load-path so (require 'X) can
-        // find them. `defvar` ensures load-path exists even if subr.el
-        // didn't reach its own defvar (some bootstrap configurations
-        // don't), then setq replaces it with the full list. The
-        // discovered emacs-lisp subdir is the most important — that's
-        // where seq.el, easymenu.el, etc. live.
-        // Add the lisp/ tree's most-used subdirs plus the themes
-        // directory so `(load "X-theme")` works for `M-x load-theme`.
-        // `etc/themes` lives one level up from `lisp/`, hence the
-        // `../etc/themes` traversal.
-        let setup = format!(
-            "(progn \
-                (defvar load-path nil) \
-                (setq load-path (list {0:?} {1:?} {2:?} {3:?})))",
-            lisp_dir,
-            format!("{lisp_dir}/emacs-lisp"),
-            format!("{lisp_dir}/textmodes"),
-            format!("{lisp_dir}/../etc/themes"),
-        );
-        if let Err(e) = self.elisp.eval_source(&setup) {
-            log::warn!("load-path setup: {e:?}");
-        }
-        // Prefer .el (source) over .elc (bytecode). Our bytecode VM
-        // has gaps that bite on bigger libraries (custom.el etc.);
-        // source-load gives us the full interpreter, which is
-        // strictly more capable today. Set this AFTER subr.el loaded
-        // (subr.el's own defcustom for load-suffixes would otherwise
-        // overwrite this).
-        let _ = self
-            .elisp
-            .eval_source("(setq load-suffixes '(\".el\" \".elc\"))");
-    }
-
-    fn load_builtin_elisp(&mut self) -> Result<(), rele_elisp::ElispError> {
-        let forms = rele_elisp::read_all(rele_server::BUILTIN_COMMANDS_EL)?;
-        for form in forms {
-            self.elisp.eval(form)?;
-        }
-        Ok(())
+        self.sync_state_from_lisp_core();
     }
 
     /// Save the active buffer to its backing file, matching the main
     /// UI save path (mark_clean + lsp_did_save). Returns true on
     /// success, false when the buffer has no file path or the write
-    /// fails. Used by `ElispEditorCallbacks::save_buffer`, which
-    /// previously open-coded an `fs::write` that skipped both
-    /// bookkeeping steps.
+    /// fails. Kept for the GPUI save path so hooks, clean-state
+    /// bookkeeping, and LSP `didSave` stay together.
     #[allow(clippy::disallowed_methods)] // TODO(perf): move off UI thread
     pub fn save_file_from_elisp(&mut self) -> bool {
         let Some(path) = self.document.file_path().cloned() else {
             return false;
         };
-        run_hooks_logged(&self.elisp, "before-save-hook");
+        self.run_hook_logged("before-save-hook");
         let content = self.document.text();
         match std::fs::write(&path, &content) {
             Ok(()) => {
                 self.document.mark_clean();
                 self.lsp_did_save();
-                run_hooks_logged(&self.elisp, "after-save-hook");
+                self.run_hook_logged("after-save-hook");
                 true
             }
             Err(e) => {
@@ -886,7 +580,7 @@ impl MdAppState {
         match rele_elisp::read_all(source) {
             Ok(forms) => {
                 for form in forms {
-                    if let Err(e) = self.elisp.eval(form) {
+                    if let Err(e) = self.eval_lisp(form) {
                         log::error!("user init error: {e:?}");
                     }
                 }
@@ -1128,7 +822,7 @@ impl MdAppState {
 
         // Run kill-buffer-hook *before* the actual kill so user code
         // can still inspect the buffer being killed.
-        run_hooks_logged(&self.elisp, "kill-buffer-hook");
+        self.run_hook_logged("kill-buffer-hook");
 
         // If this buffer has LSP state, send `didClose` before removing it.
         // For the active buffer, `lsp_buffer_state` is the one to close; for
@@ -1203,14 +897,14 @@ impl MdAppState {
             self.switch_to_buffer_id(id);
             self.refresh_buffer_highlighter();
             self.lsp_did_open();
-            run_hooks_logged(&self.elisp, "find-file-hook");
+            self.run_hook_logged("find-file-hook");
             return id;
         }
         let id = self.create_file_buffer(canonical, content);
         self.switch_to_buffer_id(id);
         self.refresh_buffer_highlighter();
         self.lsp_did_open();
-        run_hooks_logged(&self.elisp, "find-file-hook");
+        self.run_hook_logged("find-file-hook");
         id
     }
 
@@ -1606,8 +1300,9 @@ impl MdAppState {
         // `(interactive "CODE...")` form — if so, that spec wins over
         // the Rust registry entry (if any). This lets `~/.gpui-md.el`
         // users declare prompts the way Emacs does.
-        if rele_elisp::is_user_defined_elisp_function(name, &self.elisp.state)
-            && let Some(spec) = rele_elisp::interactive_spec_for(name, &self.elisp.state)
+        if self.lisp_host.is_user_defined_command(name)
+            && let Some(spec) =
+                rele_elisp::interactive_spec_for(name, &self.lisp_host.interpreter().state)
             && let Some(interactive) = interactive_from_spec(&spec)
         {
             self.dispatch_interactive(name, interactive);
@@ -1620,7 +1315,7 @@ impl MdAppState {
         let interactive = match self.commands.get(name) {
             Some(c) => c.interactive.clone(),
             None => {
-                if rele_elisp::is_user_defined_elisp_function(name, &self.elisp.state) {
+                if self.lisp_host.is_user_defined_command(name) {
                     self.run_command_direct(name, CommandArgs::default());
                 }
                 return;
@@ -1698,30 +1393,26 @@ impl MdAppState {
         // name — primitives like `forward-char` also have function
         // cells (populated by `add_primitives`) and those must run via
         // the Rust handler.
-        if rele_elisp::is_user_defined_elisp_function(name, &self.elisp.state) {
-            // Pick the elisp argument shape based on what the caller
-            // brought back from the minibuffer: a string from
-            // `(interactive "s/f/b/n/F/B")` becomes the defun's first
-            // arg as a string; without one we fall back to the
-            // numeric prefix arg (the `(interactive "p")` shape).
-            let arg = match &args.string {
-                Some(s) => rele_elisp::LispObject::string(s),
-                None => rele_elisp::LispObject::integer(args.count() as i64),
-            };
-            let call = rele_elisp::LispObject::cons(
-                rele_elisp::LispObject::symbol(name),
-                rele_elisp::LispObject::cons(arg, rele_elisp::LispObject::nil()),
-            );
-            if let Err(e) = self.elisp.eval(call) {
-                log::error!("elisp error in {name}: {e:?}");
+        self.sync_lisp_core_from_state();
+        match self.lisp_host.run_command(name, &args) {
+            Ok(LispCommandDispatch::Handled) => {
+                self.sync_state_from_lisp_core();
+                self.run_post_command_hook();
+                return;
             }
-            self.run_post_command_hook();
-            return;
+            Ok(LispCommandDispatch::Unhandled) => {}
+            Err(e) => {
+                self.sync_state_from_lisp_core();
+                log::error!("elisp error in {name}: {e:?}");
+                self.run_post_command_hook();
+                return;
+            }
         }
 
         let handler = self.commands.get(name).map(|c| c.handler.clone());
         if let Some(h) = handler {
             h(self, args);
+            self.sync_lisp_core_from_state();
             self.run_post_command_hook();
         }
     }
@@ -1730,11 +1421,11 @@ impl MdAppState {
     /// macro. Suppression matches Emacs: macro replay re-runs the
     /// recorded actions, and re-firing post-command-hook on each
     /// would multiply side effects (autosave, idle timers, …).
-    fn run_post_command_hook(&self) {
+    fn run_post_command_hook(&mut self) {
         if self.macros.applying {
             return;
         }
-        run_hooks_logged(&self.elisp, "post-command-hook");
+        self.run_hook_logged("post-command-hook");
     }
 
     /// Run a command with a string argument obtained from the mini-buffer.

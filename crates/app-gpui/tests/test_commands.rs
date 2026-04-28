@@ -122,8 +122,7 @@ fn run_command_by_name_dispatches_elisp_only_defun() {
     state.cursor.position = 0;
 
     state
-        .elisp
-        .eval_source("(defun gpui-elisp-only-jump (&optional _n) (goto-char 2))")
+        .eval_lisp_source("(defun gpui-elisp-only-jump (&optional _n) (goto-char 2))")
         .expect("defun eval");
 
     // Name is NOT in the Rust registry.

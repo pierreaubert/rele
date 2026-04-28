@@ -32,6 +32,70 @@ fn special_buffer_attrs(name: &str) -> Option<(BufferKind, bool)> {
     }
 }
 
+#[derive(Clone, Copy)]
+enum PathCompletionKind {
+    FilesAndDirectories,
+    DirectoriesOnly,
+}
+
+fn path_completion_candidates(
+    base_dir: &Path,
+    input: &str,
+    kind: PathCompletionKind,
+) -> Vec<String> {
+    let input_path = Path::new(input);
+    let input_ends_with_separator = input.ends_with(std::path::MAIN_SEPARATOR);
+    let (typed_dir, prefix) = if input_ends_with_separator {
+        (PathBuf::from(input), String::new())
+    } else {
+        (
+            input_path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .to_path_buf(),
+            input_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        )
+    };
+    let search_dir = if typed_dir.as_os_str().is_empty() {
+        base_dir.to_path_buf()
+    } else if typed_dir.is_absolute() {
+        typed_dir.clone()
+    } else {
+        base_dir.join(&typed_dir)
+    };
+    let prefix_lower = prefix.to_lowercase();
+    #[allow(clippy::disallowed_methods)]
+    let Ok(entries) = std::fs::read_dir(search_dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !prefix_lower.is_empty() && !name.to_lowercase().starts_with(&prefix_lower) {
+            continue;
+        }
+        let is_dir = entry.file_type().is_ok_and(|file_type| file_type.is_dir());
+        if matches!(kind, PathCompletionKind::DirectoriesOnly) && !is_dir {
+            continue;
+        }
+        let candidate_path = if typed_dir.as_os_str().is_empty() {
+            PathBuf::from(&name)
+        } else {
+            typed_dir.join(&name)
+        };
+        let mut candidate = candidate_path.to_string_lossy().to_string();
+        if is_dir && !candidate.ends_with(std::path::MAIN_SEPARATOR) {
+            candidate.push(std::path::MAIN_SEPARATOR);
+        }
+        out.push(candidate);
+    }
+    out.sort_by_key(|candidate| candidate.to_lowercase());
+    out
+}
+
 /// What to do with the mini-buffer's `Submitted(text)` / `Cancelled`
 /// result. Stored alongside `MiniBufferState` — the state machine itself
 /// is generic; the action binds it to a concrete command.
@@ -227,6 +291,9 @@ impl TuiAppState {
             last_move_was_vertical: self.last_move_was_vertical,
             message: self.message.clone(),
             keyboard_quit_requested: false,
+            preview_toggle_requested: false,
+            line_numbers_toggle_requested: false,
+            preview_line_numbers_toggle_requested: false,
         }
     }
 
@@ -308,6 +375,14 @@ impl TuiAppState {
             log::error!("hook {name}: {e:?}");
         }
         self.sync_state_from_lisp_core();
+    }
+
+    pub fn command_completion_candidates(&self) -> Vec<String> {
+        let mut candidates = self.commands.names().to_vec();
+        candidates.extend(self.lisp_host.user_command_names());
+        candidates.sort();
+        candidates.dedup();
+        candidates
     }
 
     // ---- Buffer list ----
@@ -709,6 +784,49 @@ impl TuiAppState {
     ) {
         self.minibuffer.open(prompt, candidates);
         self.pending_minibuffer_action = Some(action);
+        self.minibuffer_refresh_completions();
+    }
+
+    pub fn minibuffer_refresh_completions(&mut self) {
+        let Some(prompt) = self.minibuffer.prompt.clone() else {
+            return;
+        };
+        let input = self.minibuffer.input.clone();
+        let candidates = match prompt {
+            MiniBufferPrompt::Command => Some(self.command_completion_candidates()),
+            MiniBufferPrompt::SwitchBuffer | MiniBufferPrompt::KillBuffer => {
+                Some(self.buffer_names())
+            }
+            MiniBufferPrompt::FindFile { base_dir } => Some(path_completion_candidates(
+                &base_dir,
+                &input,
+                PathCompletionKind::FilesAndDirectories,
+            )),
+            MiniBufferPrompt::FreeText { .. }
+                if matches!(
+                    self.pending_minibuffer_action,
+                    Some(PendingMiniBufferAction::Dired)
+                ) =>
+            {
+                #[allow(clippy::disallowed_methods)]
+                let base_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                Some(path_completion_candidates(
+                    &base_dir,
+                    &input,
+                    PathCompletionKind::DirectoriesOnly,
+                ))
+            }
+            _ => None,
+        };
+        if let Some(candidates) = candidates {
+            self.minibuffer.set_candidates(candidates);
+        }
+    }
+
+    pub fn minibuffer_complete(&mut self) {
+        self.minibuffer_refresh_completions();
+        self.minibuffer.complete();
+        self.minibuffer_refresh_completions();
     }
 
     /// Close without dispatching (C-g / Escape).
@@ -1604,6 +1722,59 @@ mod tests {
             s.pending_minibuffer_action,
             Some(PendingMiniBufferAction::FindFile)
         ));
+    }
+
+    #[test]
+    fn find_file_minibuffer_completes_paths() {
+        let dir = tempdir().unwrap();
+        let note = dir.path().join("notes.md");
+        #[allow(clippy::disallowed_methods)] // test fixture
+        std::fs::write(note, "# notes\n").unwrap();
+
+        let mut s = TuiAppState::new();
+        s.minibuffer_open(
+            MiniBufferPrompt::FindFile {
+                base_dir: dir.path().to_path_buf(),
+            },
+            Vec::new(),
+            PendingMiniBufferAction::FindFile,
+        );
+
+        s.minibuffer.add_char('n');
+        s.minibuffer_refresh_completions();
+        s.minibuffer_complete();
+
+        assert_eq!(s.minibuffer.input, "notes.md");
+        assert_eq!(s.minibuffer.current_value(), "notes.md");
+    }
+
+    #[test]
+    fn dired_minibuffer_completes_directories_only() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("nested");
+        #[allow(clippy::disallowed_methods)] // test fixture
+        std::fs::create_dir(&nested).unwrap();
+        #[allow(clippy::disallowed_methods)] // test fixture
+        std::fs::write(dir.path().join("notes.md"), "# notes\n").unwrap();
+
+        let candidates =
+            path_completion_candidates(dir.path(), "n", PathCompletionKind::DirectoriesOnly);
+
+        assert_eq!(
+            candidates,
+            vec![format!("nested{}", std::path::MAIN_SEPARATOR)]
+        );
+    }
+
+    #[test]
+    fn command_completion_candidates_include_elisp_defuns() {
+        let mut s = TuiAppState::new();
+        s.install_elisp_editor_callbacks();
+
+        let candidates = s.command_completion_candidates();
+
+        assert!(candidates.iter().any(|name| name == "next-line"));
+        assert!(candidates.iter().any(|name| name == "save-buffer"));
     }
 
     #[test]

@@ -388,7 +388,7 @@ pub fn register_builtin_commands(registry: &mut CommandRegistry) {
             if let Some(expr) = &args.string
                 && let Ok(parsed) = rele_elisp::read(expr)
             {
-                match s.elisp.eval(parsed) {
+                match s.eval_lisp(parsed) {
                     Ok(result) => {
                         let result_str = format!("{:?}", result);
                         if !result.is_nil() {

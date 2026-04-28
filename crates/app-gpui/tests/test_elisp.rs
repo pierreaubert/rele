@@ -1,11 +1,7 @@
 use gpui_md::state::MdAppState;
 
-/// Construct a state in a `Box` (stable heap location), set its text and
-/// cursor, and install the elisp editor callbacks.
-///
-/// The `Box` is required because `install_elisp_editor_callbacks` captures
-/// a raw pointer to the state; returning a bare `MdAppState` would move it
-/// and invalidate the pointer immediately.
+/// Construct a state, set its text and cursor, and load the shared elisp
+/// command layer.
 fn state_with(text: &str) -> Box<MdAppState> {
     let mut s = Box::new(MdAppState::new());
     s.document.set_text(text);
@@ -23,30 +19,27 @@ fn elisp_interpreter_initialized() {
 
 #[test]
 fn elisp_eval_arithmetic() {
-    let s = state_with("");
-    let result = s.elisp.eval(rele_elisp::read("(+ 1 2 3)").unwrap());
+    let mut s = state_with("");
+    let result = s.eval_lisp(rele_elisp::read("(+ 1 2 3)").unwrap());
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), rele_elisp::LispObject::integer(6));
 }
 
 #[test]
 fn elisp_eval_list_operations() {
-    let s = state_with("");
+    let mut s = state_with("");
     assert_eq!(
-        s.elisp
-            .eval(rele_elisp::read("(cons 1 '(2 3))").unwrap())
+        s.eval_lisp(rele_elisp::read("(cons 1 '(2 3))").unwrap())
             .unwrap(),
         rele_elisp::read("(1 2 3)").unwrap()
     );
     assert_eq!(
-        s.elisp
-            .eval(rele_elisp::read("(car '(1 2 3))").unwrap())
+        s.eval_lisp(rele_elisp::read("(car '(1 2 3))").unwrap())
             .unwrap(),
         rele_elisp::LispObject::integer(1)
     );
     assert_eq!(
-        s.elisp
-            .eval(rele_elisp::read("(cdr '(1 2 3))").unwrap())
+        s.eval_lisp(rele_elisp::read("(cdr '(1 2 3))").unwrap())
             .unwrap(),
         rele_elisp::read("(2 3)").unwrap()
     );
@@ -54,16 +47,14 @@ fn elisp_eval_list_operations() {
 
 #[test]
 fn elisp_eval_string_operations() {
-    let s = state_with("");
+    let mut s = state_with("");
     assert_eq!(
-        s.elisp
-            .eval(rele_elisp::read("(concat \"hello\" \" \" \"world\")").unwrap())
+        s.eval_lisp(rele_elisp::read("(concat \"hello\" \" \" \"world\")").unwrap())
             .unwrap(),
         rele_elisp::LispObject::string("hello world")
     );
     assert_eq!(
-        s.elisp
-            .eval(rele_elisp::read("(substring \"hello world\" 0 5)").unwrap())
+        s.eval_lisp(rele_elisp::read("(substring \"hello world\" 0 5)").unwrap())
             .unwrap(),
         rele_elisp::LispObject::string("hello")
     );
@@ -71,28 +62,24 @@ fn elisp_eval_string_operations() {
 
 #[test]
 fn elisp_eval_special_forms() {
-    let s = state_with("");
+    let mut s = state_with("");
     assert_eq!(
-        s.elisp
-            .eval(rele_elisp::read("(if t 1 2)").unwrap())
+        s.eval_lisp(rele_elisp::read("(if t 1 2)").unwrap())
             .unwrap(),
         rele_elisp::LispObject::integer(1)
     );
     assert_eq!(
-        s.elisp
-            .eval(rele_elisp::read("(if nil 1 2)").unwrap())
+        s.eval_lisp(rele_elisp::read("(if nil 1 2)").unwrap())
             .unwrap(),
         rele_elisp::LispObject::integer(2)
     );
     assert_eq!(
-        s.elisp
-            .eval(rele_elisp::read("(and t t t)").unwrap())
+        s.eval_lisp(rele_elisp::read("(and t t t)").unwrap())
             .unwrap(),
         rele_elisp::LispObject::t()
     );
     assert_eq!(
-        s.elisp
-            .eval(rele_elisp::read("(or nil nil t)").unwrap())
+        s.eval_lisp(rele_elisp::read("(or nil nil t)").unwrap())
             .unwrap(),
         rele_elisp::LispObject::t()
     );
@@ -101,12 +88,10 @@ fn elisp_eval_special_forms() {
 #[test]
 fn elisp_eval_defun_and_call() {
     let mut s = state_with("");
-    s.elisp
-        .eval(rele_elisp::read("(defun add (x y) (+ x y))").unwrap())
+    s.eval_lisp(rele_elisp::read("(defun add (x y) (+ x y))").unwrap())
         .unwrap();
     assert_eq!(
-        s.elisp
-            .eval(rele_elisp::read("(add 3 4)").unwrap())
+        s.eval_lisp(rele_elisp::read("(add 3 4)").unwrap())
             .unwrap(),
         rele_elisp::LispObject::integer(7)
     );
@@ -121,16 +106,14 @@ fn elisp_eval_expression_command() {
 
 #[test]
 fn elisp_primitives_registered() {
-    let s = MdAppState::new();
-    assert!(s.elisp.eval(rele_elisp::read("(+ 1 2)").unwrap()).is_ok());
+    let mut s = MdAppState::new();
+    assert!(s.eval_lisp(rele_elisp::read("(+ 1 2)").unwrap()).is_ok());
     assert!(
-        s.elisp
-            .eval(rele_elisp::read("(cons 1 2)").unwrap())
+        s.eval_lisp(rele_elisp::read("(cons 1 2)").unwrap())
             .is_ok()
     );
     assert!(
-        s.elisp
-            .eval(rele_elisp::read("(car '(1 2))").unwrap())
+        s.eval_lisp(rele_elisp::read("(car '(1 2))").unwrap())
             .is_ok()
     );
 }
@@ -138,12 +121,10 @@ fn elisp_primitives_registered() {
 #[test]
 fn elisp_macro_defmacro_and_call() {
     let mut s = state_with("");
-    s.elisp
-        .eval(rele_elisp::read("(defmacro my-not (x) (list 'if x nil t))").unwrap())
+    s.eval_lisp(rele_elisp::read("(defmacro my-not (x) (list 'if x nil t))").unwrap())
         .unwrap();
     let result = s
-        .elisp
-        .eval(rele_elisp::read("(my-not t)").unwrap())
+        .eval_lisp(rele_elisp::read("(my-not t)").unwrap())
         .unwrap();
     assert_eq!(result, rele_elisp::LispObject::nil());
 }
@@ -155,10 +136,9 @@ fn elisp_macro_defmacro_and_call() {
 
 #[test]
 fn elisp_buffer_string_reads_document() {
-    let s = state_with("Hello, world!");
+    let mut s = state_with("Hello, world!");
     let result = s
-        .elisp
-        .eval(rele_elisp::read("(buffer-string)").unwrap())
+        .eval_lisp(rele_elisp::read("(buffer-string)").unwrap())
         .unwrap();
     assert_eq!(result, rele_elisp::LispObject::string("Hello, world!"));
 }
@@ -167,15 +147,14 @@ fn elisp_buffer_string_reads_document() {
 fn elisp_point_reads_cursor_position() {
     let mut s = state_with("Hello, world!");
     s.cursor.position = 7;
-    let result = s.elisp.eval(rele_elisp::read("(point)").unwrap()).unwrap();
+    let result = s.eval_lisp(rele_elisp::read("(point)").unwrap()).unwrap();
     assert_eq!(result, rele_elisp::LispObject::integer(7));
 }
 
 #[test]
 fn elisp_insert_mutates_buffer() {
     let mut s = state_with("");
-    s.elisp
-        .eval(rele_elisp::read(r#"(insert "hello from elisp")"#).unwrap())
+    s.eval_lisp(rele_elisp::read(r#"(insert "hello from elisp")"#).unwrap())
         .unwrap();
     assert_eq!(s.document.text(), "hello from elisp");
 }
@@ -183,14 +162,13 @@ fn elisp_insert_mutates_buffer() {
 #[test]
 fn elisp_goto_char_moves_cursor() {
     let mut s = state_with("0123456789");
-    s.elisp
-        .eval(rele_elisp::read("(goto-char 5)").unwrap())
+    s.eval_lisp(rele_elisp::read("(goto-char 5)").unwrap())
         .unwrap();
     assert_eq!(s.cursor.position, 5);
 }
 
-/// Regression: `ElispEditorCallbacks::save_buffer` in the GPUI
-/// client wrote the buffer to disk via `fs::write` but skipped
+/// Regression: the GPUI elisp `save-buffer` bridge wrote the buffer
+/// to disk via `fs::write` but skipped
 /// `mark_clean` and `lsp_did_save`. After a save-through-elisp the
 /// document still showed as dirty and the language server never
 /// learned the save happened.
@@ -234,8 +212,7 @@ fn elisp_save_buffer_marks_clean_and_returns_true_on_success() {
     s.document.insert(s.document.len_chars(), " world");
     assert!(s.document.is_dirty());
 
-    s.elisp
-        .eval(rele_elisp::read("(save-buffer)").unwrap())
+    s.eval_lisp(rele_elisp::read("(save-buffer)").unwrap())
         .expect("save-buffer eval");
 
     assert!(
@@ -257,8 +234,7 @@ fn elisp_save_buffer_returns_nil_on_write_failure() {
     // save-buffer should still report failure (returns nil in elisp
     // for the failure path).
     let result = s
-        .elisp
-        .eval(rele_elisp::read("(save-buffer)").unwrap())
+        .eval_lisp(rele_elisp::read("(save-buffer)").unwrap())
         .expect("save-buffer eval should not error");
     assert_eq!(
         result,
@@ -271,15 +247,13 @@ fn elisp_save_buffer_returns_nil_on_write_failure() {
     );
 }
 
-/// Regression: `ElispEditorCallbacks::goto_char` in the GPUI client
-/// used to assign `self.cursor.position = pos` without clamping to
-/// the buffer length. A subsequent rope query would panic on the
-/// out-of-bounds index.
+/// Regression: the GPUI elisp `goto-char` bridge used to assign
+/// `self.cursor.position = pos` without clamping to the buffer length.
+/// A subsequent rope query would panic on the out-of-bounds index.
 #[test]
 fn elisp_goto_char_past_end_clamps_without_panic() {
     let mut s = state_with("hello"); // 5 chars
-    s.elisp
-        .eval(rele_elisp::read("(goto-char 9999)").unwrap())
+    s.eval_lisp(rele_elisp::read("(goto-char 9999)").unwrap())
         .expect("goto-char past end must not error");
     assert!(
         s.cursor.position <= s.document.len_chars(),
@@ -306,19 +280,15 @@ fn after_save_hook_fires_on_save_buffer() {
     s.open_file_as_buffer(tmp.clone(), &content);
     s.install_elisp_editor_callbacks();
 
-    s.elisp
-        .eval(rele_elisp::read("(setq saved-flag nil)").unwrap())
+    s.eval_lisp(rele_elisp::read("(setq saved-flag nil)").unwrap())
         .unwrap();
-    s.elisp
-        .eval(rele_elisp::read("(defun rele-test-hook-fn () (setq saved-flag t))").unwrap())
+    s.eval_lisp(rele_elisp::read("(defun rele-test-hook-fn () (setq saved-flag t))").unwrap())
         .unwrap();
-    s.elisp
-        .eval(rele_elisp::read("(add-hook 'after-save-hook 'rele-test-hook-fn)").unwrap())
+    s.eval_lisp(rele_elisp::read("(add-hook 'after-save-hook 'rele-test-hook-fn)").unwrap())
         .unwrap();
 
     let hook_value = s
-        .elisp
-        .eval(rele_elisp::read("after-save-hook").unwrap())
+        .eval_lisp(rele_elisp::read("after-save-hook").unwrap())
         .unwrap();
     assert!(
         !matches!(hook_value, rele_elisp::LispObject::Nil),
@@ -328,8 +298,7 @@ fn after_save_hook_fires_on_save_buffer() {
     assert!(s.save_file_from_elisp(), "save must succeed");
 
     let flag = s
-        .elisp
-        .eval(rele_elisp::read("saved-flag").unwrap())
+        .eval_lisp(rele_elisp::read("saved-flag").unwrap())
         .unwrap();
     assert_eq!(
         flag,
@@ -347,8 +316,7 @@ fn after_save_hook_fires_on_save_buffer() {
 fn elisp_interactive_string_spec_opens_minibuffer() {
     let mut s = Box::new(MdAppState::new());
     s.install_elisp_editor_callbacks();
-    s.elisp
-        .eval(
+    s.eval_lisp(
             rele_elisp::read(
                 "(defun rele-test-prompt-cmd (x) (interactive \"sSay: \") (insert x))",
             )
@@ -356,7 +324,11 @@ fn elisp_interactive_string_spec_opens_minibuffer() {
         )
         .unwrap();
     assert!(
-        rele_elisp::interactive_spec_for("rele-test-prompt-cmd", &s.elisp.state).is_some(),
+        rele_elisp::interactive_spec_for(
+            "rele-test-prompt-cmd",
+            &s.lisp_host.interpreter().state,
+        )
+        .is_some(),
         "interactive spec should be discoverable",
     );
     s.run_command_by_name("rele-test-prompt-cmd");
@@ -418,8 +390,7 @@ fn elisp_load_theme_finds_emacs_theme_file() {
     // the theme file).  If load-path doesn't include etc/themes the
     // load silently no-ops and we can detect that.
     let known = s
-        .elisp
-        .eval(
+        .eval_lisp(
             rele_elisp::read(
                 "(prin1-to-string (and (boundp 'custom-known-themes) custom-known-themes))",
             )
@@ -429,8 +400,7 @@ fn elisp_load_theme_finds_emacs_theme_file() {
     eprintln!("custom-known-themes after load-theme: {known:?}");
     // Phase: confirm at least one theme is registered.
     let count = s
-        .elisp
-        .eval(
+        .eval_lisp(
             rele_elisp::read("(if (boundp 'custom-known-themes) (length custom-known-themes) 0)")
                 .unwrap(),
         )
@@ -444,9 +414,8 @@ fn elisp_load_theme_finds_emacs_theme_file() {
 /// require a full lazy-load just for this assertion).
 #[test]
 fn elisp_lookup_mode_key_finds_binding() {
-    let s = state_with("");
-    s.elisp
-        .eval(
+    let mut s = state_with("");
+    s.eval_lisp(
             rele_elisp::read(
                 "(progn \
                    (defvar fake-mode-map (make-sparse-keymap)) \
@@ -457,21 +426,21 @@ fn elisp_lookup_mode_key_finds_binding() {
         )
         .expect("set up fake-mode-map");
     assert_eq!(
-        rele_elisp::lookup_mode_key(&s.elisp, "fake-mode", "n"),
+        rele_elisp::lookup_mode_key(s.lisp_host.interpreter(), "fake-mode", "n"),
         Some("next-line".to_string()),
         "lookup_mode_key should resolve `n` to next-line",
     );
     assert_eq!(
-        rele_elisp::lookup_mode_key(&s.elisp, "fake-mode", "q"),
+        rele_elisp::lookup_mode_key(s.lisp_host.interpreter(), "fake-mode", "q"),
         Some("quit-window".to_string()),
     );
     assert_eq!(
-        rele_elisp::lookup_mode_key(&s.elisp, "fake-mode", "z"),
+        rele_elisp::lookup_mode_key(s.lisp_host.interpreter(), "fake-mode", "z"),
         None,
         "unknown key should return None",
     );
     assert_eq!(
-        rele_elisp::lookup_mode_key(&s.elisp, "no-such-mode", "n"),
+        rele_elisp::lookup_mode_key(s.lisp_host.interpreter(), "no-such-mode", "n"),
         None,
         "unknown mode should return None",
     );
@@ -507,7 +476,7 @@ fn dired_lazy_load_inner() {
     // (wrong-type-argument inside the buffer/string handling that
     // Phase 1's bridge doesn't yet cover). We don't want those gaps
     // to mask the lazy-load itself, which is what this test gates.
-    let _ = s.elisp.eval(
+    let _ = s.eval_lisp(
         rele_elisp::read(
             "(progn \
               (require 'seq) \
@@ -526,8 +495,7 @@ fn dired_lazy_load_inner() {
     // runs error-free is up to the buffer / file primitives we'll
     // keep filling in across the remaining phases.
     let dired_fbound = s
-        .elisp
-        .eval(rele_elisp::read("(fboundp 'dired-noselect)").unwrap())
+        .eval_lisp(rele_elisp::read("(fboundp 'dired-noselect)").unwrap())
         .unwrap();
     assert_eq!(
         dired_fbound,
@@ -542,10 +510,9 @@ fn dired_lazy_load_inner() {
 /// these slots.
 #[test]
 fn elisp_file_attributes_returns_full_tuple() {
-    let s = state_with("");
+    let mut s = state_with("");
     let attrs = s
-        .elisp
-        .eval(rele_elisp::read("(file-attributes \"/tmp\" 'string)").unwrap())
+        .eval_lisp(rele_elisp::read("(file-attributes \"/tmp\" 'string)").unwrap())
         .expect("file-attributes should not error");
     // Result is a cons list. Walk it and check slot count + mode-str shape.
     let mut count = 0;
@@ -584,9 +551,8 @@ fn elisp_file_attributes_returns_full_tuple() {
 /// least the `total` header and one row.
 #[test]
 fn elisp_insert_directory_produces_listing() {
-    let s = state_with("");
-    s.elisp
-        .eval(rele_elisp::read("(insert-directory \"/tmp\" \"-la\" nil t)").unwrap())
+    let mut s = state_with("");
+    s.eval_lisp(rele_elisp::read("(insert-directory \"/tmp\" \"-la\" nil t)").unwrap())
         .expect("insert-directory should not error");
     let body = s.document.text();
     assert!(
@@ -604,8 +570,7 @@ fn elisp_get_buffer_create_appears_in_editor_buffer_list() {
     let mut s = Box::new(MdAppState::new());
     s.install_elisp_editor_callbacks();
     let before = s.buffer_names();
-    s.elisp
-        .eval(rele_elisp::read("(get-buffer-create \"*phase1-bridge-test*\")").unwrap())
+    s.eval_lisp(rele_elisp::read("(get-buffer-create \"*phase1-bridge-test*\")").unwrap())
         .expect("get-buffer-create should not error");
     let after = s.buffer_names();
     assert!(
@@ -619,9 +584,8 @@ fn elisp_get_buffer_create_appears_in_editor_buffer_list() {
 #[test]
 fn elisp_global_set_key_records_user_binding() {
     rele_elisp::clear_global_keybindings();
-    let s = state_with("");
-    s.elisp
-        .eval(rele_elisp::read("(global-set-key \"C-h\" 'my-help)").unwrap())
+    let mut s = state_with("");
+    s.eval_lisp(rele_elisp::read("(global-set-key \"C-h\" 'my-help)").unwrap())
         .unwrap();
     assert_eq!(
         rele_elisp::lookup_global_key("C-h"),
@@ -633,13 +597,11 @@ fn elisp_global_set_key_records_user_binding() {
 #[test]
 fn elisp_cl_defstruct_works_in_gpui_md() {
     // Verify the new cl-defstruct implementation works in the integrated env.
-    let s = state_with("");
-    s.elisp
-        .eval(rele_elisp::read("(cl-defstruct todo title done)").unwrap())
+    let mut s = state_with("");
+    s.eval_lisp(rele_elisp::read("(cl-defstruct todo title done)").unwrap())
         .unwrap();
     let result = s
-        .elisp
-        .eval(rele_elisp::read(r#"(todo-title (make-todo "buy milk" nil))"#).unwrap())
+        .eval_lisp(rele_elisp::read(r#"(todo-title (make-todo "buy milk" nil))"#).unwrap())
         .unwrap();
     assert_eq!(result, rele_elisp::LispObject::string("buy milk"));
 }
