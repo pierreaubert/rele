@@ -1181,7 +1181,8 @@ fn emacs_re_to_rust(src: &str) -> String {
             i += 1;
         }
     }
-    expand_emacs_posix_classes(&apply_zero_width_repetition_compat(&out))
+    let out = expand_emacs_posix_classes(&apply_zero_width_repetition_compat(&out));
+    format!("(?m){out}")
 }
 
 fn apply_zero_width_repetition_compat(regex: &str) -> String {
@@ -2807,6 +2808,15 @@ mod tests {
         // starts.
         let re = regex::Regex::new(&emacs_re_to_rust(r"\`foo")).unwrap();
         assert!(!re.is_match("bar\nfoo"));
+    }
+
+    #[test]
+    fn regex_line_anchor_translation_is_multiline() {
+        let re = regex::Regex::new(&emacs_re_to_rust(r"^\(20\)\([^0-9\n]\|$\)")).unwrap();
+        let caps = re
+            .captures("header\n20}20\nfooter")
+            .expect("Emacs ^ must match beginning of later lines");
+        assert_eq!(caps.get(1).map(|m| m.as_str()), Some("20"));
     }
 
     /// Regression: R5 (continued). `\_<` / `\_>` are Emacs symbol

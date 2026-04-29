@@ -212,28 +212,35 @@ fn unicode_name_to_char(name: &str) -> Option<char> {
         "SNOWFLAKE" => '\u{2745}',
         "BLACK HEART SUIT" => '\u{2665}',
         "WHITE SMILING FACE" => '\u{263A}',
+        "BED" => '\u{1F6CF}',
+        "SYLOTI NAGRI LETTER DHO" => '\u{A817}',
         _ => {
             // U+XXXX hex codepoint form, used by Emacs's reader as a
             // catch-all for characters that don't have a registered name.
             if let Some(rest) = key.strip_prefix("U+")
-                && let Ok(code) = u32::from_str_radix(rest, 16) {
-                    return char::from_u32(code);
-                }
+                && let Ok(code) = u32::from_str_radix(rest, 16)
+            {
+                return char::from_u32(code);
+            }
             // VARIATION SELECTOR-N (1..256). 1..16 maps to U+FE00..U+FE0F,
             // 17..256 maps to U+E0100..U+E01EF.
             if let Some(num_str) = key.strip_prefix("VARIATION SELECTOR ")
-                && let Ok(n) = num_str.parse::<u32>() {
-                    if (1..=16).contains(&n) {
-                        return char::from_u32(0xFE00 + n - 1);
-                    } else if (17..=256).contains(&n) {
-                        return char::from_u32(0xE0100 + n - 17);
-                    }
+                && let Ok(n) = num_str.parse::<u32>()
+            {
+                if (1..=16).contains(&n) {
+                    return char::from_u32(0xFE00 + n - 1);
+                } else if (17..=256).contains(&n) {
+                    return char::from_u32(0xE0100 + n - 17);
                 }
+            }
             // CJK COMPATIBILITY IDEOGRAPH-XXXX hex codepoint.
             if let Some(rest) = key.strip_prefix("CJK COMPATIBILITY IDEOGRAPH ")
-                && let Ok(code) = u32::from_str_radix(rest, 16) {
+                && let Ok(code) = u32::from_str_radix(rest, 16)
+            {
+                if (0xF900..=0xFAD9).contains(&code) || (0x2F800..=0x2FA1D).contains(&code) {
                     return char::from_u32(code);
                 }
+            }
             return None;
         }
     };
@@ -436,15 +443,15 @@ impl Reader {
                 // If the next char is a symbol char (not delimiter/whitespace), it's a symbol
                 if let Some(next) = self.peek()
                     && is_symbol_char(next)
-                        && !next.is_ascii_digit()
-                        && next != '.'
-                        && next != 'e'
-                        && next != 'E'
-                    {
-                        // Rewind and read as symbol
-                        self.pos = saved_pos;
-                        return self.read_symbol(c);
-                    }
+                    && !next.is_ascii_digit()
+                    && next != '.'
+                    && next != 'e'
+                    && next != 'E'
+                {
+                    // Rewind and read as symbol
+                    self.pos = saved_pos;
+                    return self.read_symbol(c);
+                }
                 result
             }
             '.' => {
@@ -476,10 +483,11 @@ impl Reader {
         self.skip_whitespace();
 
         if let Some(c) = self.peek()
-            && c == ')' {
-                self.advance();
-                return Ok(LispObject::nil());
-            }
+            && c == ')'
+        {
+            self.advance();
+            return Ok(LispObject::nil());
+        }
 
         let car = self.read()?;
 
@@ -1020,7 +1028,6 @@ impl Reader {
                 'N' => {
                     // Named Unicode character: ?\N{UNICODE CHARACTER NAME}
                     // Consumes the {NAME} block and looks up the character.
-                    // Unknown names yield U+0000 so parsing can continue.
                     if self.peek() == Some('{') {
                         self.advance(); // consume '{'
                         let mut name = String::new();
@@ -1035,10 +1042,17 @@ impl Reader {
                                 }
                             }
                         }
-                        unicode_name_to_char(&name).unwrap_or('\0')
+                        unicode_name_to_char(&name).ok_or_else(|| {
+                            ElispError::ReaderError(format!("invalid unicode name: {name}"))
+                        })?
                     } else {
                         'N' // ?\N without { is just the character N
                     }
+                }
+                '\n' => {
+                    return Err(ElispError::ReaderError(
+                        "newline in character literal escape".to_string(),
+                    ));
                 }
                 '0'..='7' => {
                     // Octal character: \NNN
@@ -1251,10 +1265,11 @@ impl Reader {
                 self.advance();
                 // Optional sign after exponent
                 if let Some(sign) = self.peek()
-                    && (sign == '+' || sign == '-') {
-                        s.push(sign);
-                        self.advance();
-                    }
+                    && (sign == '+' || sign == '-')
+                {
+                    s.push(sign);
+                    self.advance();
+                }
                 // Emacs accepts INF / NaN as exponent mantissas, e.g. 1.0e+INF.
                 // Rust's f64::parse doesn't, so detect and substitute.
                 let rest_is_inf = self.peek().map(|c| matches!(c, 'I' | 'i')).unwrap_or(false);
@@ -1263,9 +1278,10 @@ impl Reader {
                     // Consume the 3 letters (INF or NaN).
                     for _ in 0..3 {
                         if let Some(ch) = self.peek()
-                            && ch.is_ascii_alphabetic() {
-                                self.advance();
-                            }
+                            && ch.is_ascii_alphabetic()
+                        {
+                            self.advance();
+                        }
                     }
                     let sign_is_negative = s.trim_start().starts_with('-');
                     return Ok(LispObject::float(if rest_is_inf {
@@ -1308,11 +1324,12 @@ impl Reader {
         let mut s = String::new();
         let mut has_sign = false;
         if let Some(c) = self.peek()
-            && (c == '+' || c == '-') {
-                has_sign = true;
-                s.push(c);
-                self.advance();
-            }
+            && (c == '+' || c == '-')
+        {
+            has_sign = true;
+            s.push(c);
+            self.advance();
+        }
         while let Some(c) = self.peek() {
             if c.is_ascii_alphanumeric() {
                 s.push(c);
@@ -1550,9 +1567,17 @@ mod tests {
         assert_eq!(read("?A").unwrap(), LispObject::integer(65));
         assert_eq!(read("?\\n").unwrap(), LispObject::integer(10));
         assert_eq!(read("?\\t").unwrap(), LispObject::integer(9));
-        assert_eq!(read("?\\\n").unwrap(), LispObject::integer(10));
         assert_eq!(read("?\\x41").unwrap(), LispObject::integer(65));
+        assert_eq!(read("?\\N{U+41}").unwrap(), LispObject::integer(65));
         assert_eq!(read("? ").unwrap(), LispObject::integer(32));
+    }
+
+    #[test]
+    fn test_read_invalid_char_literal_signals() {
+        assert!(read("?\\\n").is_err());
+        assert!(read("?\\N{U+110000}").is_err());
+        assert!(read("?\\N{VARIATION SELECTOR-0}").is_err());
+        assert!(read("?\\N{CJK COMPATIBILITY IDEOGRAPH-F8FF}").is_err());
     }
 
     #[test]

@@ -38,9 +38,10 @@ fn stage_stdlib_file(emacs_lisp_dir: &str, file: &str) -> bool {
         return true;
     }
     if let Some(parent) = std::path::Path::new(&dest).parent()
-        && std::fs::create_dir_all(parent).is_err() {
-            return false;
-        }
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return false;
+    }
     let plain = format!("{emacs_lisp_dir}/{file}.el");
     let gz = format!("{emacs_lisp_dir}/{file}.el.gz");
     if std::path::Path::new(&plain).exists() {
@@ -50,8 +51,8 @@ fn stage_stdlib_file(emacs_lisp_dir: &str, file: &str) -> bool {
         && let Ok(out) = std::process::Command::new("gunzip")
             .args(["-c", &gz])
             .output()
-        {
-            return out.status.success() && std::fs::write(&dest, out.stdout).is_ok();
-        }
+    {
+        return out.status.success() && std::fs::write(&dest, out.stdout).is_ok();
+    }
     true
 }

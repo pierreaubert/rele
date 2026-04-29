@@ -239,9 +239,10 @@ pub fn prim_cl_concatenate(args: &LispObject) -> ElispResult<LispObject> {
                     let items = to_vec(&seq, 1 << 16);
                     for it in items {
                         if let Some(n) = it.as_integer()
-                            && let Some(c) = char::from_u32(n as u32) {
-                                out.push(c);
-                            }
+                            && let Some(c) = char::from_u32(n as u32)
+                        {
+                            out.push(c);
+                        }
                     }
                 }
                 rest_cur = rest;
@@ -769,61 +770,62 @@ fn check_type_recursive(v: &LispObject, type_spec: &LispObject) -> bool {
         _ => {
             // Compound form like (or ...), (and ...), (not ...), (member ...), (satisfies ...)
             if let Some((car, cdr)) = type_spec.destructure_cons()
-                && let Some(op) = car.as_symbol() {
-                    return match op.as_str() {
-                        "or" => {
-                            // (or TYPE1 TYPE2 ...) — at least one must match
-                            let mut cur = cdr.clone();
-                            while let Some((type_form, rest)) = cur.destructure_cons() {
-                                if check_type_recursive(v, &type_form) {
-                                    return true;
-                                }
-                                cur = rest;
+                && let Some(op) = car.as_symbol()
+            {
+                return match op.as_str() {
+                    "or" => {
+                        // (or TYPE1 TYPE2 ...) — at least one must match
+                        let mut cur = cdr.clone();
+                        while let Some((type_form, rest)) = cur.destructure_cons() {
+                            if check_type_recursive(v, &type_form) {
+                                return true;
                             }
+                            cur = rest;
+                        }
+                        false
+                    }
+                    "and" => {
+                        // (and TYPE1 TYPE2 ...) — all must match
+                        let mut cur = cdr.clone();
+                        while let Some((type_form, rest)) = cur.destructure_cons() {
+                            if !check_type_recursive(v, &type_form) {
+                                return false;
+                            }
+                            cur = rest;
+                        }
+                        true
+                    }
+                    "not" => {
+                        // (not TYPE) — match if TYPE doesn't match
+                        if let Some((type_form, _)) = cdr.destructure_cons() {
+                            !check_type_recursive(v, &type_form)
+                        } else {
                             false
                         }
-                        "and" => {
-                            // (and TYPE1 TYPE2 ...) — all must match
-                            let mut cur = cdr.clone();
-                            while let Some((type_form, rest)) = cur.destructure_cons() {
-                                if !check_type_recursive(v, &type_form) {
-                                    return false;
-                                }
-                                cur = rest;
+                    }
+                    "member" => {
+                        // (member VAL1 VAL2 ...) — check if v is in list
+                        let mut cur = cdr.clone();
+                        while let Some((member_val, rest)) = cur.destructure_cons() {
+                            if lisp_equal(v, &member_val) {
+                                return true;
                             }
-                            true
+                            cur = rest;
                         }
-                        "not" => {
-                            // (not TYPE) — match if TYPE doesn't match
-                            if let Some((type_form, _)) = cdr.destructure_cons() {
-                                !check_type_recursive(v, &type_form)
-                            } else {
-                                false
-                            }
-                        }
-                        "member" => {
-                            // (member VAL1 VAL2 ...) — check if v is in list
-                            let mut cur = cdr.clone();
-                            while let Some((member_val, rest)) = cur.destructure_cons() {
-                                if lisp_equal(v, &member_val) {
-                                    return true;
-                                }
-                                cur = rest;
-                            }
-                            false
-                        }
-                        "satisfies" => {
-                            // (satisfies PRED) — we'd need to call the predicate,
-                            // but we don't have eval access here. Return false for safety.
-                            false
-                        }
-                        _ => {
-                            // Unknown combinator or typed number range like (integer 0 10).
-                            // For now return false; could be enhanced.
-                            false
-                        }
-                    };
-                }
+                        false
+                    }
+                    "satisfies" => {
+                        // (satisfies PRED) — we'd need to call the predicate,
+                        // but we don't have eval access here. Return false for safety.
+                        false
+                    }
+                    _ => {
+                        // Unknown combinator or typed number range like (integer 0 10).
+                        // For now return false; could be enhanced.
+                        false
+                    }
+                };
+            }
             false
         }
     }
@@ -879,9 +881,10 @@ pub fn prim_cl_coerce(args: &LispObject) -> ElispResult<LispObject> {
                 let mut out = String::new();
                 for it in items {
                     if let Some(n) = it.as_integer()
-                        && let Some(c) = char::from_u32(n as u32) {
-                            out.push(c);
-                        }
+                        && let Some(c) = char::from_u32(n as u32)
+                    {
+                        out.push(c);
+                    }
                 }
                 Ok(LispObject::string(&out))
             }

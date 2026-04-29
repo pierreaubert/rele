@@ -761,12 +761,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
                 LispObject::nil()
             })
         }
-        "byte-to-string" => {
-            let byte = args.first().and_then(|v| v.as_integer()).unwrap_or(0);
-            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-            let ch = char::from(byte as u8);
-            Ok(LispObject::string(&ch.to_string()))
-        }
+        "byte-to-string" => byte_to_string_impl(args),
         "char-resolve-modifiers" => char_resolve_modifiers_impl(args),
         "charset-after" => Ok(LispObject::symbol("unicode")),
         "split-char" => Ok(LispObject::nil()),
@@ -834,7 +829,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "lossage-size" => Ok(LispObject::integer(300)),
         "num-processors" => Ok(LispObject::integer(1)),
         "network-interface-list" => Ok(LispObject::nil()),
-        "group-name" => Ok(LispObject::nil()),
+        "group-name" => group_name_impl(args),
         "get-display-property" => Ok(LispObject::nil()),
 
         // Display/formatting stubs
@@ -851,6 +846,33 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         _ => return None,
     };
     Some(r)
+}
+
+fn byte_to_string_impl(args: &LispObject) -> ElispResult<LispObject> {
+    let byte = args
+        .first()
+        .ok_or(ElispError::WrongNumberOfArguments)?
+        .as_integer()
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
+    if !(0..=255).contains(&byte) {
+        return Err(ElispError::WrongTypeArgument("character".to_string()));
+    }
+    let byte =
+        u8::try_from(byte).map_err(|_| ElispError::WrongTypeArgument("character".to_string()))?;
+    let s = char::from(byte).to_string();
+    crate::object::mark_string_multibyte(&s, false);
+    Ok(LispObject::string(&s))
+}
+
+fn group_name_impl(args: &LispObject) -> ElispResult<LispObject> {
+    let Some(group) = args.first() else {
+        return Ok(LispObject::nil());
+    };
+    if group.is_nil() || group.as_integer().is_some() {
+        Ok(LispObject::nil())
+    } else {
+        Err(ElispError::WrongTypeArgument("integer".to_string()))
+    }
 }
 
 fn multibyte_char_to_unibyte_impl(args: &LispObject) -> ElispResult<LispObject> {

@@ -61,5 +61,10 @@ fn prim_read(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::String(s) => s.clone(),
         _ => return Ok(LispObject::nil()),
     };
-    crate::reader::read(&s)
+    crate::reader::read(&s).map_err(|e| {
+        ElispError::Signal(Box::new(crate::error::SignalData {
+            symbol: LispObject::symbol("invalid-read-syntax"),
+            data: LispObject::cons(LispObject::string(&e.to_string()), LispObject::nil()),
+        }))
+    })
 }

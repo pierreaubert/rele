@@ -153,16 +153,17 @@ pub(super) fn stateful_autoload_do_load(
     let funname = args.nth(1);
     if let Some(sym_obj) = funname
         && let Some(sym_name) = sym_obj.as_symbol()
-            && let Some(sym_id) = crate::obarray::GLOBAL_OBARRAY.read().find(&sym_name)
-                && let Some(def) = state.get_function_cell(sym_id) {
-                    let is_autoload_stub = def
-                        .first()
-                        .and_then(|head| head.as_symbol())
-                        .is_some_and(|s| s == "autoload");
-                    if !def.is_nil() && !is_autoload_stub {
-                        return Ok(def);
-                    }
-                }
+        && let Some(sym_id) = crate::obarray::GLOBAL_OBARRAY.read().find(&sym_name)
+        && let Some(def) = state.get_function_cell(sym_id)
+    {
+        let is_autoload_stub = def
+            .first()
+            .and_then(|head| head.as_symbol())
+            .is_some_and(|s| s == "autoload");
+        if !def.is_nil() && !is_autoload_stub {
+            return Ok(def);
+        }
+    }
     Ok(LispObject::nil())
 }
 pub(super) fn stateful_load_history_filename_element(
@@ -182,9 +183,10 @@ pub(super) fn stateful_load_history_filename_element(
     while let Some((entry, rest)) = current.destructure_cons() {
         if let Some((key, _)) = entry.destructure_cons()
             && let Some(key_str) = key.as_string()
-                && *key_str == filename {
-                    return Ok(entry);
-                }
+            && *key_str == filename
+        {
+            return Ok(entry);
+        }
         current = rest;
     }
     Ok(LispObject::nil())

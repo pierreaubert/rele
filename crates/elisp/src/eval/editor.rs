@@ -233,15 +233,23 @@ pub(super) fn eval_forward_line(
     macros: &MacroTable,
     state: &InterpreterState,
 ) -> ElispResult<Value> {
+    if editor.read().is_none() {
+        let args = eval_args_to_list(args, env, editor, macros, state)?;
+        let result = crate::primitives_buffer::call_buffer_primitive("forward-line", &args)
+            .ok_or_else(|| ElispError::VoidFunction("forward-line".to_string()))??;
+        return Ok(obj_to_value(result));
+    }
+
     // `(forward-line N)` — N is optional and defaults to 1.
     let args_obj = value_to_obj(args);
     let n = match args_obj.first() {
         Some(arg) => {
             let v = value_to_obj(eval(obj_to_value(arg), env, editor, macros, state)?);
-            match v {
-                LispObject::Integer(i) => i,
-                LispObject::Nil => 1,
-                _ => return Err(ElispError::WrongTypeArgument("integer".to_string())),
+            if v.is_nil() {
+                1
+            } else {
+                v.as_integer()
+                    .ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?
             }
         }
         None => 1,
@@ -540,6 +548,7 @@ pub(super) fn eval_search_forward(
         let args = eval_args_to_list(args, env, editor, macros, state)?;
         let result = crate::primitives_buffer::call_buffer_primitive("search-forward", &args)
             .ok_or_else(|| ElispError::VoidFunction("search-forward".to_string()))??;
+        state.set_match_data(Vec::new(), None);
         return Ok(obj_to_value(result));
     }
     let needle = eval_string_arg(args, env, editor, macros, state)?;
@@ -561,6 +570,7 @@ pub(super) fn eval_search_backward(
         let args = eval_args_to_list(args, env, editor, macros, state)?;
         let result = crate::primitives_buffer::call_buffer_primitive("search-backward", &args)
             .ok_or_else(|| ElispError::VoidFunction("search-backward".to_string()))??;
+        state.set_match_data(Vec::new(), None);
         return Ok(obj_to_value(result));
     }
     let needle = eval_string_arg(args, env, editor, macros, state)?;
@@ -582,6 +592,7 @@ pub(super) fn eval_re_search_forward(
         let args = eval_args_to_list(args, env, editor, macros, state)?;
         let result = crate::primitives_buffer::call_buffer_primitive("re-search-forward", &args)
             .ok_or_else(|| ElispError::VoidFunction("re-search-forward".to_string()))??;
+        state.set_match_data(Vec::new(), None);
         return Ok(obj_to_value(result));
     }
     let pattern = eval_string_arg(args, env, editor, macros, state)?;
@@ -603,6 +614,7 @@ pub(super) fn eval_re_search_backward(
         let args = eval_args_to_list(args, env, editor, macros, state)?;
         let result = crate::primitives_buffer::call_buffer_primitive("re-search-backward", &args)
             .ok_or_else(|| ElispError::VoidFunction("re-search-backward".to_string()))??;
+        state.set_match_data(Vec::new(), None);
         return Ok(obj_to_value(result));
     }
     let pattern = eval_string_arg(args, env, editor, macros, state)?;

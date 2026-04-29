@@ -90,9 +90,10 @@ impl InterpreterState {
         }
         if new_ops & 0x3FF == 0
             && let Some(dl) = self.deadline.get()
-                && std::time::Instant::now() >= dl {
-                    return Err(ElispError::EvalError("hard eval limit".into()));
-                }
+            && std::time::Instant::now() >= dl
+        {
+            return Err(ElispError::EvalError("hard eval limit".into()));
+        }
         Ok(())
     }
     pub fn get_value_cell(&self, sym: obarray::SymbolId) -> Option<LispObject> {

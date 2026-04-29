@@ -520,9 +520,10 @@ impl LispObject {
             LispObject::Cons(cell) => {
                 let b = cell.lock();
                 if let LispObject::Symbol(id) = &b.0
-                    && obarray::symbol_name(*id) == "quote" {
-                        return b.1.first();
-                    }
+                    && obarray::symbol_name(*id) == "quote"
+                {
+                    return b.1.first();
+                }
                 None
             }
             _ => None,

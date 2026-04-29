@@ -118,9 +118,10 @@ fn keymap_parent(map: &LispObject) -> LispObject {
     let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
     while let Some((entry, rest)) = cur.destructure_cons() {
         if let Some((key, value)) = entry.destructure_cons()
-            && key == parent_marker() {
-                return value;
-            }
+            && key == parent_marker()
+        {
+            return value;
+        }
         cur = rest;
     }
     LispObject::nil()
@@ -134,10 +135,12 @@ fn define_key_in_map(map: &LispObject, key: LispObject, def: LispObject) -> Elis
     let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
     while let Some((entry, rest)) = cur.destructure_cons() {
         if let Some((entry_key, _)) = entry.destructure_cons()
-            && entry_key != parent_marker() && key_equal(&entry_key, &key) {
-                entry.set_cdr(def);
-                return Ok(());
-            }
+            && entry_key != parent_marker()
+            && key_equal(&entry_key, &key)
+        {
+            entry.set_cdr(def);
+            return Ok(());
+        }
         cur = rest;
     }
 
@@ -159,9 +162,11 @@ fn lookup_in_map(map: &LispObject, key: &LispObject) -> LispObject {
                 return found;
             }
         } else if let Some((entry_key, value)) = entry.destructure_cons()
-            && entry_key != parent_marker() && key_equal(&entry_key, key) {
-                return value;
-            }
+            && entry_key != parent_marker()
+            && key_equal(&entry_key, key)
+        {
+            return value;
+        }
         cur = rest;
     }
 
@@ -259,10 +264,11 @@ fn set_parent(map: &LispObject, parent: LispObject) {
     let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
     while let Some((entry, rest)) = cur.destructure_cons() {
         if let Some((key, _)) = entry.destructure_cons()
-            && key == marker {
-                entry.set_cdr(parent);
-                return;
-            }
+            && key == marker
+        {
+            entry.set_cdr(parent);
+            return;
+        }
         cur = rest;
     }
     let old_tail = map.cdr().unwrap_or_else(LispObject::nil);
@@ -340,9 +346,10 @@ pub fn prim_type_of(args: &LispObject) -> ElispResult<LispObject> {
         let guard = v.lock();
         if let Some(first) = guard.first()
             && let Some(sym) = first.as_symbol()
-                && crate::primitives_eieio::get_class(&sym).is_some() {
-                    return Ok(LispObject::symbol(&sym));
-                }
+            && crate::primitives_eieio::get_class(&sym).is_some()
+        {
+            return Ok(LispObject::symbol(&sym));
+        }
     }
     let type_name = match &arg {
         LispObject::Nil => "symbol",

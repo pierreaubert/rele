@@ -62,9 +62,10 @@ pub(super) fn pcase_match(
                     // literal matches, not captures.
                     if name.starts_with(':') {
                         if let Some(sym) = value.as_symbol()
-                            && sym == name {
-                                return Ok(Some(Vec::new()));
-                            }
+                            && sym == name
+                        {
+                            return Ok(Some(Vec::new()));
+                        }
                         Ok(None)
                     } else {
                         Ok(Some(vec![(name, value.clone())]))
@@ -301,15 +302,16 @@ fn match_pred(
 ) -> ElispResult<Option<Bindings>> {
     // (pred (not FN)) — negate
     if let Some((car, cdr)) = fn_form.destructure_cons()
-        && car.as_symbol().as_deref() == Some("not") {
-            let inner_fn = cdr.first().unwrap_or(LispObject::nil());
-            let result = match_pred(&inner_fn, value, env, editor, macros, state)?;
-            return Ok(if result.is_some() {
-                None
-            } else {
-                Some(Vec::new())
-            });
-        }
+        && car.as_symbol().as_deref() == Some("not")
+    {
+        let inner_fn = cdr.first().unwrap_or(LispObject::nil());
+        let result = match_pred(&inner_fn, value, env, editor, macros, state)?;
+        return Ok(if result.is_some() {
+            None
+        } else {
+            Some(Vec::new())
+        });
+    }
 
     let fn_val = eval(obj_to_value(fn_form.clone()), env, editor, macros, state)
         .unwrap_or(obj_to_value(fn_form.clone()));

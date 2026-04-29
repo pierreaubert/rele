@@ -200,25 +200,26 @@ pub fn prim_string_to_number(args: &LispObject) -> ElispResult<LispObject> {
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
     if let Some(radix) = args.nth(1).and_then(|obj| obj.as_integer())
-        && (2..=36).contains(&radix) {
-            let trimmed = s.trim();
-            let sign = if trimmed.starts_with('-') { -1 } else { 1 };
-            let digits = if trimmed.starts_with('+') || trimmed.starts_with('-') {
-                &trimmed[1..]
-            } else {
-                trimmed
-            };
-            let valid: String = digits
-                .chars()
-                .take_while(|c| c.is_digit(radix as u32))
-                .collect();
-            if valid.is_empty() {
-                return Ok(LispObject::integer(0));
-            }
-            return Ok(LispObject::integer(
-                i64::from_str_radix(&valid, radix as u32).unwrap_or(0) * sign,
-            ));
+        && (2..=36).contains(&radix)
+    {
+        let trimmed = s.trim();
+        let sign = if trimmed.starts_with('-') { -1 } else { 1 };
+        let digits = if trimmed.starts_with('+') || trimmed.starts_with('-') {
+            &trimmed[1..]
+        } else {
+            trimmed
+        };
+        let valid: String = digits
+            .chars()
+            .take_while(|c| c.is_digit(radix as u32))
+            .collect();
+        if valid.is_empty() {
+            return Ok(LispObject::integer(0));
         }
+        return Ok(LispObject::integer(
+            i64::from_str_radix(&valid, radix as u32).unwrap_or(0) * sign,
+        ));
+    }
     if let Ok(i) = s.trim().parse::<i64>() {
         Ok(LispObject::integer(i))
     } else if let Ok(f) = s.trim().parse::<f64>() {

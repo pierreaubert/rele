@@ -117,15 +117,16 @@ fn collect_translation_table_names(form: &LispObject, out: &mut Vec<String>) {
         return;
     };
     if head.as_symbol().as_deref() == Some("define-translation-table")
-        && let Some(name_form) = rest.first() {
-            let name = name_form
-                .as_quote_content()
-                .and_then(|obj| obj.as_symbol())
-                .or_else(|| name_form.as_symbol());
-            if let Some(name) = name {
-                out.push(name);
-            }
+        && let Some(name_form) = rest.first()
+    {
+        let name = name_form
+            .as_quote_content()
+            .and_then(|obj| obj.as_symbol())
+            .or_else(|| name_form.as_symbol());
+        if let Some(name) = name {
+            out.push(name);
         }
+    }
     collect_translation_table_names(&head, out);
     collect_translation_table_names(&rest, out);
 }

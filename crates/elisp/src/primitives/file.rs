@@ -20,6 +20,13 @@ fn int_arg(args: &LispObject, n: usize, default: i64) -> i64 {
     args.nth(n).and_then(|v| v.as_integer()).unwrap_or(default)
 }
 
+fn decode_text_file_contents(text: String) -> String {
+    if !text.contains('\r') {
+        return text;
+    }
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 // ---- Pathname parsing -------------------------------------------------
 
 pub fn prim_file_name_directory(args: &LispObject) -> ElispResult<LispObject> {
@@ -742,9 +749,10 @@ pub fn prim_make_temp_file(args: &LispObject) -> ElispResult<LispObject> {
     let tmp = std::env::temp_dir();
     let path = tmp.join(format!("{}XXXX-{pid}-{nonce}", sanitize(&prefix)));
     if let Ok(mut f) = std::fs::File::create(&path)
-        && let Some(text) = str_arg(args, 2) {
-            let _ = f.write_all(text.as_bytes());
-        }
+        && let Some(text) = str_arg(args, 2)
+    {
+        let _ = f.write_all(text.as_bytes());
+    }
     Ok(LispObject::string(&path.to_string_lossy()))
 }
 
@@ -853,7 +861,9 @@ pub fn prim_find_file_noselect(args: &LispObject) -> ElispResult<LispObject> {
         .unwrap_or("file")
         .to_string();
     let id = buffer::with_registry_mut(|r| r.create_unique(&base));
-    let text = std::fs::read_to_string(&s).unwrap_or_default();
+    let text = std::fs::read_to_string(&s)
+        .map(decode_text_file_contents)
+        .unwrap_or_default();
     buffer::with_registry_mut(|r| {
         if let Some(b) = r.get_mut(id) {
             b.text = text;
@@ -1242,6 +1252,14 @@ mod tests {
     fn make_test_state() -> crate::eval::InterpreterState {
         let interp = crate::eval::Interpreter::new();
         interp.state.clone()
+    }
+
+    #[test]
+    fn decode_text_file_contents_normalizes_crlf() {
+        assert_eq!(
+            decode_text_file_contents("20}20\r\n21{ Comment }21\r\n".to_string()),
+            "20}20\n21{ Comment }21\n"
+        );
     }
 
     /// Regression: R2. `setenv` used to only touch `std::env`, leaving

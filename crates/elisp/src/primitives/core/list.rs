@@ -222,9 +222,10 @@ pub fn prim_assoc(args: &LispObject) -> ElispResult<LispObject> {
             ));
         }
         if let Some((k, _)) = entry.destructure_cons()
-            && key == k {
-                return Ok(entry);
-            }
+            && key == k
+        {
+            return Ok(entry);
+        }
         current = rest;
     }
     Ok(LispObject::nil())
@@ -357,9 +358,10 @@ pub fn prim_assq(args: &LispObject) -> ElispResult<LispObject> {
             ));
         }
         if let Some((k, _)) = entry.destructure_cons()
-            && eq_test(&key, &k) {
-                return Ok(entry);
-            }
+            && eq_test(&key, &k)
+        {
+            return Ok(entry);
+        }
         current = rest;
     }
     Ok(LispObject::nil())

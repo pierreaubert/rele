@@ -653,11 +653,16 @@ pub(super) fn eval_format(
                 }
                 'c' => {
                     if arg_idx < format_args.len() {
-                        if let LispObject::Integer(n) = &format_args[arg_idx]
-                            && let Some(ch) = char::from_u32(*n as u32) {
-                                let s = ch.to_string();
-                                result.push_str(&apply_width(s));
-                            }
+                        let LispObject::Integer(n) = &format_args[arg_idx] else {
+                            return Err(ElispError::WrongTypeArgument("integer".to_string()));
+                        };
+                        let code = u32::try_from(*n).map_err(|_| {
+                            ElispError::WrongTypeArgument("character".to_string())
+                        })?;
+                        let ch = char::from_u32(code).ok_or_else(|| {
+                            ElispError::WrongTypeArgument("character".to_string())
+                        })?;
+                        result.push_str(&apply_width(ch.to_string()));
                         arg_idx += 1;
                     }
                 }

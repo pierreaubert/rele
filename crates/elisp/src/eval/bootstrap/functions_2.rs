@@ -1142,9 +1142,10 @@ pub fn make_stdlib_interp() -> Interpreter {
         );
         let id = crate::obarray::intern(mode_name);
         if interp.state.get_function_cell(id).is_none()
-            && let Ok(func) = interp.eval_source(&mode_fn) {
-                interp.state.set_function_cell(id, func);
-            }
+            && let Ok(func) = interp.eval_source(&mode_fn)
+        {
+            interp.state.set_function_cell(id, func);
+        }
         let hook_id = crate::obarray::intern(&hook_name);
         if interp.state.get_value_cell(hook_id).is_none() {
             interp.state.set_value_cell(hook_id, LispObject::nil());

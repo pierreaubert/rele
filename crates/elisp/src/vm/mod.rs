@@ -1344,10 +1344,11 @@ impl<'a> Vm<'a> {
                 let mut found = LispObject::nil();
                 while let Some((entry, rest)) = current.destructure_cons() {
                     if let Some(k) = entry.first()
-                        && key == k {
-                            found = entry;
-                            break;
-                        }
+                        && key == k
+                    {
+                        found = entry;
+                        break;
+                    }
                     current = rest;
                 }
                 self.push_obj(found);
@@ -1686,30 +1687,32 @@ impl<'a> Vm<'a> {
     fn local_ref(&mut self, n: usize) -> LispObject {
         // varref: look up in constants vector for the symbol name, then look up in env
         if n < self.constants.len()
-            && let Some(name) = self.constants[n].as_symbol() {
-                // Check locals first (let-bound)
-                // Then check environment
-                return self.env.read().get(&name).unwrap_or(LispObject::nil());
-            }
+            && let Some(name) = self.constants[n].as_symbol()
+        {
+            // Check locals first (let-bound)
+            // Then check environment
+            return self.env.read().get(&name).unwrap_or(LispObject::nil());
+        }
         // Fallback: direct local index
         self.locals.get(n).cloned().unwrap_or(LispObject::nil())
     }
 
     fn local_set(&mut self, n: usize, val: LispObject) -> ElispResult<()> {
         if n < self.constants.len()
-            && let Some(name) = self.constants[n].as_symbol() {
-                let sym_id = crate::obarray::intern(&name);
-                crate::eval::assign_symbol_value(
-                    sym_id,
-                    val,
-                    self.env,
-                    self.editor,
-                    self.macros,
-                    self.state,
-                    crate::eval::SetOperation::Setq,
-                )?;
-                return Ok(());
-            }
+            && let Some(name) = self.constants[n].as_symbol()
+        {
+            let sym_id = crate::obarray::intern(&name);
+            crate::eval::assign_symbol_value(
+                sym_id,
+                val,
+                self.env,
+                self.editor,
+                self.macros,
+                self.state,
+                crate::eval::SetOperation::Setq,
+            )?;
+            return Ok(());
+        }
         while self.locals.len() <= n {
             self.locals.push(LispObject::nil());
         }
@@ -1719,22 +1722,23 @@ impl<'a> Vm<'a> {
 
     fn varbind(&mut self, n: usize, val: LispObject) -> ElispResult<()> {
         if n < self.constants.len()
-            && let Some(name) = self.constants[n].as_symbol() {
-                let id = crate::obarray::intern(&name);
-                let old = self.env.read().get(&name);
-                self.specpdl.push((name.clone(), old));
-                self.env.write().set(&name, val.clone());
-                crate::eval::deliver_variable_watchers(
-                    id,
-                    &val,
-                    crate::eval::SetOperation::Let,
-                    self.env,
-                    self.editor,
-                    self.macros,
-                    self.state,
-                )?;
-                return Ok(());
-            }
+            && let Some(name) = self.constants[n].as_symbol()
+        {
+            let id = crate::obarray::intern(&name);
+            let old = self.env.read().get(&name);
+            self.specpdl.push((name.clone(), old));
+            self.env.write().set(&name, val.clone());
+            crate::eval::deliver_variable_watchers(
+                id,
+                &val,
+                crate::eval::SetOperation::Let,
+                self.env,
+                self.editor,
+                self.macros,
+                self.state,
+            )?;
+            return Ok(());
+        }
         self.local_set(n, val)?;
         Ok(())
     }

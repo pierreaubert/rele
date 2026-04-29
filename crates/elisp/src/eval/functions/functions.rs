@@ -1311,18 +1311,19 @@ fn stateful_make_hash_table(
     while let Some((key, rest)) = cur.destructure_cons() {
         if let Some(s) = key.as_symbol()
             && s == ":test"
-                && let Some((val, rest2)) = rest.destructure_cons() {
-                    if let Some(t) = val.as_symbol() {
-                        test = match t.as_str() {
-                            "eq" => crate::object::HashTableTest::Eq,
-                            "eql" => crate::object::HashTableTest::Eql,
-                            "equal" => crate::object::HashTableTest::Equal,
-                            _ => crate::object::HashTableTest::Eql,
-                        };
-                    }
-                    cur = rest2;
-                    continue;
-                }
+            && let Some((val, rest2)) = rest.destructure_cons()
+        {
+            if let Some(t) = val.as_symbol() {
+                test = match t.as_str() {
+                    "eq" => crate::object::HashTableTest::Eq,
+                    "eql" => crate::object::HashTableTest::Eql,
+                    "equal" => crate::object::HashTableTest::Equal,
+                    _ => crate::object::HashTableTest::Eql,
+                };
+            }
+            cur = rest2;
+            continue;
+        }
         cur = rest;
     }
     let v = state.heap_hashtable(crate::object::LispHashTable::new(test));
@@ -1390,19 +1391,20 @@ fn stateful_defalias(
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
     if let Some((car, rest)) = value.destructure_cons()
         && car.as_symbol().as_deref() == Some("macro")
-            && let Some((lambda_sym, lambda_rest)) = rest.destructure_cons()
-                && lambda_sym.as_symbol().as_deref() == Some("lambda") {
-                    let macro_args = lambda_rest.first().unwrap_or(LispObject::nil());
-                    let macro_body = lambda_rest.rest().unwrap_or(LispObject::nil());
-                    macros.write().insert(
-                        name_str.clone(),
-                        Macro {
-                            args: macro_args,
-                            body: macro_body,
-                        },
-                    );
-                    return Ok(LispObject::symbol(&name_str));
-                }
+        && let Some((lambda_sym, lambda_rest)) = rest.destructure_cons()
+        && lambda_sym.as_symbol().as_deref() == Some("lambda")
+    {
+        let macro_args = lambda_rest.first().unwrap_or(LispObject::nil());
+        let macro_body = lambda_rest.rest().unwrap_or(LispObject::nil());
+        macros.write().insert(
+            name_str.clone(),
+            Macro {
+                args: macro_args,
+                body: macro_body,
+            },
+        );
+        return Ok(LispObject::symbol(&name_str));
+    }
     let id = crate::obarray::intern(&name_str);
     set_function_cell_checked(id, value, state)?;
     Ok(LispObject::symbol(&name_str))

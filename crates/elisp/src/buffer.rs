@@ -343,11 +343,12 @@ impl StubBuffer {
         }
         // Narrow bounds collapse if we deleted past them.
         if let Some((na, nb)) = self.restriction
-            && b > na {
-                let shrink = b.min(nb).saturating_sub(a.max(na));
-                self.restriction = Some((na, nb.saturating_sub(shrink).max(na)));
-                self.manual_restriction = self.restriction;
-            }
+            && b > na
+        {
+            let shrink = b.min(nb).saturating_sub(a.max(na));
+            self.restriction = Some((na, nb.saturating_sub(shrink).max(na)));
+            self.manual_restriction = self.restriction;
+        }
         self.bump_modified();
     }
 

@@ -1178,27 +1178,26 @@ pub(super) fn eval_defvar(
     // value — that must NOT block initialization of this interpreter's
     // binding.
     let is_bound = state.get_value_cell(id).is_some();
-    if !is_bound
-        && let Some(value_expr) = args_obj.nth(1) {
-            let value = value_to_obj(eval(obj_to_value(value_expr), env, editor, macros, state)?);
-            // If this variable is currently let-bound, defvar updates only the
-            // toplevel default — not the active dynamic binding. The toplevel
-            // value lives in the bottom-most specpdl entry's "saved" slot,
-            // which `unwind_specpdl` will restore when the outermost let exits.
-            let bottom_idx = state.specpdl.read().iter().position(|(sid, _)| *sid == id);
-            if let Some(idx) = bottom_idx {
-                state.specpdl.write()[idx].1 = Some(value.clone());
-            } else {
-                state.global_env.write().define_id(id, value.clone());
-            }
-            // Mirror to the value cell so fresh envs elsewhere can see it.
-            state.set_value_cell(id, value);
-            state.put_plist(
-                id,
-                crate::obarray::intern("default-toplevel-value"),
-                state.get_value_cell(id).unwrap_or_else(LispObject::nil),
-            );
+    if !is_bound && let Some(value_expr) = args_obj.nth(1) {
+        let value = value_to_obj(eval(obj_to_value(value_expr), env, editor, macros, state)?);
+        // If this variable is currently let-bound, defvar updates only the
+        // toplevel default — not the active dynamic binding. The toplevel
+        // value lives in the bottom-most specpdl entry's "saved" slot,
+        // which `unwind_specpdl` will restore when the outermost let exits.
+        let bottom_idx = state.specpdl.read().iter().position(|(sid, _)| *sid == id);
+        if let Some(idx) = bottom_idx {
+            state.specpdl.write()[idx].1 = Some(value.clone());
+        } else {
+            state.global_env.write().define_id(id, value.clone());
         }
+        // Mirror to the value cell so fresh envs elsewhere can see it.
+        state.set_value_cell(id, value);
+        state.put_plist(
+            id,
+            crate::obarray::intern("default-toplevel-value"),
+            state.get_value_cell(id).unwrap_or_else(LispObject::nil),
+        );
+    }
     Ok(obj_to_value(LispObject::Symbol(id)))
 }
 pub(super) fn eval_defconst(
@@ -1246,19 +1245,20 @@ pub(super) fn eval_defalias(
 
     if let Some((car, rest)) = value.destructure_cons()
         && car.as_symbol().as_deref() == Some("macro")
-            && let Some((lambda_sym, lambda_rest)) = rest.destructure_cons()
-                && lambda_sym.as_symbol().as_deref() == Some("lambda") {
-                    let macro_args = lambda_rest.first().unwrap_or(LispObject::nil());
-                    let macro_body = lambda_rest.rest().unwrap_or(LispObject::nil());
-                    macros.write().insert(
-                        name.clone(),
-                        Macro {
-                            args: macro_args,
-                            body: macro_body,
-                        },
-                    );
-                    return Ok(obj_to_value(LispObject::symbol(&name)));
-                }
+        && let Some((lambda_sym, lambda_rest)) = rest.destructure_cons()
+        && lambda_sym.as_symbol().as_deref() == Some("lambda")
+    {
+        let macro_args = lambda_rest.first().unwrap_or(LispObject::nil());
+        let macro_body = lambda_rest.rest().unwrap_or(LispObject::nil());
+        macros.write().insert(
+            name.clone(),
+            Macro {
+                args: macro_args,
+                body: macro_body,
+            },
+        );
+        return Ok(obj_to_value(LispObject::symbol(&name)));
+    }
 
     // defalias writes the function cell — value is a function definition.
     set_function_cell_checked(id, value, state)?;

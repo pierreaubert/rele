@@ -232,14 +232,16 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         "zerop" => {
             let v = one_arg(args)?;
-            v.as_fixnum().map(|n| Ok(if n == 0 { Value::t() } else { Value::nil() }))
+            v.as_fixnum()
+                .map(|n| Ok(if n == 0 { Value::t() } else { Value::nil() }))
         }
         "natnump" => {
             let v = one_arg(args)?;
             if v.as_heap_ptr().is_some() {
                 return None;
             }
-            v.as_fixnum().map(|n| Ok(if n >= 0 { Value::t() } else { Value::nil() }))
+            v.as_fixnum()
+                .map(|n| Ok(if n >= 0 { Value::t() } else { Value::nil() }))
         }
 
         // Cons accessors — pure raw-pointer read, no alloc, no lock.

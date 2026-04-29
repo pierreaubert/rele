@@ -32,9 +32,10 @@ fn issue_11_comrak_produces_ordered_list_type() {
     for child in root.children() {
         let data = child.data.borrow();
         if let NodeValue::List(ref list) = data.value
-            && list.list_type == ListType::Ordered {
-                found_ordered = true;
-            }
+            && list.list_type == ListType::Ordered
+        {
+            found_ordered = true;
+        }
     }
     assert!(
         found_ordered,

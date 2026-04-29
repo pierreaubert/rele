@@ -7,6 +7,7 @@ pub(crate) mod ert;
 mod file_ops;
 mod hash;
 mod io;
+mod json;
 pub(crate) mod keymaps;
 pub mod list;
 mod math;
@@ -1196,6 +1197,9 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
         return result;
     }
     if let Some(result) = io::call(name, args) {
+        return result;
+    }
+    if let Some(result) = json::call(name, args) {
         return result;
     }
     if let Some(result) = records::call(name, args) {

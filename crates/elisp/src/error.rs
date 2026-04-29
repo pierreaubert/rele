@@ -95,9 +95,10 @@ impl ElispError {
         // Match specific error symbols
         let signal = self.to_signal();
         if let ElispError::Signal(sig) = &signal
-            && let Some(s) = sig.symbol.as_symbol() {
-                return s == sym;
-            }
+            && let Some(s) = sig.symbol.as_symbol()
+        {
+            return s == sym;
+        }
         false
     }
 }

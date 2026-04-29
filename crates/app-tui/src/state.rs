@@ -1890,9 +1890,10 @@ impl TuiAppState {
                 uri, diagnostics, ..
             } => {
                 if let Some(ref mut lsp_state) = self.lsp_buffer_state
-                    && lsp_state.uri == uri {
-                        lsp_state.diagnostics = diagnostics;
-                    }
+                    && lsp_state.uri == uri
+                {
+                    lsp_state.diagnostics = diagnostics;
+                }
             }
             LspEvent::CompletionResponse { items, .. } => {
                 self.lsp_completion_items = items;

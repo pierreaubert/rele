@@ -2717,8 +2717,9 @@ pub fn register(interp: &mut Interpreter) {
 (defun epg-check-configuration (&rest _args) nil)
 (defun epg-find-configuration (&rest _args) nil)
 
-;; json-misc stubs
-(defun json-insert (&rest _args) nil)
+;; json-misc support
+(defun json-insert (object &rest args)
+  (insert (apply #'json-serialize object args)))
 (defun json-ts--path-to-jq (&rest _args) nil)
 (defun json-ts--path-to-python (&rest _args) nil)
 

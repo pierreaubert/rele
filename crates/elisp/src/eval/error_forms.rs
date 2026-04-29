@@ -83,15 +83,16 @@ pub(super) fn eval_condition_case(
                     let handler_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
 
                     if !var.is_nil()
-                        && let Some(var_name) = var.as_symbol() {
-                            let signal = err.to_signal();
-                            let err_value = if let ElispError::Signal(sig) = signal {
-                                LispObject::cons(sig.symbol, sig.data)
-                            } else {
-                                LispObject::nil()
-                            };
-                            handler_env.write().define(&var_name, err_value);
-                        }
+                        && let Some(var_name) = var.as_symbol()
+                    {
+                        let signal = err.to_signal();
+                        let err_value = if let ElispError::Signal(sig) = signal {
+                            LispObject::cons(sig.symbol, sig.data)
+                        } else {
+                            LispObject::nil()
+                        };
+                        handler_env.write().define(&var_name, err_value);
+                    }
 
                     return eval_progn(
                         obj_to_value(handler_body),

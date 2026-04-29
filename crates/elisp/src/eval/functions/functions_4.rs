@@ -278,14 +278,15 @@ pub(in crate::eval) fn eval_cl_loop(
                         cur = r3;
                         let mut then_form: Option<LispObject> = None;
                         if let Some((tok, r4)) = cur.clone().destructure_cons()
-                            && tok.as_symbol().as_deref() == Some("then") {
-                                let (n_form, r5) = r4
-                                    .clone()
-                                    .destructure_cons()
-                                    .ok_or(ElispError::WrongNumberOfArguments)?;
-                                cur = r5;
-                                then_form = Some(n_form);
-                            }
+                            && tok.as_symbol().as_deref() == Some("then")
+                        {
+                            let (n_form, r5) = r4
+                                .clone()
+                                .destructure_cons()
+                                .ok_or(ElispError::WrongNumberOfArguments)?;
+                            cur = r5;
+                            then_form = Some(n_form);
+                        }
                         bindings.push((
                             var_obj,
                             Iter::Assignment {
@@ -388,20 +389,16 @@ pub(in crate::eval) fn eval_cl_loop(
                     .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
                 let mut init_value = LispObject::nil();
                 if let Some((eq_tok, r2)) = cur.clone().destructure_cons()
-                    && eq_tok.as_symbol().as_deref() == Some("=") {
-                        let (init_form, r3) = r2
-                            .clone()
-                            .destructure_cons()
-                            .ok_or(ElispError::WrongNumberOfArguments)?;
-                        cur = r3;
-                        init_value = value_to_obj(eval(
-                            obj_to_value(init_form),
-                            env,
-                            editor,
-                            macros,
-                            state,
-                        )?);
-                    }
+                    && eq_tok.as_symbol().as_deref() == Some("=")
+                {
+                    let (init_form, r3) = r2
+                        .clone()
+                        .destructure_cons()
+                        .ok_or(ElispError::WrongNumberOfArguments)?;
+                    cur = r3;
+                    init_value =
+                        value_to_obj(eval(obj_to_value(init_form), env, editor, macros, state)?);
+                }
                 loop_env.write().define(&var, init_value);
             }
             "repeat" => {
@@ -478,14 +475,15 @@ pub(in crate::eval) fn eval_cl_loop(
                 cur = r;
                 let mut acc_name = String::new();
                 if let Some((into, r2)) = cur.clone().destructure_cons()
-                    && into.as_symbol().as_deref() == Some("into") {
-                        let (n_obj, r3) = r2
-                            .clone()
-                            .destructure_cons()
-                            .ok_or(ElispError::WrongNumberOfArguments)?;
-                        cur = r3;
-                        acc_name = n_obj.as_symbol().unwrap_or_default();
-                    }
+                    && into.as_symbol().as_deref() == Some("into")
+                {
+                    let (n_obj, r3) = r2
+                        .clone()
+                        .destructure_cons()
+                        .ok_or(ElispError::WrongNumberOfArguments)?;
+                    cur = r3;
+                    acc_name = n_obj.as_symbol().unwrap_or_default();
+                }
                 if acc_name.is_empty() {
                     acc_name = format!("__cl_loop_default_{}_", word);
                     default_collect_name = Some(acc_name.clone());
@@ -559,40 +557,40 @@ pub(in crate::eval) fn eval_cl_loop(
                 if let Some((then_kw, r2)) = cur.clone().destructure_cons()
                     && (then_kw.as_symbol().as_deref() == Some("do")
                         || then_kw.as_symbol().as_deref() == Some("doing"))
-                    {
-                        cur = r2;
-                        let mut body: Vec<LispObject> = Vec::new();
-                        while let Some((form, r3)) = cur.clone().destructure_cons() {
-                            if is_loop_keyword(&form) {
-                                break;
-                            }
-                            body.push(form);
-                            cur = r3;
+                {
+                    cur = r2;
+                    let mut body: Vec<LispObject> = Vec::new();
+                    while let Some((form, r3)) = cur.clone().destructure_cons() {
+                        if is_loop_keyword(&form) {
+                            break;
                         }
-                        let mut body_chain = LispObject::nil();
-                        for form in body.into_iter().rev() {
-                            body_chain = LispObject::cons(form, body_chain);
-                        }
-                        let progn = LispObject::cons(LispObject::symbol("progn"), body_chain);
-                        let conditional = if word == "unless" {
-                            LispObject::cons(
-                                LispObject::symbol("if"),
-                                LispObject::cons(
-                                    cond,
-                                    LispObject::cons(
-                                        LispObject::nil(),
-                                        LispObject::cons(progn, LispObject::nil()),
-                                    ),
-                                ),
-                            )
-                        } else {
-                            LispObject::cons(
-                                LispObject::symbol("if"),
-                                LispObject::cons(cond, LispObject::cons(progn, LispObject::nil())),
-                            )
-                        };
-                        actions.push(Action::Do(conditional));
+                        body.push(form);
+                        cur = r3;
                     }
+                    let mut body_chain = LispObject::nil();
+                    for form in body.into_iter().rev() {
+                        body_chain = LispObject::cons(form, body_chain);
+                    }
+                    let progn = LispObject::cons(LispObject::symbol("progn"), body_chain);
+                    let conditional = if word == "unless" {
+                        LispObject::cons(
+                            LispObject::symbol("if"),
+                            LispObject::cons(
+                                cond,
+                                LispObject::cons(
+                                    LispObject::nil(),
+                                    LispObject::cons(progn, LispObject::nil()),
+                                ),
+                            ),
+                        )
+                    } else {
+                        LispObject::cons(
+                            LispObject::symbol("if"),
+                            LispObject::cons(cond, LispObject::cons(progn, LispObject::nil())),
+                        )
+                    };
+                    actions.push(Action::Do(conditional));
+                }
             }
             "and" | "else" | "end" => {}
             _ => {}
@@ -841,8 +839,9 @@ pub(in crate::eval) fn eval_cl_loop(
         return Ok(obj_to_value(LispObject::t()));
     }
     if let Some(name) = default_collect_name
-        && let Some((acc, integer_mode)) = accs.remove(&name) {
-            return Ok(obj_to_value(acc.into_value(integer_mode)));
-        }
+        && let Some((acc, integer_mode)) = accs.remove(&name)
+    {
+        return Ok(obj_to_value(acc.into_value(integer_mode)));
+    }
     Ok(Value::nil())
 }

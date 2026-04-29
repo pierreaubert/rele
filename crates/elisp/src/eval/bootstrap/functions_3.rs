@@ -351,21 +351,22 @@ pub fn load_cl_lib(interp: &Interpreter) {
     for f in files {
         let dest = format!("{STDLIB_DIR}/{f}.el");
         if let Some(source) = read_emacs_source(&dest)
-            && let Ok(forms) = crate::read_all(&source) {
-                interp.set_eval_ops_limit(10_000_000);
-                let mut since_gc = 0;
-                for form in forms {
-                    interp.reset_eval_ops();
-                    let _ = interp.eval(form);
-                    since_gc += 1;
-                    if since_gc >= 100 {
-                        interp.gc();
-                        since_gc = 0;
-                    }
+            && let Ok(forms) = crate::read_all(&source)
+        {
+            interp.set_eval_ops_limit(10_000_000);
+            let mut since_gc = 0;
+            for form in forms {
+                interp.reset_eval_ops();
+                let _ = interp.eval(form);
+                since_gc += 1;
+                if since_gc >= 100 {
+                    interp.gc();
+                    since_gc = 0;
                 }
-                interp.gc();
-                interp.set_eval_ops_limit(0);
             }
+            interp.gc();
+            interp.set_eval_ops_limit(0);
+        }
     }
 }
 pub fn emacs_source_root() -> Option<&'static str> {
@@ -373,9 +374,10 @@ pub fn emacs_source_root() -> Option<&'static str> {
     static CACHED: OnceLock<Option<String>> = OnceLock::new();
     let slot = CACHED.get_or_init(|| {
         if let Ok(p) = std::env::var("EMACS_SRC_ROOT")
-            && std::path::Path::new(&p).is_dir() {
-                return Some(p);
-            }
+            && std::path::Path::new(&p).is_dir()
+        {
+            return Some(p);
+        }
         let home = std::env::var("HOME").unwrap_or_default();
         let home_src = format!("{home}/src/emacs");
         let home_emacs = format!("{home}/emacs");
@@ -406,9 +408,10 @@ pub fn emacs_lisp_dir() -> Option<&'static str> {
         let has_source = |p: &str| std::path::Path::new(&format!("{p}/subr.el")).is_file();
 
         if let Ok(p) = std::env::var("EMACS_LISP_DIR")
-            && std::path::Path::new(&p).is_dir() {
-                return Some(p);
-            }
+            && std::path::Path::new(&p).is_dir()
+        {
+            return Some(p);
+        }
         // Source-tree pins (where `make` was run but not `make install`).
         // Strongly preferred over installs because they ship `.el`
         // alongside `.elc` and our interpreter handles `.el` better.
@@ -470,6 +473,28 @@ pub fn read_emacs_source(path: &str) -> Option<String> {
             .map(|bytes| bytes.iter().map(|&b| char::from(b)).collect())
     })
 }
+
+fn resource_directory_candidates(parent: &std::path::Path, stem: &str) -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(prefix) = stem.strip_suffix("-tests") {
+        candidates.push(parent.join(format!("{prefix}-resources")));
+    }
+    candidates.push(parent.join(format!("{stem}-resources")));
+    candidates.push(parent.join("resources"));
+    candidates
+}
+
+fn resource_directory_for_test_file(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let parent = path.parent()?;
+    let stem = path.file_stem()?.to_str()?;
+    let candidates = resource_directory_candidates(parent, stem);
+    candidates
+        .iter()
+        .find(|candidate| candidate.is_dir())
+        .cloned()
+        .or_else(|| candidates.last().cloned())
+}
+
 pub fn probe_emacs_file(interp: &Interpreter, file_path: &str) -> Option<(usize, usize)> {
     let source = read_emacs_source(file_path)?;
     let forms = match crate::read_all(&source) {
@@ -479,9 +504,10 @@ pub fn probe_emacs_file(interp: &Interpreter, file_path: &str) -> Option<(usize,
             return None;
         }
     };
-    if let Some(parent) = std::path::Path::new(file_path).parent() {
+    let file_path = std::path::Path::new(file_path);
+    if let Some(parent) = file_path.parent() {
         let parent_str = parent.to_string_lossy().to_string();
-        let resources = parent.join("resources");
+        let resources = resource_directory_for_test_file(file_path)?;
         let resources_str = resources.to_string_lossy().to_string();
         let esc_res = resources_str.replace('\\', "\\\\").replace('"', "\\\"");
         let esc_parent = parent_str.replace('\\', "\\\\").replace('"', "\\\"");
@@ -496,11 +522,12 @@ pub fn probe_emacs_file(interp: &Interpreter, file_path: &str) -> Option<(usize,
               (defun ert-resource-file (name) (concat \"{esc_res}/\" name)))"
         );
         if let Ok(mut adds) = crate::read_all(&add_form)
-            && let Some(f) = adds.pop() {
-                interp.reset_eval_ops();
-                interp.set_eval_ops_limit(100_000);
-                let _ = interp.eval(f);
-            }
+            && let Some(f) = adds.pop()
+        {
+            interp.reset_eval_ops();
+            interp.set_eval_ops_limit(100_000);
+            let _ = interp.eval(f);
+        }
     }
     let total = forms.len();
     let mut ok = 0;
@@ -517,6 +544,21 @@ pub fn probe_emacs_file(interp: &Interpreter, file_path: &str) -> Option<(usize,
     interp.clear_deadline();
     Some((ok, total))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::resource_directory_candidates;
+
+    #[test]
+    fn resource_directory_candidates_prefer_feature_resources_for_tests_file() {
+        let parent = std::path::Path::new("/emacs/test/src");
+        let candidates = resource_directory_candidates(parent, "syntax-tests");
+        assert_eq!(candidates[0], parent.join("syntax-resources"));
+        assert_eq!(candidates[1], parent.join("syntax-tests-resources"));
+        assert_eq!(candidates[2], parent.join("resources"));
+    }
+}
+
 /// Run all `ert-deftest`s registered under our `ert--rele-test` plist key
 /// in the given `interp`. Wraps each test in `catch_unwind` so panics
 /// from unforeseen interpreter bugs don't take down the whole run.

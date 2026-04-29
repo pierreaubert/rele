@@ -318,9 +318,10 @@ pub(super) fn eval_cl_defgeneric_or_method(
         Some(s) => s,
         None => {
             if let Some((car, _)) = name_obj.destructure_cons()
-                && car.as_symbol().as_deref() == Some("setf") {
-                    return Ok(Value::nil());
-                }
+                && car.as_symbol().as_deref() == Some("setf")
+            {
+                return Ok(Value::nil());
+            }
             return Err(ElispError::WrongTypeArgument("symbol".to_string()));
         }
     };
@@ -362,9 +363,11 @@ pub(super) fn eval_cl_defgeneric_or_method(
     }
     let mut effective_body = body;
     if let Some((maybe_doc, tail)) = effective_body.destructure_cons()
-        && maybe_doc.as_string().is_some() && !tail.is_nil() {
-            effective_body = tail;
-        }
+        && maybe_doc.as_string().is_some()
+        && !tail.is_nil()
+    {
+        effective_body = tail;
+    }
     let defun_args = LispObject::cons(
         LispObject::symbol(&name),
         LispObject::cons(arg_list, effective_body),
@@ -407,40 +410,42 @@ pub(super) fn eval_cl_defstruct(
             let mut opts = name_spec.rest().unwrap_or(LispObject::nil());
             while let Some((opt, rest_o)) = opts.destructure_cons() {
                 if let Some((k, opt_rest)) = opt.destructure_cons()
-                    && let Some(ks) = k.as_symbol() {
-                        match ks.as_str() {
-                            ":constructor" => {
-                                if let Some((cname, _)) = opt_rest.destructure_cons()
-                                    && let Some(cn) = cname.as_symbol()
-                                        && cn != "nil" {
-                                            custom_constructors.push((cn, opt_rest.nth(1)));
-                                        }
+                    && let Some(ks) = k.as_symbol()
+                {
+                    match ks.as_str() {
+                        ":constructor" => {
+                            if let Some((cname, _)) = opt_rest.destructure_cons()
+                                && let Some(cn) = cname.as_symbol()
+                                && cn != "nil"
+                            {
+                                custom_constructors.push((cn, opt_rest.nth(1)));
                             }
-                            ":conc-name" => {
-                                if let Some((cn, _)) = opt_rest.destructure_cons() {
-                                    if let Some(s) = cn.as_symbol() {
-                                        conc_name = Some(s);
-                                    } else if let Some(s) = cn.as_string() {
-                                        conc_name = Some(s.to_string());
-                                    }
-                                }
-                            }
-                            ":predicate" => {
-                                if let Some((pred, _)) = opt_rest.destructure_cons() {
-                                    predicate_name = Some(
-                                        pred.as_symbol()
-                                            .and_then(|s| if s == "nil" { None } else { Some(s) }),
-                                    );
-                                }
-                            }
-                            ":include" => {
-                                if let Some((parent, _)) = opt_rest.destructure_cons() {
-                                    include_name = parent.as_symbol();
-                                }
-                            }
-                            _ => {}
                         }
+                        ":conc-name" => {
+                            if let Some((cn, _)) = opt_rest.destructure_cons() {
+                                if let Some(s) = cn.as_symbol() {
+                                    conc_name = Some(s);
+                                } else if let Some(s) = cn.as_string() {
+                                    conc_name = Some(s.to_string());
+                                }
+                            }
+                        }
+                        ":predicate" => {
+                            if let Some((pred, _)) = opt_rest.destructure_cons() {
+                                predicate_name = Some(
+                                    pred.as_symbol()
+                                        .and_then(|s| if s == "nil" { None } else { Some(s) }),
+                                );
+                            }
+                        }
+                        ":include" => {
+                            if let Some((parent, _)) = opt_rest.destructure_cons() {
+                                include_name = parent.as_symbol();
+                            }
+                        }
+                        _ => {}
                     }
+                }
                 opts = rest_o;
             }
             n
@@ -449,9 +454,10 @@ pub(super) fn eval_cl_defstruct(
     };
     let mut rest = args_obj.rest().unwrap_or(LispObject::nil());
     if let Some((first, tail)) = rest.destructure_cons()
-        && first.as_string().is_some() {
-            rest = tail;
-        }
+        && first.as_string().is_some()
+    {
+        rest = tail;
+    }
     let mut field_names: Vec<String> = include_name
         .as_deref()
         .map(|parent| cl_struct_inherited_field_names(state, parent))
@@ -610,21 +616,19 @@ pub(super) fn eval_cl_defstruct(
             while let Some((param, rest)) = cur.destructure_cons() {
                 if let Some(param_name) = param.as_symbol() {
                     if !param_name.starts_with('&')
-                        && let Some(field_idx) = field_names.iter().position(|f| f == &param_name) {
-                            assignments.push_str(&format!(
-                                "(aset vec {} {})",
-                                field_idx + 1,
-                                param_name
-                            ));
-                        }
-                } else if let Some(param_name) = param.first().and_then(|obj| obj.as_symbol())
-                    && let Some(field_idx) = field_names.iter().position(|f| f == &param_name) {
+                        && let Some(field_idx) = field_names.iter().position(|f| f == &param_name)
+                    {
                         assignments.push_str(&format!(
                             "(aset vec {} {})",
                             field_idx + 1,
                             param_name
                         ));
                     }
+                } else if let Some(param_name) = param.first().and_then(|obj| obj.as_symbol())
+                    && let Some(field_idx) = field_names.iter().position(|f| f == &param_name)
+                {
+                    assignments.push_str(&format!("(aset vec {} {})", field_idx + 1, param_name));
+                }
                 cur = rest;
             }
             let custom_ctor_body = format!(
@@ -1380,54 +1384,55 @@ pub(super) fn check_type_with_eval(
     state: &InterpreterState,
 ) -> ElispResult<bool> {
     if let Some((head, rest)) = type_spec.destructure_cons()
-        && let Some(op) = head.as_symbol() {
-            match op.as_str() {
-                "satisfies" => {
-                    let Some((pred, _)) = rest.destructure_cons() else {
-                        return Ok(false);
-                    };
-                    let call = LispObject::cons(
-                        pred,
+        && let Some(op) = head.as_symbol()
+    {
+        match op.as_str() {
+            "satisfies" => {
+                let Some((pred, _)) = rest.destructure_cons() else {
+                    return Ok(false);
+                };
+                let call = LispObject::cons(
+                    pred,
+                    LispObject::cons(
                         LispObject::cons(
-                            LispObject::cons(
-                                LispObject::symbol("quote"),
-                                LispObject::cons(val.clone(), LispObject::nil()),
-                            ),
-                            LispObject::nil(),
+                            LispObject::symbol("quote"),
+                            LispObject::cons(val.clone(), LispObject::nil()),
                         ),
-                    );
-                    let r = eval(obj_to_value(call), env, editor, macros, state)?;
-                    return Ok(!value_to_obj(r).is_nil());
-                }
-                "and" => {
-                    let mut cur = rest;
-                    while let Some((t, next)) = cur.destructure_cons() {
-                        if !check_type_with_eval(val, &t, env, editor, macros, state)? {
-                            return Ok(false);
-                        }
-                        cur = next;
-                    }
-                    return Ok(true);
-                }
-                "or" => {
-                    let mut cur = rest;
-                    while let Some((t, next)) = cur.destructure_cons() {
-                        if check_type_with_eval(val, &t, env, editor, macros, state)? {
-                            return Ok(true);
-                        }
-                        cur = next;
-                    }
-                    return Ok(false);
-                }
-                "not" => {
-                    if let Some((t, _)) = rest.destructure_cons() {
-                        return Ok(!check_type_with_eval(val, &t, env, editor, macros, state)?);
-                    }
-                    return Ok(false);
-                }
-                _ => {}
+                        LispObject::nil(),
+                    ),
+                );
+                let r = eval(obj_to_value(call), env, editor, macros, state)?;
+                return Ok(!value_to_obj(r).is_nil());
             }
+            "and" => {
+                let mut cur = rest;
+                while let Some((t, next)) = cur.destructure_cons() {
+                    if !check_type_with_eval(val, &t, env, editor, macros, state)? {
+                        return Ok(false);
+                    }
+                    cur = next;
+                }
+                return Ok(true);
+            }
+            "or" => {
+                let mut cur = rest;
+                while let Some((t, next)) = cur.destructure_cons() {
+                    if check_type_with_eval(val, &t, env, editor, macros, state)? {
+                        return Ok(true);
+                    }
+                    cur = next;
+                }
+                return Ok(false);
+            }
+            "not" => {
+                if let Some((t, _)) = rest.destructure_cons() {
+                    return Ok(!check_type_with_eval(val, &t, env, editor, macros, state)?);
+                }
+                return Ok(false);
+            }
+            _ => {}
         }
+    }
     let args = LispObject::cons(
         val.clone(),
         LispObject::cons(type_spec.clone(), LispObject::nil()),
@@ -1465,9 +1470,10 @@ pub(super) fn eval(
             }
             if ops & 0x3FF == 0
                 && let Some(dl) = state.deadline.get()
-                    && std::time::Instant::now() >= dl {
-                        return Err(ElispError::EvalError("hard eval limit".into()));
-                    }
+                && std::time::Instant::now() >= dl
+            {
+                return Err(ElispError::EvalError("hard eval limit".into()));
+            }
         }
         inc_eval_depth()?;
         let result = eval_inner(expr, env, editor, macros, state);
@@ -1630,14 +1636,15 @@ pub(super) fn eval_inner(
                 "function" => {
                     let arg = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     if let Some((head, rest)) = arg.destructure_cons()
-                        && head.as_symbol().as_deref() == Some("lambda") {
-                            let params = rest.first().unwrap_or(LispObject::nil());
-                            let body = rest.rest().unwrap_or(LispObject::nil());
-                            let captured = env.read().capture_as_alist();
-                            return Ok(obj_to_value(LispObject::closure_expr(
-                                captured, params, body,
-                            )));
-                        }
+                        && head.as_symbol().as_deref() == Some("lambda")
+                    {
+                        let params = rest.first().unwrap_or(LispObject::nil());
+                        let body = rest.rest().unwrap_or(LispObject::nil());
+                        let captured = env.read().capture_as_alist();
+                        return Ok(obj_to_value(LispObject::closure_expr(
+                            captured, params, body,
+                        )));
+                    }
                     Ok(obj_to_value(arg))
                 }
                 "apply" => eval_apply(obj_to_value(cdr), env, editor, macros, state),
@@ -1970,7 +1977,8 @@ pub(super) fn eval_inner(
                                 .contains_key("rele--delivered-buffer-list-update-hook")
                             && buffer
                                 .locals
-                                .get("rele--inhibit-buffer-hooks").is_none_or(|value| value.is_nil());
+                                .get("rele--inhibit-buffer-hooks")
+                                .is_none_or(|value| value.is_nil());
                         if pending || indirect_pending {
                             buffer.locals.insert(
                                 "rele--delivered-buffer-list-update-hook".to_string(),
@@ -2467,10 +2475,12 @@ pub(super) fn eval_inner(
                     let mut body = after_args;
                     let mut docstring = LispObject::nil();
                     if let Some((maybe_doc, tail)) = body.destructure_cons()
-                        && maybe_doc.as_string().is_some() && !tail.is_nil() {
-                            docstring = maybe_doc;
-                            body = tail;
-                        }
+                        && maybe_doc.as_string().is_some()
+                        && !tail.is_nil()
+                    {
+                        docstring = maybe_doc;
+                        body = tail;
+                    }
                     let mut tags = LispObject::nil();
                     #[allow(clippy::while_let_loop)]
                     loop {
@@ -2481,15 +2491,11 @@ pub(super) fn eval_inner(
                                 if is_kw {
                                     if kw_name.as_deref() == Some(":tags")
                                         && let Some((val_form, _)) = tail.destructure_cons()
-                                            && let Ok(v) = eval(
-                                                obj_to_value(val_form),
-                                                env,
-                                                editor,
-                                                macros,
-                                                state,
-                                            ) {
-                                                tags = value_to_obj(v);
-                                            }
+                                        && let Ok(v) =
+                                            eval(obj_to_value(val_form), env, editor, macros, state)
+                                    {
+                                        tags = value_to_obj(v);
+                                    }
                                     body = tail.rest().unwrap_or(LispObject::nil());
                                 } else {
                                     break;
@@ -2770,9 +2776,11 @@ pub(super) fn eval_inner(
                         .and_then(|r| r.rest())
                         .unwrap_or(LispObject::nil());
                     if let Some((first, tail)) = body.destructure_cons()
-                        && first.as_string().is_some() && !tail.is_nil() {
-                            body = tail;
-                        }
+                        && first.as_string().is_some()
+                        && !tail.is_nil()
+                    {
+                        body = tail;
+                    }
                     let captured = env.read().capture_as_alist();
                     let closure = LispObject::closure_expr(
                         captured,
@@ -2833,19 +2841,18 @@ pub(super) fn eval_inner(
                         value_to_obj(eval(obj_to_value(iter_expr), env, editor, macros, state)?);
                     if let Some((tag, vec)) = iter.destructure_cons()
                         && tag.as_symbol().as_deref() == Some("iter--state")
-                            && let LispObject::Vector(v) = vec {
-                                let guard = v.lock();
-                                let idx = guard[0].as_integer().unwrap_or(0) as usize;
-                                if let Some(i) = (idx + 2..guard.len()).next() {
-                                    return Err(ElispError::Throw(Box::new(
-                                        crate::error::ThrowData {
-                                            tag: LispObject::symbol("iter--yield"),
-                                            value: guard[i].clone(),
-                                        },
-                                    )));
-                                }
-                                return Ok(obj_to_value(guard[1].clone()));
-                            }
+                        && let LispObject::Vector(v) = vec
+                    {
+                        let guard = v.lock();
+                        let idx = guard[0].as_integer().unwrap_or(0) as usize;
+                        if let Some(i) = (idx + 2..guard.len()).next() {
+                            return Err(ElispError::Throw(Box::new(crate::error::ThrowData {
+                                tag: LispObject::symbol("iter--yield"),
+                                value: guard[i].clone(),
+                            })));
+                        }
+                        return Ok(obj_to_value(guard[1].clone()));
+                    }
                     Ok(Value::nil())
                 }
                 "iter-next" => {
@@ -2854,24 +2861,23 @@ pub(super) fn eval_inner(
                         value_to_obj(eval(obj_to_value(iter_expr), env, editor, macros, state)?);
                     if let Some((tag, vec)) = iter.destructure_cons()
                         && tag.as_symbol().as_deref() == Some("iter--state")
-                            && let LispObject::Vector(v) = vec {
-                                let mut guard = v.lock();
-                                let idx = guard[0].as_integer().unwrap_or(0) as usize;
-                                let n_yields = guard.len() - 2;
-                                if idx < n_yields {
-                                    let val = guard[idx + 2].clone();
-                                    guard[0] = LispObject::integer((idx + 1) as i64);
-                                    return Ok(obj_to_value(val));
-                                } else {
-                                    let final_val = guard[1].clone();
-                                    return Err(ElispError::Signal(Box::new(
-                                        crate::error::SignalData {
-                                            symbol: LispObject::symbol("iter-end-of-sequence"),
-                                            data: final_val,
-                                        },
-                                    )));
-                                }
-                            }
+                        && let LispObject::Vector(v) = vec
+                    {
+                        let mut guard = v.lock();
+                        let idx = guard[0].as_integer().unwrap_or(0) as usize;
+                        let n_yields = guard.len() - 2;
+                        if idx < n_yields {
+                            let val = guard[idx + 2].clone();
+                            guard[0] = LispObject::integer((idx + 1) as i64);
+                            return Ok(obj_to_value(val));
+                        } else {
+                            let final_val = guard[1].clone();
+                            return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                                symbol: LispObject::symbol("iter-end-of-sequence"),
+                                data: final_val,
+                            })));
+                        }
+                    }
                     Err(ElispError::Signal(Box::new(crate::error::SignalData {
                         symbol: LispObject::symbol("wrong-type-argument"),
                         data: LispObject::cons(LispObject::string("iterator"), LispObject::nil()),
@@ -2883,11 +2889,12 @@ pub(super) fn eval_inner(
                         value_to_obj(eval(obj_to_value(iter_expr), env, editor, macros, state)?);
                     if let Some((tag, vec)) = iter.destructure_cons()
                         && tag.as_symbol().as_deref() == Some("iter--state")
-                            && let LispObject::Vector(v) = vec {
-                                let mut guard = v.lock();
-                                let n = guard.len();
-                                guard[0] = LispObject::integer(n as i64);
-                            }
+                        && let LispObject::Vector(v) = vec
+                    {
+                        let mut guard = v.lock();
+                        let n = guard.len();
+                        guard[0] = LispObject::integer(n as i64);
+                    }
                     Ok(Value::nil())
                 }
                 "iter-do" => {
@@ -2903,32 +2910,26 @@ pub(super) fn eval_inner(
                         value_to_obj(eval(obj_to_value(iter_expr), env, editor, macros, state)?);
                     if let Some((tag, vec)) = iter.destructure_cons()
                         && tag.as_symbol().as_deref() == Some("iter--state")
-                            && let LispObject::Vector(v) = vec {
-                                let parent = Arc::new(env.read().clone());
-                                let loop_env =
-                                    Arc::new(RwLock::new(Environment::with_parent(parent)));
-                                let guard = v.lock();
-                                for i in 2..guard.len() {
-                                    loop_env.write().set(&var_name, guard[i].clone());
-                                    let _ = eval_progn(
-                                        obj_to_value(body.clone()),
-                                        &loop_env,
-                                        editor,
-                                        macros,
-                                        state,
-                                    );
-                                }
-                                drop(guard);
-                                if let Some(result) = result_expr {
-                                    return eval(
-                                        obj_to_value(result),
-                                        &loop_env,
-                                        editor,
-                                        macros,
-                                        state,
-                                    );
-                                }
-                            }
+                        && let LispObject::Vector(v) = vec
+                    {
+                        let parent = Arc::new(env.read().clone());
+                        let loop_env = Arc::new(RwLock::new(Environment::with_parent(parent)));
+                        let guard = v.lock();
+                        for i in 2..guard.len() {
+                            loop_env.write().set(&var_name, guard[i].clone());
+                            let _ = eval_progn(
+                                obj_to_value(body.clone()),
+                                &loop_env,
+                                editor,
+                                macros,
+                                state,
+                            );
+                        }
+                        drop(guard);
+                        if let Some(result) = result_expr {
+                            return eval(obj_to_value(result), &loop_env, editor, macros, state);
+                        }
+                    }
                     Ok(Value::nil())
                 }
                 "tempo-insert-template" => {
@@ -2991,9 +2992,10 @@ pub(super) fn eval_inner(
                                (setq elts (cdr elts)))))"
                     );
                     if let Ok(func) = crate::read(&insert_fn)
-                        && let Ok(func_val) = eval(obj_to_value(func), env, editor, macros, state) {
-                            state.set_function_cell(var_id, value_to_obj(func_val));
-                        }
+                        && let Ok(func_val) = eval(obj_to_value(func), env, editor, macros, state)
+                    {
+                        state.set_function_cell(var_id, value_to_obj(func_val));
+                    }
                     Ok(obj_to_value(LispObject::symbol(&var_name)))
                 }
                 "catch" => eval_catch(obj_to_value(cdr), env, editor, macros, state),
@@ -4168,9 +4170,7 @@ pub(super) fn eval_inner(
                         }
                     }
                 }
-                "cl-loop" => {
-                    functions::eval_cl_loop(obj_to_value(cdr), env, editor, macros, state)
-                }
+                "cl-loop" => functions::eval_cl_loop(obj_to_value(cdr), env, editor, macros, state),
                 "cl-multiple-value-bind" => {
                     let vars = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let value_form = cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
@@ -4283,25 +4283,26 @@ pub(super) fn eval_inner(
                             value_to_obj(eval(obj_to_value(key), env, editor, macros, state)?);
                         if let Some(s) = key_val.as_symbol()
                             && s == ":test"
-                                && let Some((val_expr, rest2)) = rest.destructure_cons() {
-                                    let val = value_to_obj(eval(
-                                        obj_to_value(val_expr),
-                                        env,
-                                        editor,
-                                        macros,
-                                        state,
-                                    )?);
-                                    if let Some(t) = val.as_symbol() {
-                                        test = match t.as_str() {
-                                            "eq" => crate::object::HashTableTest::Eq,
-                                            "eql" => crate::object::HashTableTest::Eql,
-                                            "equal" => crate::object::HashTableTest::Equal,
-                                            _ => crate::object::HashTableTest::Eql,
-                                        };
-                                    }
-                                    cur = rest2;
-                                    continue;
-                                }
+                            && let Some((val_expr, rest2)) = rest.destructure_cons()
+                        {
+                            let val = value_to_obj(eval(
+                                obj_to_value(val_expr),
+                                env,
+                                editor,
+                                macros,
+                                state,
+                            )?);
+                            if let Some(t) = val.as_symbol() {
+                                test = match t.as_str() {
+                                    "eq" => crate::object::HashTableTest::Eq,
+                                    "eql" => crate::object::HashTableTest::Eql,
+                                    "equal" => crate::object::HashTableTest::Equal,
+                                    _ => crate::object::HashTableTest::Eql,
+                                };
+                            }
+                            cur = rest2;
+                            continue;
+                        }
                         cur = rest;
                     }
                     Ok(state.heap_hashtable(crate::object::LispHashTable::new(test)))
@@ -4494,9 +4495,10 @@ pub(super) fn eval_inner(
                         state,
                     )?);
                     if target.as_symbol().as_deref() == Some("list")
-                        && let Some(list) = crate::primitives::core::bool_vector_to_list(&value) {
-                            return Ok(obj_to_value(list));
-                        }
+                        && let Some(list) = crate::primitives::core::bool_vector_to_list(&value)
+                    {
+                        return Ok(obj_to_value(list));
+                    }
                     let args = LispObject::cons(value, LispObject::cons(target, LispObject::nil()));
                     Ok(obj_to_value(crate::primitives::cl::prim_cl_coerce(&args)?))
                 }
@@ -5320,22 +5322,40 @@ pub(super) fn eval_inner(
                 }
                 "match-beginning" => {
                     let n_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let n = value_to_obj(eval(obj_to_value(n_expr), env, editor, macros, state)?)
-                        .as_integer()
-                        .unwrap_or(0) as usize;
-                    match state.get_match_group(n) {
-                        Some((s, _)) => Ok(obj_to_value(LispObject::integer(s as i64))),
-                        None => Ok(Value::nil()),
+                    let n_obj =
+                        value_to_obj(eval(obj_to_value(n_expr), env, editor, macros, state)?);
+                    let n = n_obj.as_integer().unwrap_or(0) as usize;
+                    if let Some((s, _)) = state.get_match_group(n) {
+                        return Ok(obj_to_value(LispObject::integer(s as i64)));
+                    }
+                    if editor.read().is_none() {
+                        let args = LispObject::cons(n_obj, LispObject::nil());
+                        let result = crate::primitives_buffer::call_buffer_primitive(
+                            "match-beginning",
+                            &args,
+                        )
+                        .ok_or_else(|| ElispError::VoidFunction("match-beginning".to_string()))??;
+                        Ok(obj_to_value(result))
+                    } else {
+                        Ok(Value::nil())
                     }
                 }
                 "match-end" => {
                     let n_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let n = value_to_obj(eval(obj_to_value(n_expr), env, editor, macros, state)?)
-                        .as_integer()
-                        .unwrap_or(0) as usize;
-                    match state.get_match_group(n) {
-                        Some((_, e)) => Ok(obj_to_value(LispObject::integer(e as i64))),
-                        None => Ok(Value::nil()),
+                    let n_obj =
+                        value_to_obj(eval(obj_to_value(n_expr), env, editor, macros, state)?);
+                    let n = n_obj.as_integer().unwrap_or(0) as usize;
+                    if let Some((_, e)) = state.get_match_group(n) {
+                        return Ok(obj_to_value(LispObject::integer(e as i64)));
+                    }
+                    if editor.read().is_none() {
+                        let args = LispObject::cons(n_obj, LispObject::nil());
+                        let result =
+                            crate::primitives_buffer::call_buffer_primitive("match-end", &args)
+                                .ok_or_else(|| ElispError::VoidFunction("match-end".to_string()))??;
+                        Ok(obj_to_value(result))
+                    } else {
+                        Ok(Value::nil())
                     }
                 }
                 "match-string" => {
@@ -6136,6 +6156,16 @@ pub(super) fn eval_inner(
                 }
                 "propertize" => {
                     let s = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let mut property_count = 0usize;
+                    let mut cur = cdr.rest().unwrap_or_else(LispObject::nil);
+                    while let Some((arg, rest)) = cur.destructure_cons() {
+                        let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
+                        property_count += 1;
+                        cur = rest;
+                    }
+                    if property_count % 2 != 0 {
+                        return Err(ElispError::WrongNumberOfArguments);
+                    }
                     eval(obj_to_value(s), env, editor, macros, state)
                 }
                 "put-text-property"
@@ -6278,17 +6308,19 @@ pub(super) fn eval_backquote_form(
             let mut out = Vec::with_capacity(items.len());
             for item in items {
                 if let Some((h, rest)) = item.destructure_cons()
-                    && h.as_symbol().as_deref() == Some(",@") && depth == 1 {
-                        let inner = rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                        let spliced =
-                            value_to_obj(eval(obj_to_value(inner), env, editor, macros, state)?);
-                        let mut cur = spliced;
-                        while let Some((e, r)) = cur.destructure_cons() {
-                            out.push(e);
-                            cur = r;
-                        }
-                        continue;
+                    && h.as_symbol().as_deref() == Some(",@")
+                    && depth == 1
+                {
+                    let inner = rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let spliced =
+                        value_to_obj(eval(obj_to_value(inner), env, editor, macros, state)?);
+                    let mut cur = spliced;
+                    while let Some((e, r)) = cur.destructure_cons() {
+                        out.push(e);
+                        cur = r;
                     }
+                    continue;
+                }
                 out.push(eval_backquote_form(
                     item, depth, env, editor, macros, state,
                 )?);
@@ -6345,28 +6377,24 @@ pub(super) fn eval_backquote_form(
             Some((elem, rest)) => {
                 if depth == 1 {
                     if let Some((h, r)) = elem.destructure_cons()
-                        && h.as_symbol().as_deref() == Some(",@") {
-                            let inner = r.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                            let spliced = value_to_obj(eval(
-                                obj_to_value(inner),
-                                env,
-                                editor,
-                                macros,
-                                state,
-                            )?);
-                            let mut s = spliced;
-                            while let Some((e, rr)) = s.destructure_cons() {
-                                out.push(e);
-                                s = rr;
-                            }
-                            if !s.is_nil() {
-                                return Err(ElispError::EvalError(
-                                    ",@ spliced value was not a proper list".to_string(),
-                                ));
-                            }
-                            cur = rest;
-                            continue;
+                        && h.as_symbol().as_deref() == Some(",@")
+                    {
+                        let inner = r.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                        let spliced =
+                            value_to_obj(eval(obj_to_value(inner), env, editor, macros, state)?);
+                        let mut s = spliced;
+                        while let Some((e, rr)) = s.destructure_cons() {
+                            out.push(e);
+                            s = rr;
                         }
+                        if !s.is_nil() {
+                            return Err(ElispError::EvalError(
+                                ",@ spliced value was not a proper list".to_string(),
+                            ));
+                        }
+                        cur = rest;
+                        continue;
+                    }
                     if elem.as_symbol().as_deref() == Some(",") {
                         let inner = rest.first().ok_or(ElispError::WrongNumberOfArguments)?;
                         let tail_val = eval(obj_to_value(inner), env, editor, macros, state)?;

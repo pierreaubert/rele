@@ -40,9 +40,10 @@ impl Environment {
             return Some(val);
         }
         if let Some(p) = self.parent.as_ref()
-            && let Some(val) = p.get_id(id) {
-                return Some(val);
-            }
+            && let Some(val) = p.get_id(id)
+        {
+            return Some(val);
+        }
         self.symbol_cells.read().get_value_cell(id)
     }
 

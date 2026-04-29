@@ -560,9 +560,10 @@ fn push_highlighted_spans(
             next_boundary = next_boundary.min(r.end_col);
         }
         if let Some(r) = range_iter.peek()
-            && r.start_col > col {
-                next_boundary = next_boundary.min(r.start_col);
-            }
+            && r.start_col > col
+        {
+            next_boundary = next_boundary.min(r.start_col);
+        }
         for d in diag_overlay {
             if d.start_col <= col && col < d.end_col {
                 next_boundary = next_boundary.min(d.end_col);

@@ -554,10 +554,11 @@ fn prim_eieio_defclass_internal_with_state(
 fn dequote_initform(form: &LispObject) -> LispObject {
     if let Some((head, tail)) = form.destructure_cons()
         && let Some(sym) = head.as_symbol()
-            && (sym == "quote" || sym == "function")
-                && let Some((inner, _)) = tail.destructure_cons() {
-                    return inner;
-                }
+        && (sym == "quote" || sym == "function")
+        && let Some((inner, _)) = tail.destructure_cons()
+    {
+        return inner;
+    }
     form.clone()
 }
 
