@@ -1,6 +1,6 @@
 #![allow(clippy::disallowed_methods)]
 use crate::error::{ElispError, ElispResult};
-use crate::object::LispObject;
+use crate::object::{HashTableTest, LispHashTable, LispObject};
 use std::collections::HashMap;
 
 /// Look up a Unicode character by its official Unicode name.
@@ -236,10 +236,9 @@ fn unicode_name_to_char(name: &str) -> Option<char> {
             // CJK COMPATIBILITY IDEOGRAPH-XXXX hex codepoint.
             if let Some(rest) = key.strip_prefix("CJK COMPATIBILITY IDEOGRAPH ")
                 && let Ok(code) = u32::from_str_radix(rest, 16)
+                && ((0xF900..=0xFAD9).contains(&code) || (0x2F800..=0x2FA1D).contains(&code))
             {
-                if (0xF900..=0xFAD9).contains(&code) || (0x2F800..=0x2FA1D).contains(&code) {
-                    return char::from_u32(code);
-                }
+                return char::from_u32(code);
             }
             return None;
         }
@@ -253,6 +252,8 @@ pub struct Reader {
     /// Shared-structure table for `#N=` / `#N#` notation used in `.elc` files.
     /// `#N=FORM` stores FORM under label N; `#N#` retrieves the stored object.
     shared: HashMap<u64, LispObject>,
+    active_shared: Vec<u64>,
+    reject_circular_shared_refs: u32,
 }
 
 fn is_symbol_char(c: char) -> bool {
@@ -316,6 +317,8 @@ impl Reader {
             input: source.chars().collect(),
             pos: 0,
             shared: HashMap::new(),
+            active_shared: Vec::new(),
+            reject_circular_shared_refs: 0,
         }
     }
 
@@ -355,6 +358,22 @@ impl Reader {
 
     fn is_delimiter(c: char) -> bool {
         c.is_whitespace() || c == '(' || c == ')' || c == '"' || c == ';' || c == '\''
+    }
+
+    fn token_starts_at_current_pos(&self, token: &str) -> bool {
+        let mut idx = self.pos;
+        while self.input.get(idx).is_some_and(|c| c.is_whitespace()) {
+            idx += 1;
+        }
+        for expected in token.chars() {
+            if self.input.get(idx).copied() != Some(expected) {
+                return false;
+            }
+            idx += 1;
+        }
+        self.input
+            .get(idx)
+            .is_none_or(|c| Self::is_delimiter(*c) || *c == ']')
     }
 
     /// Return the current byte-offset into the source (in chars).
@@ -594,20 +613,21 @@ impl Reader {
                 // for cl-defstruct records. Read as a tagged list.
                 if self.peek() == Some('(') {
                     self.advance();
-                    let inner = self.read_list_to_vec()?;
+                    let reject_circular_refs = self.token_starts_at_current_pos("hash-table");
+                    if reject_circular_refs {
+                        self.reject_circular_shared_refs += 1;
+                    }
+                    let inner = self.read_list_to_vec();
+                    if reject_circular_refs {
+                        self.reject_circular_shared_refs -= 1;
+                    }
+                    let inner = inner?;
                     // Distinguish hash-table from struct records
                     let tag = inner
                         .first()
                         .and_then(|o| o.as_symbol().map(|s| s.to_string()));
                     if tag.as_deref() == Some("hash-table") {
-                        let mut list = LispObject::nil();
-                        for e in inner.into_iter().rev() {
-                            list = LispObject::cons(e, list);
-                        }
-                        Ok(LispObject::cons(
-                            LispObject::symbol("hash-table-literal"),
-                            list,
-                        ))
+                        Ok(Self::hash_table_from_record(&inner))
                     } else {
                         // CL struct record: return as a vector (Emacs records
                         // are vector-like). The first element is the type tag.
@@ -730,13 +750,24 @@ impl Reader {
                 }
                 match self.advance() {
                     Some('=') => {
-                        let obj = self.read()?;
+                        self.active_shared.push(n);
+                        let obj = self.read();
+                        self.active_shared.pop();
+                        let obj = obj?;
                         self.shared.insert(n, obj.clone());
                         Ok(obj)
                     }
                     Some('#') => {
+                        if self.reject_circular_shared_refs > 0 && self.active_shared.contains(&n) {
+                            return Err(ElispError::ReaderError(format!(
+                                "circular hash-table reference: #{n}#"
+                            )));
+                        }
+                        if self.active_shared.contains(&n) {
+                            return Ok(LispObject::symbol("rele--circular-reference"));
+                        }
                         // Forward references are valid in circular
-                        // structures; substitute nil as a placeholder.
+                        // structures; unresolved labels still fall back to nil.
                         Ok(self.shared.get(&n).cloned().unwrap_or(LispObject::nil()))
                     }
                     Some('r') | Some('R') => {
@@ -781,6 +812,39 @@ impl Reader {
             elements.push(self.read()?);
         }
         Ok(elements)
+    }
+
+    fn hash_table_from_record(fields: &[LispObject]) -> LispObject {
+        let mut test = HashTableTest::Eql;
+        let mut data = LispObject::nil();
+        let mut idx = 1;
+        while idx + 1 < fields.len() {
+            let key = fields[idx].as_symbol().unwrap_or_default();
+            let value = fields[idx + 1].clone();
+            match key.as_str() {
+                "test" => {
+                    test = match value.as_symbol().as_deref() {
+                        Some("eq") => HashTableTest::Eq,
+                        Some("equal") => HashTableTest::Equal,
+                        _ => HashTableTest::Eql,
+                    };
+                }
+                "data" => data = value,
+                _ => {}
+            }
+            idx += 2;
+        }
+
+        let mut table = LispHashTable::new(test);
+        let mut current = data;
+        while let Some((key, rest)) = current.destructure_cons() {
+            let Some((value, next)) = rest.destructure_cons() else {
+                break;
+            };
+            table.put(&key, value);
+            current = next;
+        }
+        LispObject::HashTable(std::sync::Arc::new(crate::eval::SyncRefCell::new(table)))
     }
 
     fn read_bytecode_literal(&mut self) -> ElispResult<LispObject> {
@@ -917,7 +981,11 @@ impl Reader {
             let ch = match esc {
                 'M' => {
                     // Meta modifier: \M-X adds 0x8000000
-                    self.advance(); // skip '-'
+                    if self.advance() != Some('-') {
+                        return Err(ElispError::ReaderError(
+                            "missing - after \\M character modifier".to_string(),
+                        ));
+                    }
                     let inner = self.read_char_literal()?;
                     let val = inner.as_integer().unwrap_or(0);
                     return Ok(LispObject::Integer(val | 0x8000000));
@@ -928,8 +996,10 @@ impl Reader {
                     // char (`?\C-a` = 1). For '?' produce DEL (127). Other
                     // characters keep the control bit (1 << 26) so e.g.
                     // `?\C-\0` = 0x4000000 instead of plain 0.
-                    if esc == 'C' {
-                        self.advance(); // skip '-'
+                    if esc == 'C' && self.advance() != Some('-') {
+                        return Err(ElispError::ReaderError(
+                            "missing - after \\C character modifier".to_string(),
+                        ));
                     }
                     let inner = self.read_char_literal()?;
                     let val = inner.as_integer().unwrap_or(0);
@@ -946,21 +1016,33 @@ impl Reader {
                 }
                 'S' => {
                     // Shift modifier: \S-X adds 0x2000000
-                    self.advance(); // skip '-'
+                    if self.advance() != Some('-') {
+                        return Err(ElispError::ReaderError(
+                            "missing - after \\S character modifier".to_string(),
+                        ));
+                    }
                     let inner = self.read_char_literal()?;
                     let val = inner.as_integer().unwrap_or(0);
                     return Ok(LispObject::Integer(val | 0x2000000));
                 }
                 'A' => {
                     // Alt modifier: \A-X adds 0x400000
-                    self.advance(); // skip '-'
+                    if self.advance() != Some('-') {
+                        return Err(ElispError::ReaderError(
+                            "missing - after \\A character modifier".to_string(),
+                        ));
+                    }
                     let inner = self.read_char_literal()?;
                     let val = inner.as_integer().unwrap_or(0);
                     return Ok(LispObject::Integer(val | 0x400000));
                 }
                 'H' => {
                     // Hyper modifier: \H-X adds 0x1000000
-                    self.advance(); // skip '-'
+                    if self.advance() != Some('-') {
+                        return Err(ElispError::ReaderError(
+                            "missing - after \\H character modifier".to_string(),
+                        ));
+                    }
                     let inner = self.read_char_literal()?;
                     let val = inner.as_integer().unwrap_or(0);
                     return Ok(LispObject::Integer(val | 0x1000000));
@@ -1022,8 +1104,17 @@ impl Reader {
                             _ => break,
                         }
                     }
-                    let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
-                    char::from_u32(code).unwrap_or('\0')
+                    if hex.len() != limit {
+                        return Err(ElispError::ReaderError(format!(
+                            "incomplete unicode escape: \\{esc}{hex}"
+                        )));
+                    }
+                    let code = u32::from_str_radix(&hex, 16).map_err(|_| {
+                        ElispError::ReaderError(format!("invalid unicode escape: \\{esc}{hex}"))
+                    })?;
+                    char::from_u32(code).ok_or_else(|| {
+                        ElispError::ReaderError(format!("invalid unicode: \\{esc}{hex}"))
+                    })?
                 }
                 'N' => {
                     // Named Unicode character: ?\N{UNICODE CHARACTER NAME}
@@ -1046,7 +1137,9 @@ impl Reader {
                             ElispError::ReaderError(format!("invalid unicode name: {name}"))
                         })?
                     } else {
-                        'N' // ?\N without { is just the character N
+                        return Err(ElispError::ReaderError(
+                            "missing { after \\N character escape".to_string(),
+                        ));
                     }
                 }
                 '\n' => {

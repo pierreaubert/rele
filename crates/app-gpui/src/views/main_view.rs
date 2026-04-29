@@ -293,6 +293,35 @@ impl Render for MainView {
         } else {
             None
         };
+        let mode_name = state
+            .current_major_mode
+            .clone()
+            .unwrap_or_else(|| "fundamental-mode".to_string());
+        let mut left_status = vec![format!(
+            "{}{}  ({})  [{} buffers]",
+            buffer_name, dirty_marker, mode_name, buffer_count
+        )];
+        if let Some(text) = macro_text {
+            left_status.push(text);
+        }
+        if let Some(text) = universal_arg_text {
+            left_status.push(text);
+        }
+        if let Some(text) = isearch_text {
+            left_status.push(text);
+        }
+
+        let mut right_status = vec![
+            format!("Ln {}", cursor_line),
+            format!("{} words", word_count),
+        ];
+        if diag_count > 0 {
+            right_status.push(format!("diag:{}", diag_count));
+        }
+        if !lsp_status.is_empty() {
+            right_status.push(lsp_status);
+        }
+        right_status.push(keymap_name.to_string());
 
         div()
             .id("main-view")
@@ -331,27 +360,27 @@ impl Render for MainView {
                 div()
                     .flex()
                     .flex_row()
-                    .justify_between()
                     .items_center()
                     .px_2()
                     .py(px(1.0))
                     .bg(theme.accent)
                     .text_size(px(11.0))
                     .text_color(theme.text_on_accent)
-                    .child(format!(
-                        "{}{}  [{} buffers]",
-                        buffer_name, dirty_marker, buffer_count
-                    ))
-                    .when_some(macro_text, |el, text| el.child(text))
-                    .when_some(universal_arg_text, |el, text| el.child(text))
-                    .when_some(isearch_text, |el, text| el.child(text))
-                    .child(format!("Ln {}", cursor_line))
-                    .child(format!("{} words", word_count))
-                    .when(diag_count > 0, |el| {
-                        el.child(format!("diag:{}", diag_count))
-                    })
-                    .when(!lsp_status.is_empty(), |el| el.child(lsp_status.clone()))
-                    .child(keymap_name),
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_shrink()
+                            .truncate()
+                            .child(left_status.join("  ")),
+                    )
+                    .child(
+                        div()
+                            .ml_auto()
+                            .pl_2()
+                            .flex_shrink_0()
+                            .whitespace_nowrap()
+                            .child(right_status.join("  ")),
+                    ),
             )
             // Mini-buffer / echo area (Emacs-style: below mode line)
             .child(self.minibuffer.clone())

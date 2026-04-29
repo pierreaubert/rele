@@ -93,7 +93,9 @@ CTAGS
 .qwen
 .worktrees
 
+# token savers
 /.tokensave
+/.serena
 
 # Lean 4
 /spec/lean/.lake/
@@ -102,3 +104,4 @@ CTAGS
 # Quint traces (generated)
 /spec/quint/traces/
 /_apalache-out/
+/.tokensave

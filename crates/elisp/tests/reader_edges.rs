@@ -9,7 +9,7 @@
 ///   - `?\N{UNICODE NAME}` unicode named characters
 ///   - `?\xNN` hex escapes
 use rele_elisp::LispObject;
-use rele_elisp::{read, read_all};
+use rele_elisp::{Interpreter, add_primitives, read, read_all};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // #s(…) — record / struct literals
@@ -60,14 +60,9 @@ fn test_record_literal_nested() {
 
 #[test]
 fn test_hash_table_literal() {
-    // #s(hash-table ...) → hash-table-literal cons form
+    // #s(hash-table ...) → hash table object
     let obj = read("#s(hash-table test equal data nil)").unwrap();
-    // We represent hash-table literals as a cons starting with hash-table-literal
-    assert!(obj.is_cons(), "expected cons for hash-table literal");
-    assert_eq!(
-        obj.first().unwrap(),
-        LispObject::symbol("hash-table-literal")
-    );
+    assert!(matches!(obj, LispObject::HashTable(_)));
 }
 
 #[test]
@@ -171,6 +166,11 @@ fn test_shared_structure_in_list() {
     assert_eq!(third, LispObject::symbol("hello"));
 }
 
+#[test]
+fn test_hash_table_circular_shared_data_errors() {
+    assert!(read("#s(hash-table data #0=(#0# . #0#))").is_err());
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Character modifier escapes
 // ──────────────────────────────────────────────────────────────────────────────
@@ -213,6 +213,38 @@ fn test_char_alt_modifier() {
     // ?\A-a == 97 | 0x400000
     let expected = 97_i64 | 0x400000_i64;
     assert_eq!(read("?\\A-a").unwrap(), LispObject::integer(expected));
+}
+
+#[test]
+fn test_unfinished_char_modifier_escapes_error() {
+    for source in [
+        "?\\",
+        "?\\^",
+        "?\\C",
+        "?\\M",
+        "?\\S",
+        "?\\H",
+        "?\\A",
+        "?\\C-",
+        "?\\M-",
+        "?\\S-",
+        "?\\H-",
+        "?\\A-",
+        "?\\s-",
+        "?\\C-\\",
+        "?\\C-\\M",
+        "?\\C-\\M-",
+        "?\\x",
+        "?\\u",
+        "?\\u234",
+        "?\\U",
+        "?\\U0010010",
+        "?\\N",
+        "?\\N{",
+        "?\\N{SPACE",
+    ] {
+        assert!(read(source).is_err(), "{source} should signal");
+    }
 }
 
 #[test]
@@ -330,6 +362,22 @@ fn test_regression_normal_forms_unaffected() {
     assert!(list.is_cons());
     let vec = read("[1 2 3]").unwrap();
     assert!(matches!(vec, LispObject::Vector(_)));
+}
+
+#[test]
+fn test_read_buffer_unreadable_object_signals_invalid_read_syntax() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let result = interp
+        .eval_source(
+            r##"(with-temp-buffer
+                  (insert "#<symbol lambda at 10>")
+                  (goto-char (point-min))
+                  (equal (should-error (read (current-buffer)))
+                         '(invalid-read-syntax "#<" 1 2)))"##,
+        )
+        .unwrap();
+    assert_eq!(result, LispObject::t());
 }
 
 #[test]

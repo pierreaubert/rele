@@ -656,9 +656,8 @@ pub(super) fn eval_format(
                         let LispObject::Integer(n) = &format_args[arg_idx] else {
                             return Err(ElispError::WrongTypeArgument("integer".to_string()));
                         };
-                        let code = u32::try_from(*n).map_err(|_| {
-                            ElispError::WrongTypeArgument("character".to_string())
-                        })?;
+                        let code = u32::try_from(*n)
+                            .map_err(|_| ElispError::WrongTypeArgument("character".to_string()))?;
                         let ch = char::from_u32(code).ok_or_else(|| {
                             ElispError::WrongTypeArgument("character".to_string())
                         })?;

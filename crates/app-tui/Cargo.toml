@@ -1,6 +1,6 @@
 [package]
 name = "rele-tui"
-version.workspace = true
+version = "0.1.10"
 authors.workspace = true
 edition.workspace = true
 description = "Terminal UI client for rele markdown editor"

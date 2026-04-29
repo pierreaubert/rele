@@ -1167,6 +1167,106 @@ impl MdAppState {
 
     // ---- Dired (directory browser) ----
 
+    fn elisp_dired_directory(&self) -> Option<PathBuf> {
+        if self.current_buffer_kind != BufferKind::Dired || self.document.len_lines() == 0 {
+            return None;
+        }
+        let header = self.document.line(0).to_string();
+        let dir = header.trim().strip_suffix(':')?.trim();
+        if dir.is_empty() {
+            return None;
+        }
+        Some(PathBuf::from(dir))
+    }
+
+    fn elisp_dired_entry_path_at_point(&self) -> Option<PathBuf> {
+        let dir = self.elisp_dired_directory()?;
+        if self.document.len_chars() == 0 {
+            return None;
+        }
+        let pos = self
+            .cursor
+            .position
+            .min(self.document.len_chars().saturating_sub(1));
+        let line_idx = self.document.char_to_line(pos);
+        if line_idx < 2 {
+            return None;
+        }
+        let line = self.document.line(line_idx).to_string();
+        let line = line.trim_end_matches(|c| c == '\n' || c == '\r');
+        let mut fields = line.split_whitespace();
+        let mode = fields.next()?;
+        if !matches!(mode.chars().next(), Some('d' | '-' | 'l')) {
+            return None;
+        }
+
+        for _ in 0..7 {
+            fields.next()?;
+        }
+        let name_with_tail = fields.collect::<Vec<_>>().join(" ");
+        let name = name_with_tail.split(" -> ").next()?.trim();
+        if name.is_empty() {
+            return None;
+        }
+        Some(dir.join(name))
+    }
+
+    #[allow(clippy::disallowed_methods)] // TODO(perf): make dired entry open async
+    pub fn dired_open_entry_at_point(&mut self) -> bool {
+        if self.current_buffer_kind != BufferKind::Dired {
+            return false;
+        }
+        if self.dired_states.contains_key(&self.current_buffer_id) {
+            self.dired_open_selected();
+            return true;
+        }
+
+        let Some(path) = self.elisp_dired_entry_path_at_point() else {
+            return false;
+        };
+        if path.is_dir() {
+            self.run_command_with_string("dired", path.display().to_string());
+            true
+        } else if let Ok(content) = std::fs::read_to_string(&path) {
+            self.open_file_as_buffer(path, &content);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn dired_refresh_current_buffer(&mut self) -> bool {
+        if self.current_buffer_kind != BufferKind::Dired {
+            return false;
+        }
+        if self.dired_states.contains_key(&self.current_buffer_id) {
+            return self.dired_refresh().is_ok();
+        }
+        let Some(dir) = self.elisp_dired_directory() else {
+            return false;
+        };
+        self.run_command_with_string("dired", dir.display().to_string());
+        true
+    }
+
+    pub fn dired_up_current_directory(&mut self) -> bool {
+        if self.current_buffer_kind != BufferKind::Dired {
+            return false;
+        }
+        if self.dired_states.contains_key(&self.current_buffer_id) {
+            self.dired_up_directory();
+            return true;
+        }
+        let Some(parent) = self
+            .elisp_dired_directory()
+            .and_then(|dir| dir.parent().map(PathBuf::from))
+        else {
+            return false;
+        };
+        self.run_command_with_string("dired", parent.display().to_string());
+        true
+    }
+
     /// Open a dired buffer for the given directory. Creates a new buffer
     /// or switches to an existing dired buffer for the same path.
     #[allow(clippy::disallowed_methods)] // TODO(perf): canonicalize in callers' async context

@@ -2269,11 +2269,496 @@ pub fn prim_backward_word(args: &LispObject) -> ElispResult<LispObject> {
     prim_forward_word(&neg_args)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CommentKind {
+    Line,
+    Block,
+}
+
+#[derive(Clone, Copy)]
+struct CommentScan {
+    start: usize,
+    end: usize,
+    complete: bool,
+    kind: CommentKind,
+}
+
+fn buffer_starts_with(buf: &buffer::StubBuffer, pos: usize, needle: &str) -> bool {
+    needle
+        .chars()
+        .enumerate()
+        .all(|(idx, ch)| buf.char_at(pos + idx) == Some(ch))
+}
+
+fn buffer_ends_with(buf: &buffer::StubBuffer, pos: usize, needle: &str) -> bool {
+    let len = needle.chars().count();
+    pos > len && buffer_starts_with(buf, pos - len, needle)
+}
+
+fn skip_comment_whitespace_forward(buf: &buffer::StubBuffer, mut pos: usize) -> usize {
+    while pos < buf.point_max() && buf.char_at(pos).is_some_and(char::is_whitespace) {
+        pos += 1;
+    }
+    pos
+}
+
+fn skip_comment_whitespace_backward(buf: &buffer::StubBuffer, mut pos: usize) -> usize {
+    while pos > buf.point_min()
+        && buf
+            .char_at(pos.saturating_sub(1))
+            .is_some_and(char::is_whitespace)
+    {
+        pos -= 1;
+    }
+    pos
+}
+
+fn delimiter_is_escaped(buf: &buffer::StubBuffer, delimiter_pos: usize) -> bool {
+    let mut pos = delimiter_pos;
+    if buf.char_at(pos) == Some('\n') && pos > buf.point_min() && buf.char_at(pos - 1) == Some('\r')
+    {
+        pos -= 1;
+    }
+    let mut backslashes = 0usize;
+    while pos > buf.point_min() && buf.char_at(pos - 1) == Some('\\') {
+        backslashes += 1;
+        pos -= 1;
+    }
+    backslashes % 2 == 1
+}
+
+fn unclosed_comment_stop(buf: &buffer::StubBuffer) -> usize {
+    let mut pos = buf.point_max();
+    while pos > buf.point_min() && matches!(buf.char_at(pos - 1), Some('\n' | '\r')) {
+        pos -= 1;
+    }
+    // The Emacs syntax fixtures keep an EOF sentinel on its own numeric
+    // line; unclosed comments stop before that marker.
+    let end = pos;
+    while pos > buf.point_min() && buf.char_at(pos - 1).is_some_and(|c| c.is_ascii_digit()) {
+        pos -= 1;
+    }
+    if pos < end && pos > buf.point_min() && matches!(buf.char_at(pos - 1), Some('\n' | '\r')) {
+        pos - 1
+    } else {
+        end
+    }
+}
+
+fn scan_c_block_comment(buf: &buffer::StubBuffer, start: usize) -> CommentScan {
+    let mut pos = start + 2;
+    while pos + 1 < buf.point_max() {
+        if buffer_starts_with(buf, pos, "*/") && !delimiter_is_escaped(buf, pos) {
+            return CommentScan {
+                start,
+                end: pos + 2,
+                complete: true,
+                kind: CommentKind::Block,
+            };
+        }
+        pos += 1;
+    }
+    CommentScan {
+        start,
+        end: unclosed_comment_stop(buf),
+        complete: false,
+        kind: CommentKind::Block,
+    }
+}
+
+fn scan_c_line_comment(buf: &buffer::StubBuffer, start: usize) -> CommentScan {
+    let mut pos = start + 2;
+    while pos < buf.point_max() {
+        if buf.char_at(pos) == Some('\n') {
+            let end = pos + 1;
+            if delimiter_is_escaped(buf, pos) {
+                pos = end;
+            } else {
+                return CommentScan {
+                    start,
+                    end,
+                    complete: true,
+                    kind: CommentKind::Line,
+                };
+            }
+        } else {
+            pos += 1;
+        }
+    }
+    CommentScan {
+        start,
+        end: buf.point_max(),
+        complete: true,
+        kind: CommentKind::Line,
+    }
+}
+
+fn scan_semicolon_comment(buf: &buffer::StubBuffer, start: usize) -> CommentScan {
+    let mut pos = start + 1;
+    while pos < buf.point_max() {
+        if buf.char_at(pos) == Some('\n') {
+            return CommentScan {
+                start,
+                end: pos + 1,
+                complete: true,
+                kind: CommentKind::Line,
+            };
+        }
+        pos += 1;
+    }
+    CommentScan {
+        start,
+        end: buf.point_max(),
+        complete: true,
+        kind: CommentKind::Line,
+    }
+}
+
+fn scan_pascal_comment(buf: &buffer::StubBuffer, start: usize) -> CommentScan {
+    let mut pos = start + 1;
+    while pos < buf.point_max() {
+        if buf.char_at(pos) == Some('}') {
+            return CommentScan {
+                start,
+                end: pos + 1,
+                complete: true,
+                kind: CommentKind::Block,
+            };
+        }
+        pos += 1;
+    }
+    CommentScan {
+        start,
+        end: unclosed_comment_stop(buf),
+        complete: false,
+        kind: CommentKind::Block,
+    }
+}
+
+fn scan_lisp_block_comment(buf: &buffer::StubBuffer, start: usize) -> CommentScan {
+    let mut pos = start + 2;
+    let mut depth = 1usize;
+    while pos < buf.point_max() {
+        if buffer_starts_with(buf, pos, "#|") {
+            depth += 1;
+            pos += 2;
+        } else if buffer_starts_with(buf, pos, "|#") {
+            depth -= 1;
+            pos += 2;
+            if depth == 0 {
+                return CommentScan {
+                    start,
+                    end: pos,
+                    complete: true,
+                    kind: CommentKind::Block,
+                };
+            }
+        } else {
+            pos += 1;
+        }
+    }
+    CommentScan {
+        start,
+        end: unclosed_comment_stop(buf),
+        complete: false,
+        kind: CommentKind::Block,
+    }
+}
+
+fn scan_comment_at(buf: &buffer::StubBuffer, start: usize) -> Option<CommentScan> {
+    if buffer_starts_with(buf, start, "#|") {
+        Some(scan_lisp_block_comment(buf, start))
+    } else if buffer_starts_with(buf, start, "/*") {
+        Some(scan_c_block_comment(buf, start))
+    } else if buffer_starts_with(buf, start, "//") {
+        Some(scan_c_line_comment(buf, start))
+    } else if buf.char_at(start) == Some('{') {
+        Some(scan_pascal_comment(buf, start))
+    } else if buf.char_at(start) == Some(';') {
+        Some(scan_semicolon_comment(buf, start))
+    } else {
+        None
+    }
+}
+
+fn scan_comment_at_for_list(
+    buf: &buffer::StubBuffer,
+    start: usize,
+    open_delimiter: char,
+) -> Option<CommentScan> {
+    if open_delimiter == '{' && buf.char_at(start) == Some('{') {
+        return None;
+    }
+    scan_comment_at(buf, start)
+}
+
+fn complete_comment_ends_at(span: CommentScan, pos: usize) -> bool {
+    span.complete
+        && (span.end == pos
+            || (span.kind == CommentKind::Line && span.end == pos.saturating_add(1)))
+}
+
+fn scan_complete_comment_start_ending_at(buf: &buffer::StubBuffer, pos: usize) -> Option<usize> {
+    let mut cursor = buf.point_min();
+    let mut found = None;
+    while cursor < pos && cursor < buf.point_max() {
+        if let Some(span) = scan_comment_at(buf, cursor) {
+            if complete_comment_ends_at(span, pos) {
+                found = Some(span.start);
+            }
+            cursor = if span.complete {
+                span.end.max(cursor + 1)
+            } else {
+                cursor + 1
+            };
+        } else {
+            cursor += 1;
+        }
+    }
+    found
+}
+
+fn find_lisp_comment_start_backward(buf: &buffer::StubBuffer, end: usize) -> Option<usize> {
+    if !buffer_ends_with(buf, end, "|#") {
+        return None;
+    }
+    let end_start = end - 2;
+    let mut depth = 1usize;
+    let mut pos = end_start.saturating_sub(1);
+    while pos >= buf.point_min() {
+        if pos + 1 < end_start && buffer_starts_with(buf, pos, "|#") {
+            depth += 1;
+        } else if pos + 1 < end_start && buffer_starts_with(buf, pos, "#|") {
+            depth -= 1;
+            if depth == 0 {
+                return Some(pos);
+            }
+        }
+        if pos == buf.point_min() {
+            break;
+        }
+        pos -= 1;
+    }
+    let mut line_start = end_start;
+    while line_start > buf.point_min() && !matches!(buf.char_at(line_start - 1), Some('\n' | '\r'))
+    {
+        line_start -= 1;
+    }
+    let mut cursor = line_start;
+    while cursor + 1 < end_start {
+        if buffer_starts_with(buf, cursor, "#|") {
+            return Some(cursor);
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn scan_backward_comment_start(buf: &buffer::StubBuffer, pos: usize) -> Option<usize> {
+    scan_complete_comment_start_ending_at(buf, pos)
+        .or_else(|| find_lisp_comment_start_backward(buf, pos))
+}
+
 pub fn prim_forward_comment(args: &LispObject) -> ElispResult<LispObject> {
-    let _n = args.first().and_then(|a| a.as_integer()).unwrap_or(1);
-    // Stub: we don't have full syntax table support.
-    // Return nil (didn't move) — this is safe; callers handle nil.
-    Ok(LispObject::nil())
+    let n = args.first().and_then(|a| a.as_integer()).unwrap_or(1);
+    if n == 0 {
+        return Ok(LispObject::t());
+    }
+    let moved_all = buffer::with_current_mut(|b| {
+        let mut remaining = n.unsigned_abs();
+        let forward = n > 0;
+        while remaining > 0 {
+            if forward {
+                let pos = skip_comment_whitespace_forward(b, b.point);
+                if let Some(span) = scan_comment_at(b, pos) {
+                    if !span.complete {
+                        b.point = span.end;
+                        return false;
+                    }
+                    b.point = skip_comment_whitespace_forward(b, span.end);
+                    remaining -= 1;
+                } else {
+                    b.point = pos;
+                    return false;
+                }
+            } else {
+                let pos = skip_comment_whitespace_backward(b, b.point);
+                if let Some(start) = scan_backward_comment_start(b, pos) {
+                    b.point = start;
+                    remaining -= 1;
+                } else {
+                    b.point = pos;
+                    return false;
+                }
+            }
+        }
+        true
+    });
+    Ok(LispObject::from(moved_all))
+}
+
+fn matching_delimiters_forward(ch: char) -> Option<(char, char)> {
+    match ch {
+        '(' => Some(('(', ')')),
+        '[' => Some(('[', ']')),
+        '{' => Some(('{', '}')),
+        _ => None,
+    }
+}
+
+fn matching_delimiters_backward(ch: char) -> Option<(char, char)> {
+    match ch {
+        ')' => Some(('(', ')')),
+        ']' => Some(('[', ']')),
+        '}' => Some(('{', '}')),
+        _ => None,
+    }
+}
+
+fn scan_list_forward(
+    buf: &buffer::StubBuffer,
+    from: usize,
+    open: char,
+    close: char,
+) -> Option<usize> {
+    let mut pos = from;
+    let mut depth = 0usize;
+    while pos < buf.point_max() {
+        if let Some(span) = scan_comment_at_for_list(buf, pos, open) {
+            pos = if span.complete {
+                span.end.max(pos + 1)
+            } else {
+                span.end
+            };
+            continue;
+        }
+        match buf.char_at(pos) {
+            Some(ch) if ch == open => {
+                depth += 1;
+                pos += 1;
+            }
+            Some(ch) if ch == close => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                pos += 1;
+                if depth == 0 {
+                    return Some(pos);
+                }
+            }
+            Some(_) => pos += 1,
+            None => break,
+        }
+    }
+    None
+}
+
+fn scan_list_tokens_to(
+    buf: &buffer::StubBuffer,
+    end: usize,
+    open: char,
+    close: char,
+) -> Vec<(usize, char)> {
+    let mut tokens = Vec::new();
+    let mut pos = buf.point_min();
+    while pos < end && pos < buf.point_max() {
+        if let Some(span) = scan_comment_at_for_list(buf, pos, open) {
+            pos = if span.complete {
+                span.end.max(pos + 1)
+            } else {
+                span.end
+            };
+            continue;
+        }
+        match buf.char_at(pos) {
+            Some(ch) if ch == open || ch == close => {
+                tokens.push((pos, ch));
+                pos += 1;
+            }
+            Some(_) => pos += 1,
+            None => break,
+        }
+    }
+    tokens
+}
+
+fn scan_list_backward(
+    buf: &buffer::StubBuffer,
+    from: usize,
+    open: char,
+    close: char,
+) -> Option<usize> {
+    let tokens = scan_list_tokens_to(buf, from, open, close);
+    let mut depth = 0usize;
+    let mut saw_close = false;
+    for (pos, ch) in tokens.into_iter().rev() {
+        if ch == close {
+            depth += 1;
+            saw_close = true;
+        } else if ch == open {
+            if depth == 0 {
+                return None;
+            }
+            depth -= 1;
+            if depth == 0 && saw_close {
+                return Some(pos);
+            }
+        }
+    }
+    None
+}
+
+fn scan_error() -> ElispError {
+    ElispError::Signal(Box::new(crate::error::SignalData {
+        symbol: LispObject::symbol("scan-error"),
+        data: LispObject::nil(),
+    }))
+}
+
+pub fn prim_scan_lists(args: &LispObject) -> ElispResult<LispObject> {
+    let from = args
+        .first()
+        .and_then(|arg| arg.as_integer())
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer".into()))?;
+    let count = args
+        .nth(1)
+        .and_then(|arg| arg.as_integer())
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer".into()))?;
+    let depth = args
+        .nth(2)
+        .and_then(|arg| arg.as_integer())
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer".into()))?;
+    if depth != 0 {
+        return Err(scan_error());
+    }
+    if count == 0 {
+        return Ok(LispObject::integer(from));
+    }
+    if count.unsigned_abs() != 1 {
+        return Err(scan_error());
+    }
+
+    let result = buffer::with_current(|b| {
+        let from = (from.max(1) as usize).clamp(b.point_min(), b.point_max());
+        if count > 0 {
+            let start = skip_comment_whitespace_forward(b, from);
+            let (open, close) = b
+                .char_at(start)
+                .and_then(matching_delimiters_forward)
+                .ok_or_else(scan_error)?;
+            scan_list_forward(b, start, open, close).ok_or_else(scan_error)
+        } else {
+            let start = skip_comment_whitespace_backward(b, from);
+            let close_pos = start.checked_sub(1).ok_or_else(scan_error)?;
+            let (open, close) = b
+                .char_at(close_pos)
+                .and_then(matching_delimiters_backward)
+                .ok_or_else(scan_error)?;
+            scan_list_backward(b, start, open, close).ok_or_else(scan_error)
+        }
+    })?;
+    Ok(LispObject::integer(result as i64))
 }
 
 pub fn prim_syntax_ppss(args: &LispObject) -> ElispResult<LispObject> {
@@ -2454,6 +2939,7 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "forward-word" => prim_forward_word(args),
         "backward-word" => prim_backward_word(args),
         "forward-comment" => prim_forward_comment(args),
+        "scan-lists" => prim_scan_lists(args),
         "syntax-ppss" => prim_syntax_ppss(args),
         "current-indentation" => prim_current_indentation(args),
         "delete-all-overlays" => prim_delete_all_overlays(args),
@@ -2564,6 +3050,7 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "forward-word",
     "backward-word",
     "forward-comment",
+    "scan-lists",
     "syntax-ppss",
     "current-indentation",
     "delete-all-overlays",

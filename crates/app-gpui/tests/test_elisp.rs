@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods)]
+use gpui_md::document::BufferKind;
 use gpui_md::state::MdAppState;
 
 /// Construct a state, set its text and cursor, and load the shared elisp
@@ -445,6 +446,75 @@ fn elisp_lookup_mode_key_finds_binding() {
         rele_elisp::lookup_mode_key(s.lisp_host.interpreter(), "no-such-mode", "n"),
         None,
         "unknown mode should return None",
+    );
+}
+
+#[test]
+fn elisp_dired_sets_mode_map_and_starts_on_first_entry() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("entry.txt");
+    std::fs::write(&path, "hello").expect("write fixture");
+
+    let mut s = state_with("");
+    s.run_command_with_string("dired", dir.path().display().to_string());
+
+    assert!(s.current_buffer_name.starts_with("*Dired: "));
+    assert_eq!(s.current_buffer_kind, BufferKind::Dired);
+    assert_eq!(s.current_major_mode.as_deref(), Some("dired-mode"));
+    assert_eq!(
+        rele_elisp::lookup_mode_key(s.lisp_host.interpreter(), "dired-mode", "n"),
+        Some("next-line".to_string())
+    );
+    assert_eq!(
+        rele_elisp::lookup_mode_key(s.lisp_host.interpreter(), "dired-mode", "p"),
+        Some("previous-line".to_string())
+    );
+    assert_eq!(s.document.char_to_line(s.cursor.position), 2);
+}
+
+#[test]
+fn elisp_dired_ret_opens_entry_at_point() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("entry.txt");
+    std::fs::write(&path, "hello").expect("write fixture");
+
+    let mut s = state_with("");
+    s.run_command_with_string("dired", dir.path().display().to_string());
+
+    let entry_line = s
+        .document
+        .text()
+        .lines()
+        .position(|line| line.contains("entry.txt"))
+        .expect("entry should be listed");
+    s.cursor.position = s.document.line_to_char(entry_line);
+
+    assert!(s.dired_open_entry_at_point());
+    assert_eq!(s.current_buffer_name, "entry.txt");
+    assert!(s.document.text().contains("hello"));
+}
+
+#[test]
+fn elisp_dired_refresh_and_up_use_generated_buffer_header() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let child = dir.path().join("child");
+    std::fs::create_dir(&child).expect("create child dir");
+
+    let mut s = state_with("");
+    s.run_command_with_string("dired", dir.path().display().to_string());
+    let later = dir.path().join("later.txt");
+    std::fs::write(&later, "later").expect("write fixture");
+
+    assert!(s.dired_refresh_current_buffer());
+    assert!(s.document.text().contains("later.txt"));
+
+    s.run_command_with_string("dired", child.display().to_string());
+    assert!(s.dired_up_current_directory());
+    assert!(
+        s.document
+            .line(0)
+            .to_string()
+            .contains(&dir.path().display().to_string())
     );
 }
 

@@ -33,7 +33,10 @@ def tractable_files(script_dir: Path) -> list[str]:
 
 
 def build_worker(root: Path) -> Path:
-    worker = root / "target" / "release" / "emacs_test_worker"
+    target_dir = Path(os.environ.get("CARGO_TARGET_DIR", root / "target"))
+    if not target_dir.is_absolute():
+        target_dir = root / target_dir
+    worker = target_dir / "release" / "emacs_test_worker"
     cargo = os.environ.get("CARGO") or shutil.which("cargo")
     if cargo is None:
         rustup_cargo = Path.home() / ".cargo" / "bin" / "cargo"

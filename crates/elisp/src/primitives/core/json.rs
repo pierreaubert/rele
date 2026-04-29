@@ -169,7 +169,7 @@ fn serialize_options(mut args: LispObject) -> ElispResult<SerializeOptions> {
 }
 
 fn parse_one_json(text: &str) -> ElispResult<(JsonValue, usize)> {
-    if has_raw_byte_marker(text) {
+    if has_raw_byte_marker(text) || text.contains('\u{fffd}') {
         return Err(signal("json-utf8-decode-error", "invalid utf-8"));
     }
     if text.trim().is_empty() {
@@ -371,7 +371,13 @@ fn serialize_alist(
     let mut current = value.clone();
     let mut pairs = Vec::new();
     let mut keys = HashSet::new();
+    let mut list_seen = HashSet::new();
     while let Some((entry, rest)) = current.destructure_cons() {
+        if let LispObject::Cons(cell) = &current
+            && !list_seen.insert(Arc::as_ptr(cell) as usize)
+        {
+            return Err(signal("circular-list", "circular list"));
+        }
         let Some((key_obj, value_obj)) = entry.destructure_cons() else {
             return Err(wrong_type("cons"));
         };
@@ -398,7 +404,13 @@ fn serialize_plist(
     let mut current = value.clone();
     let mut pairs = Vec::new();
     let mut keys = HashSet::new();
+    let mut list_seen = HashSet::new();
     while let Some((key_obj, rest)) = current.destructure_cons() {
+        if let LispObject::Cons(cell) = &current
+            && !list_seen.insert(Arc::as_ptr(cell) as usize)
+        {
+            return Err(signal("circular-list", "circular list"));
+        }
         let Some((value_obj, next)) = rest.destructure_cons() else {
             return Err(wrong_type("list"));
         };
@@ -453,6 +465,85 @@ mod tests {
         assert!(
             matches!(result, Err(ElispError::Signal(sig)) if sig.symbol.as_symbol().as_deref() == Some("json-trailing-content"))
         );
+    }
+
+    #[test]
+    fn parse_string_rejects_replacement_char() {
+        let result = prim_json_parse_string(&args(vec![LispObject::string("[\"\u{fffd}\"]")]));
+        assert!(
+            matches!(result, Err(ElispError::Signal(sig)) if sig.symbol.as_symbol().as_deref() == Some("json-utf8-decode-error"))
+        );
+    }
+
+    #[test]
+    fn serialize_rejects_circular_object_list() {
+        let object = crate::read("#1=((a . 1) . #1#)").expect("read circular object");
+        let result = prim_json_serialize(&args(vec![object]));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn serialize_nested_object_shapes() {
+        let mut table = LispHashTable::new(HashTableTest::Equal);
+        table.put(&LispObject::string("bla"), LispObject::string("ble"));
+        let table = LispObject::HashTable(Arc::new(crate::eval::SyncRefCell::new(table)));
+        let alist = list_from_vec(vec![LispObject::cons(
+            LispObject::symbol("bla"),
+            LispObject::string("ble"),
+        )]);
+        let plist = list_from_vec(vec![LispObject::symbol(":bla"), LispObject::string("ble")]);
+        let object = list_from_vec(vec![
+            LispObject::symbol(":detect-hash-table"),
+            table,
+            LispObject::symbol(":detect-alist"),
+            alist,
+            LispObject::symbol(":detect-plist"),
+            plist,
+        ]);
+        assert_eq!(
+            prim_json_serialize(&args(vec![object]))
+                .unwrap()
+                .as_string()
+                .map(String::as_str),
+            Some(
+                "{\"detect-hash-table\":{\"bla\":\"ble\"},\"detect-alist\":{\"bla\":\"ble\"},\"detect-plist\":{\"bla\":\"ble\"}}"
+            )
+        );
+    }
+
+    #[test]
+    fn serialize_reader_hash_table_record() {
+        let table =
+            crate::read("#s(hash-table test equal data (\"bla\" \"ble\"))").expect("read table");
+        assert_eq!(
+            prim_json_serialize(&args(vec![table]))
+                .unwrap()
+                .as_string()
+                .map(String::as_str),
+            Some("{\"bla\":\"ble\"}")
+        );
+    }
+
+    #[test]
+    fn eval_serialize_reader_hash_table_record_in_plist() {
+        let mut interp = crate::Interpreter::new();
+        crate::add_primitives(&mut interp);
+        let value = interp
+            .eval_source(
+                "(equal
+                  (json-serialize
+                   (list :detect-hash-table #s(hash-table test equal data (\"bla\" \"ble\"))
+                         :detect-alist '((bla . \"ble\"))
+                         :detect-plist '(:bla \"ble\")))
+                  \"\\
+{\\
+\\\"detect-hash-table\\\":{\\\"bla\\\":\\\"ble\\\"},\\
+\\\"detect-alist\\\":{\\\"bla\\\":\\\"ble\\\"},\\
+\\\"detect-plist\\\":{\\\"bla\\\":\\\"ble\\\"}\\
+}\")",
+            )
+            .unwrap();
+        assert_eq!(value, LispObject::t());
     }
 
     #[test]

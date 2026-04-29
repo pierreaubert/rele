@@ -1059,6 +1059,17 @@ fn run_hook_symbol(
     macros: &MacroTable,
     state: &InterpreterState,
 ) -> ElispResult<Value> {
+    run_hook_symbol_with_args(hook_symbol, LispObject::nil(), env, editor, macros, state)
+}
+
+fn run_hook_symbol_with_args(
+    hook_symbol: LispObject,
+    args: LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
     let Some(name) = hook_symbol.as_symbol() else {
         return Ok(Value::nil());
     };
@@ -1067,7 +1078,7 @@ fn run_hook_symbol(
         let before = closure_capture_snapshot(&func);
         functions::call_function(
             obj_to_value(func.clone()),
-            obj_to_value(LispObject::nil()),
+            obj_to_value(args.clone()),
             env,
             editor,
             macros,
@@ -1079,8 +1090,43 @@ fn run_hook_symbol(
     Ok(Value::nil())
 }
 
+fn add_hook_local_arg(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<bool> {
+    if let Some(expr) = args.nth(3) {
+        return Ok(!value_to_obj(eval(obj_to_value(expr), env, editor, macros, state)?).is_nil());
+    }
+    if let Some(expr) = args.nth(2) {
+        let value = value_to_obj(eval(obj_to_value(expr), env, editor, macros, state)?);
+        return Ok(value.as_symbol().as_deref() == Some(":local"));
+    }
+    Ok(false)
+}
+
 fn run_buffer_local_hook_symbol(
     hook_symbol: LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<Value> {
+    run_buffer_local_hook_symbol_with_args(
+        hook_symbol,
+        LispObject::nil(),
+        env,
+        editor,
+        macros,
+        state,
+    )
+}
+
+fn run_buffer_local_hook_symbol_with_args(
+    hook_symbol: LispObject,
+    args: LispObject,
     env: &Arc<RwLock<Environment>>,
     editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
     macros: &MacroTable,
@@ -1094,7 +1140,7 @@ fn run_buffer_local_hook_symbol(
         let before = closure_capture_snapshot(&func);
         functions::call_function(
             obj_to_value(func.clone()),
-            obj_to_value(LispObject::nil()),
+            obj_to_value(args.clone()),
             env,
             editor,
             macros,
@@ -1347,7 +1393,20 @@ pub(super) fn insert_with_overlay_hooks(
     let after = collect_overlay_hooks_for_insert(pos, len, true);
     call_overlay_modification_hooks(before, env, editor, macros, state)?;
     crate::buffer::with_registry_mut(|registry| registry.insert_current(text, before_markers));
-    call_overlay_modification_hooks(after, env, editor, macros, state)
+    call_overlay_modification_hooks(after, env, editor, macros, state)?;
+    run_hook_symbol_with_args(
+        LispObject::symbol("after-change-functions"),
+        list_from_vec(vec![
+            LispObject::integer(pos as i64),
+            LispObject::integer((pos + len) as i64),
+            LispObject::integer(0),
+        ]),
+        env,
+        editor,
+        macros,
+        state,
+    )
+    .map(|_| ())
 }
 
 fn replace_region_with_overlay_hooks(
@@ -2691,12 +2750,7 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let local = if let Some(expr) = cdr.nth(3) {
-                        !value_to_obj(eval(obj_to_value(expr), env, editor, macros, state)?)
-                            .is_nil()
-                    } else {
-                        false
-                    };
+                    let local = add_hook_local_arg(&cdr, env, editor, macros, state)?;
                     if let Some(name) = hook.as_symbol() {
                         let old = current_hook_value(&name, env);
                         set_hook_value(&name, append_hook_function(old, func), local, env);
@@ -2718,12 +2772,7 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let local = if let Some(expr) = cdr.nth(3) {
-                        !value_to_obj(eval(obj_to_value(expr), env, editor, macros, state)?)
-                            .is_nil()
-                    } else {
-                        false
-                    };
+                    let local = add_hook_local_arg(&cdr, env, editor, macros, state)?;
                     if let Some(name) = hook.as_symbol() {
                         let old = current_hook_value(&name, env);
                         set_hook_value(&name, remove_hook_function(old, &func), local, env);
@@ -6163,7 +6212,7 @@ pub(super) fn eval_inner(
                         property_count += 1;
                         cur = rest;
                     }
-                    if property_count % 2 != 0 {
+                    if !property_count.is_multiple_of(2) {
                         return Err(ElispError::WrongNumberOfArguments);
                     }
                     eval(obj_to_value(s), env, editor, macros, state)

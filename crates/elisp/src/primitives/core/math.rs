@@ -27,6 +27,10 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "ceiling" => Some(prim_ceiling(args)),
         "round" => Some(prim_round(args)),
         "truncate" => Some(prim_truncate(args)),
+        "ffloor" => Some(prim_ffloor(args)),
+        "fceiling" => Some(prim_fceiling(args)),
+        "fround" => Some(prim_fround(args)),
+        "ftruncate" => Some(prim_ftruncate(args)),
         "float" => Some(prim_float(args)),
         "ash" => Some(prim_ash(args)),
         "lsh" => Some(prim_lsh(args)),
@@ -87,6 +91,10 @@ pub const MATH_PRIMITIVE_NAMES: &[&str] = &[
     "ceiling",
     "round",
     "truncate",
+    "ffloor",
+    "fceiling",
+    "fround",
+    "ftruncate",
     "float",
     "ash",
     "lsh",
@@ -169,6 +177,17 @@ fn get_float_arg(args: &LispObject) -> ElispResult<f64> {
             .to_f64()
             .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
         LispObject::Float(f) => Ok(f),
+        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
+    }
+}
+
+fn number_as_f64(obj: &LispObject) -> ElispResult<f64> {
+    match obj {
+        LispObject::Integer(i) => Ok(*i as f64),
+        LispObject::BigInt(i) => i
+            .to_f64()
+            .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
+        LispObject::Float(f) => Ok(*f),
         _ => Err(ElispError::WrongTypeArgument("number".to_string())),
     }
 }
@@ -516,39 +535,136 @@ pub fn prim_min(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_floor(args: &LispObject) -> ElispResult<LispObject> {
-    let n = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    match n {
-        LispObject::Integer(_) => Ok(n),
-        LispObject::Float(f) => Ok(LispObject::integer(f.floor() as i64)),
-        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
-    }
+    round_number(args, RoundingMode::Floor)
 }
 
 pub fn prim_ceiling(args: &LispObject) -> ElispResult<LispObject> {
-    let n = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    match n {
-        LispObject::Integer(_) => Ok(n),
-        LispObject::Float(f) => Ok(LispObject::integer(f.ceil() as i64)),
-        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
-    }
+    round_number(args, RoundingMode::Ceiling)
 }
 
 pub fn prim_round(args: &LispObject) -> ElispResult<LispObject> {
+    round_number(args, RoundingMode::Round)
+}
+
+pub fn prim_truncate(args: &LispObject) -> ElispResult<LispObject> {
+    round_number(args, RoundingMode::Truncate)
+}
+
+#[derive(Clone, Copy)]
+enum RoundingMode {
+    Floor,
+    Ceiling,
+    Round,
+    Truncate,
+}
+
+fn round_number(args: &LispObject, mode: RoundingMode) -> ElispResult<LispObject> {
     let n = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let divisor = args.nth(1);
+    if args.nth(2).is_some() {
+        return Err(ElispError::WrongNumberOfArguments);
+    }
+    if let Some(d) = divisor {
+        if let (Some(a), Some(b)) = (get_integer(&n), get_integer(&d)) {
+            return round_integer_ratio(&a, &b, mode);
+        }
+        let a = number_as_f64(&n)?;
+        let b = number_as_f64(&d)?;
+        if b == 0.0 {
+            return Err(ElispError::DivisionByZero);
+        }
+        return round_float(a / b, mode);
+    }
     match n {
-        LispObject::Integer(_) => Ok(n),
-        LispObject::Float(f) => Ok(LispObject::integer(f.round() as i64)),
+        LispObject::Integer(_) | LispObject::BigInt(_) => Ok(n),
+        LispObject::Float(f) => round_float(f, mode),
         _ => Err(ElispError::WrongTypeArgument("number".to_string())),
     }
 }
 
-pub fn prim_truncate(args: &LispObject) -> ElispResult<LispObject> {
-    let n = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    match n {
-        LispObject::Integer(_) => Ok(n),
-        LispObject::Float(f) => Ok(LispObject::integer(f.trunc() as i64)),
-        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
+fn round_integer_ratio(a: &BigInt, b: &BigInt, mode: RoundingMode) -> ElispResult<LispObject> {
+    if b.is_zero() {
+        return Err(ElispError::DivisionByZero);
     }
+    let q = a / b;
+    let r = a % b;
+    if r.is_zero() {
+        return Ok(normalize_integer(q));
+    }
+    let same_sign = a.is_negative() == b.is_negative();
+    let adjusted = match mode {
+        RoundingMode::Floor if !same_sign => q - BigInt::one(),
+        RoundingMode::Ceiling if same_sign => q + BigInt::one(),
+        RoundingMode::Round => round_integer_ratio_nearest(q, r, b, same_sign),
+        _ => q,
+    };
+    Ok(normalize_integer(adjusted))
+}
+
+fn round_integer_ratio_nearest(
+    q: BigInt,
+    r: BigInt,
+    b: &BigInt,
+    quotient_positive: bool,
+) -> BigInt {
+    let twice_remainder = r.abs() * BigInt::from(2);
+    let denominator = b.abs();
+    if twice_remainder < denominator {
+        return q;
+    }
+    let step = if quotient_positive {
+        BigInt::one()
+    } else {
+        -BigInt::one()
+    };
+    if twice_remainder > denominator {
+        return q + step;
+    }
+    if (&q % BigInt::from(2)).is_zero() {
+        q
+    } else {
+        q + step
+    }
+}
+
+fn round_float(value: f64, mode: RoundingMode) -> ElispResult<LispObject> {
+    if !value.is_finite() {
+        return Err(ElispError::InvalidOperation("non-finite number".into()));
+    }
+    let rounded = match mode {
+        RoundingMode::Floor => value.floor(),
+        RoundingMode::Ceiling => value.ceil(),
+        RoundingMode::Round => value.round(),
+        RoundingMode::Truncate => value.trunc(),
+    };
+    Ok(LispObject::integer(rounded as i64))
+}
+
+fn float_rounder(args: &LispObject, f: fn(f64) -> f64) -> ElispResult<LispObject> {
+    let n = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    if args.nth(1).is_some() {
+        return Err(ElispError::WrongNumberOfArguments);
+    }
+    match n {
+        LispObject::Float(value) => Ok(LispObject::float(f(value))),
+        _ => Err(ElispError::WrongTypeArgument("float".into())),
+    }
+}
+
+pub fn prim_ffloor(args: &LispObject) -> ElispResult<LispObject> {
+    float_rounder(args, f64::floor)
+}
+
+pub fn prim_fceiling(args: &LispObject) -> ElispResult<LispObject> {
+    float_rounder(args, f64::ceil)
+}
+
+pub fn prim_fround(args: &LispObject) -> ElispResult<LispObject> {
+    float_rounder(args, f64::round)
+}
+
+pub fn prim_ftruncate(args: &LispObject) -> ElispResult<LispObject> {
+    float_rounder(args, f64::trunc)
 }
 
 pub fn prim_float(args: &LispObject) -> ElispResult<LispObject> {
@@ -713,10 +829,14 @@ fn prim_minusp(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 fn prim_isnan(args: &LispObject) -> ElispResult<LispObject> {
-    let x = args.first().unwrap_or_else(LispObject::nil);
-    Ok(LispObject::from(
-        matches!(x, LispObject::Float(f) if f.is_nan()),
-    ))
+    let x = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    if args.nth(1).is_some() {
+        return Err(ElispError::WrongNumberOfArguments);
+    }
+    match x {
+        LispObject::Float(f) => Ok(LispObject::from(f.is_nan())),
+        _ => Err(ElispError::WrongTypeArgument("float".into())),
+    }
 }
 
 fn prim_copysign(args: &LispObject) -> ElispResult<LispObject> {
@@ -829,6 +949,14 @@ fn prim_expt(args: &LispObject) -> ElispResult<LispObject> {
 mod tests {
     use super::*;
 
+    fn list1(a: LispObject) -> LispObject {
+        LispObject::cons(a, LispObject::nil())
+    }
+
+    fn list2(a: LispObject, b: LispObject) -> LispObject {
+        LispObject::cons(a, list1(b))
+    }
+
     #[test]
     fn test_get_number_nil_as_zero() {
         assert_eq!(get_number(&LispObject::nil()), Some(0.0));
@@ -866,5 +994,64 @@ mod tests {
             LispObject::cons(LispObject::nil(), LispObject::nil()),
         );
         assert_eq!(prim_gt(&args).unwrap(), LispObject::t());
+    }
+
+    #[test]
+    fn isnan_rejects_non_float() {
+        let err = prim_isnan(&list1(LispObject::string("foo"))).unwrap_err();
+        assert!(matches!(err, ElispError::WrongTypeArgument(_)));
+    }
+
+    #[test]
+    fn float_rounders_require_float() {
+        let err = prim_ffloor(&list1(LispObject::integer(0))).unwrap_err();
+        assert!(matches!(err, ElispError::WrongTypeArgument(_)));
+
+        let result = prim_fceiling(&list1(LispObject::float(0.5))).unwrap();
+        assert_eq!(result.as_float(), Some(1.0));
+    }
+
+    #[test]
+    fn integer_rounders_honor_divisor() {
+        assert_eq!(
+            prim_floor(&list2(LispObject::integer(7), LispObject::integer(3)))
+                .unwrap()
+                .as_integer(),
+            Some(2),
+        );
+        assert_eq!(
+            prim_ceiling(&list2(LispObject::integer(7), LispObject::integer(3)))
+                .unwrap()
+                .as_integer(),
+            Some(3),
+        );
+        assert_eq!(
+            prim_round(&list2(LispObject::integer(5), LispObject::integer(2)))
+                .unwrap()
+                .as_integer(),
+            Some(2),
+        );
+        assert_eq!(
+            prim_round(&list2(LispObject::integer(3), LispObject::integer(2)))
+                .unwrap()
+                .as_integer(),
+            Some(2),
+        );
+    }
+
+    #[test]
+    fn rounders_signal_non_finite_and_zero_divisor() {
+        assert!(prim_floor(&list1(LispObject::float(f64::INFINITY))).is_err());
+        assert!(prim_round(&list1(LispObject::float(f64::NAN))).is_err());
+        assert!(prim_truncate(&list2(LispObject::integer(1), LispObject::integer(0))).is_err());
+        assert_eq!(
+            prim_floor(&list2(
+                LispObject::integer(1),
+                LispObject::float(f64::INFINITY),
+            ))
+            .unwrap()
+            .as_integer(),
+            Some(0),
+        );
     }
 }

@@ -290,7 +290,7 @@ the 766 internal unit tests.
 3. `timerp` should recognise Emacs's vector timer representation
    (`10` process-tests errors).
 4. `scan-lists` / `parse-partial-sexp` comment awareness remains the
-   next syntax layer after `forward-comment`.
+   suivant syntax layer after `forward-comment`.
 5. JSON follow-ups are now semantic rather than stubs: duplicate-key
    parse ordering, condition hierarchy for `json-error`, invalid
    Unicode edge classification, and after-change hook propagation.
@@ -350,3 +350,350 @@ the 766 internal unit tests.
    after `forward-comment`.
 5. Fix `editfns` number/marker coercion buckets
    (`WRONG_TYPE_NUMBER`, `WRONG_TYPE_MARKER`).
+
+## 2026-04-29 — forward-comment syntax fixtures
+
+**Command run:**
+
+```bash
+./ert-progress/refresh.sh
+```
+
+**Overall movement:**
+
+| Metric | Before | After |
+|--------|-------:|------:|
+| Pass   |    685 |   739 |
+| Fail   |    286 |   232 |
+| Error  |     70 |    70 |
+| Skip   |    124 |   124 |
+| Rate   |    59% |   63% |
+
+**Top bucket handled:**
+
+- The top global pattern was `forward-comment`: 25 forward and 25
+  backward direct assertion failures in `syntax-tests.el`.
+- `syntax-tests.el` moved from `10 pass / 90 fail / 0 err` to
+  `64 pass / 36 fail / 0 err`.
+- The direct `forward-comment` bucket is gone. The remaining syntax
+  failures are now `scan-lists`, `syntax-ppss`, and isolated syntax
+  classification cases.
+
+**Code landed:**
+
+- Replaced the nil `forward-comment` stub in `primitives/buffer.rs` with
+  a small comment scanner.
+- Covered the comment forms exercised by Emacs's syntax resource:
+  - Pascal-style `{ ... }`
+  - Lisp line comments `; ...`
+  - nested Lisp block comments `#| ... |#`
+  - C block comments `/* ... */` with escaped `*/`
+  - C line comments `// ...` with escaped newlines
+- Backward movement now skips whitespace and finds the matching comment
+  start, including the overlapping nested-comment edge in `#|#|#`.
+- Unclosed block comments now stop at the syntax fixture EOF sentinel
+  instead of blindly returning `point-max`.
+
+**Verification:**
+
+- `cargo test -p rele-elisp --lib`
+- `./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/syntax-tests.el`
+- `./ert-progress/refresh.sh`
+
+**Note:**
+
+- `rustfmt crates/elisp/src/primitives/buffer.rs` was attempted but the
+  standalone `rustfmt` invocation failed on existing let-chain syntax
+  because it did not pick up the workspace edition. No formatting change
+  was applied by that failed command.
+
+**Next leverage targets** (highest impact first; verify with refresh.sh):
+
+1. `DID_NOT_SIGNAL` is again the top global bucket at 23. Group by file
+   before changing primitives; it is diffuse.
+2. `timerp` should recognise Emacs's vector timer representation
+   (`10` process-tests errors).
+3. Implement `scan-lists` comment awareness; syntax-tests now has 10
+   forward and 10 backward direct failures there.
+4. Implement the `syntax-ppss` comment state fields used by the remaining
+   syntax fixture assertions.
+5. Fix `editfns` number/marker coercion buckets
+   (`WRONG_TYPE_NUMBER`, `WRONG_TYPE_MARKER`).
+
+## 2026-04-29 — scan-lists comment-aware list motion
+
+**Command run:**
+
+```bash
+./ert-progress/refresh.sh
+```
+
+**Overall movement:**
+
+| Metric | Before | After |
+|--------|-------:|------:|
+| Pass   |    739 |   761 |
+| Fail   |    232 |   209 |
+| Error  |     70 |    71 |
+| Skip   |    124 |   124 |
+| Rate   |    63% |   65% |
+
+**Top bucket handled:**
+
+- The suivant syntax leverage bucket was `scan-lists`: 10 forward and 10
+  backward direct assertion failures, plus 3 `DID_NOT_SIGNAL` cases from
+  unmatched list scans inside comment fixtures.
+- `syntax-tests.el` moved from `64 pass / 36 fail / 0 err` to
+  `86 pass / 13 fail / 1 err`.
+- The direct `scan-lists forward` and `scan-lists backward` buckets are
+  gone from the global top patterns.
+- `DID_NOT_SIGNAL` dropped from 23 to 20 because the unmatched
+  `scan-lists` cases now signal `scan-error`.
+
+**Code landed:**
+
+- Added stateful buffer primitive support for `scan-lists`.
+- Implemented one-list forward and backward motion for `()`, `[]`, and
+  `{}` using Emacs-style 1-based buffer positions.
+- Reused the comment scanner from `forward-comment` so list matching
+  skips Lisp line comments, Lisp block comments, C block comments, and C
+  line comments with escaped newlines.
+- The escaped-newline check now treats CRLF fixtures as escaped when the
+  backslash appears before the `\r\n` line break.
+- Treated `{}` as list delimiters during brace-list scans instead of
+  misclassifying the opening brace as a Pascal comment.
+- Added `scan-error` signaling for unmatched lists and unsupported
+  nonzero depth/count cases.
+
+**Verification:**
+
+- `cargo test -p rele-elisp --lib`
+- `./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/syntax-tests.el`
+- `./ert-progress/refresh.sh`
+
+**Note:**
+
+- One escaped C line-comment edge remains:
+  `syntax-tests.el::syntax-br-comments-c-b54` now raises
+  `scan-error`. That is likely a comment-continuation/list boundary
+  mismatch in the lightweight scanner, not a broad registration issue.
+
+**Next leverage targets** (highest impact first; verify with refresh.sh):
+
+1. Group the remaining `DID_NOT_SIGNAL` bucket, now at 20, before
+   changing primitives; the syntax subgroup is gone.
+2. `timerp` should recognise Emacs's vector timer representation
+   (`10` process-tests errors).
+3. Implement `syntax-ppss` comment state/open-position fields used by
+   the remaining syntax fixture assertions (`8` top-pattern failures).
+4. Fix `editfns` number/marker coercion buckets
+   (`WRONG_TYPE_NUMBER`, `WRONG_TYPE_MARKER`).
+5. Investigate `syntax-br-comments-c-b54` after `syntax-ppss`; it may
+   need fuller C syntax-table awareness rather than more list scanning.
+
+## 2026-04-29 — floatfns numeric error contracts
+
+**Command run:**
+
+```bash
+./ert-progress/refresh.sh
+```
+
+**Overall movement:**
+
+| Metric | Before | After |
+|--------|-------:|------:|
+| Pass   |    761 |   770 |
+| Fail   |    209 |   201 |
+| Error  |     71 |    70 |
+| Skip   |    124 |   124 |
+| Rate   |    65% |   66% |
+
+**Top bucket handled:**
+
+- The raw top bucket was `DID_NOT_SIGNAL` at 20. Grouping showed three
+  equal largest subgroups: `floatfns`, `json`, and `lread`, each with 3.
+- This run picked the self-contained `floatfns` subgroup:
+  - `floatfns-tests-isnan`
+  - `fround-fixnum`
+  - `special-round`
+- `floatfns-tests.el` moved from `19 pass / 10 fail / 4 err` to
+  `28 pass / 2 fail / 3 err`.
+- Global `DID_NOT_SIGNAL` dropped from 20 to 17.
+
+**Code landed:**
+
+- `isnan` now requires a float and signals `wrong-type-argument` for
+  non-floats.
+- Added primitive implementations for `ffloor`, `fceiling`, `fround`,
+  and `ftruncate`; they require float arguments and return floats.
+- Removed the nil-returning Elisp stubs for those `f*` functions so the
+  primitive definitions are not shadowed during bootstrap.
+- Reworked `floor`, `ceiling`, `round`, and `truncate` to support the
+  optional divisor, zero-divisor signaling, non-finite float signaling,
+  and exact integer quotient rounding for fixnums/bignums.
+- Added local unit coverage for these numeric contracts.
+
+**Verification:**
+
+- `cargo test -p rele-elisp --lib`
+- `./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/floatfns-tests.el`
+- `./ert-progress/refresh.sh`
+
+**Next leverage targets** (highest impact first; verify with refresh.sh):
+
+1. Group the remaining `DID_NOT_SIGNAL` bucket, now at 17. Largest
+   coherent subgroups before this run were `json` and `lread` at 3 each.
+2. `timerp` should recognise Emacs's vector timer representation
+   (`10` process-tests errors).
+3. Implement `syntax-ppss` comment state/open-position fields used by
+   the remaining syntax fixture assertions (`8` top-pattern failures).
+4. Fix `editfns` marker and number coercion buckets
+   (`WRONG_TYPE_MARKER`, `WRONG_TYPE_NUMBER`).
+5. Floatfns remaining failures are now semantic rather than
+   no-signal: `bignum-expt`, `log`, `bignum-to-float`, and huge
+   `big-round` conversion.
+
+## 2026-04-29 — lread reader signal contracts
+
+**Command run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh
+```
+
+**Overall movement:**
+
+| Metric | Before | After |
+|--------|-------:|------:|
+| Pass   |    772 |   775 |
+| Fail   |    199 |   196 |
+| Error  |     70 |    70 |
+| Skip   |    124 |   124 |
+| Rate   |    66% |   66% |
+
+**Top bucket handled:**
+
+- The raw top bucket was `DID_NOT_SIGNAL` at 16. The largest coherent
+  subgroup was `lread-tests.el` at 3:
+  - `lread-test-bug70702`
+  - `lread-circular-hash`
+  - `lread-char-escape-eof`
+- `lread-tests.el` moved from `39 pass / 15 fail / 4 err` to
+  `42 pass / 12 fail / 4 err`.
+- Global `DID_NOT_SIGNAL` dropped from 16 to 13.
+
+**Code landed:**
+
+- `read` now accepts buffer objects, reads from the current buffer point,
+  advances point after successful reads, and signals
+  `(invalid-read-syntax "#<" 1 2)` for unreadable `#<...>` objects.
+- Hash-table record literals now reject circular shared-structure
+  references while preserving existing non-circular `#N=` / `#N#` reads.
+- Character literal parsing now signals on unfinished modifier, Unicode,
+  and named-character escapes such as `?\\M`, `?\\u234`, and `?\\N`.
+- The refresh driver now honours `CARGO_TARGET_DIR`, needed here because
+  the default symlinked `target/release` was readable but not writable.
+- Added focused reader regression coverage for the three fixed contracts.
+
+**Verification:**
+
+- `cargo test -p rele-elisp --lib`
+- exact `reader_edges` tests for circular hash-table data, unfinished
+  char escapes, and buffer `#<...>` reads
+- `CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/lread-tests.el`
+- `CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh`
+
+**Note:**
+
+- A full `cargo test -p rele-elisp --test reader_edges` still hits an
+  existing unrelated expectation:
+  `test_char_named_unicode_unknown_yields_null` expects unknown
+  `?\\N{...}` names to parse as NUL, while the current reader signals.
+
+**Next leverage targets** (highest impact first; verify with refresh.sh):
+
+1. Group the remaining `DID_NOT_SIGNAL` bucket, now at 13. Current
+   two-test subgroups are `charset`, `coding`, and `json`.
+2. `timerp` should recognise Emacs's vector timer representation
+   (`10` process-tests errors).
+3. Implement `syntax-ppss` comment state/open-position fields used by
+   the remaining syntax fixture assertions (`8` top-pattern failures).
+4. Fix `editfns` marker and number coercion buckets
+   (`WRONG_TYPE_MARKER`, `WRONG_TYPE_NUMBER`).
+5. `call-interactively` still has `WRONG_N_ARGS` and incomplete input
+   signaling gaps in `callint-tests.el`.
+
+## 2026-04-29 — JSON no-signal cleanup
+
+**Command run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh
+```
+
+**Overall movement:**
+
+| Metric | Before | After |
+|--------|-------:|------:|
+| Pass   |    775 |   776 |
+| Fail   |    196 |   195 |
+| Error  |     70 |    70 |
+| Skip   |    124 |   124 |
+| Rate   |    66% |   66% |
+
+**Top bucket handled:**
+
+- The raw top bucket was still `DID_NOT_SIGNAL`, now at 13. This run
+  picked the self-contained JSON subgroup:
+  - `json-serialize/object`
+  - `json-parse-string/invalid-unicode`
+- `json-tests.el` moved from `16 pass / 7 fail / 2 err` to
+  `17 pass / 6 fail / 2 err`.
+- Global `DID_NOT_SIGNAL` dropped from 13 to 11.
+
+**Code landed:**
+
+- JSON parsing now rejects replacement characters as
+  `json-utf8-decode-error`, covering invalid Unicode escape inputs that
+  the reader represents as U+FFFD.
+- `#s(hash-table ...)` reader records now produce real hash-table
+  objects, including `test` and alternating `data` entries.
+- Active `#N#` circular references now produce a non-cyclic internal
+  sentinel instead of `nil`; this lets serializers signal on circular
+  input without creating Rust-side cons cycles that overflow stack in
+  existing list walkers.
+- JSON alist/plist serialization now guards repeated cons traversal and
+  reports `circular-list` if a real cycle reaches that layer.
+- Added JSON unit coverage for invalid Unicode, circular shared-list
+  inputs, reader hash-table records, and nested object serialization.
+
+**Verification:**
+
+- `cargo test -p rele-elisp --lib`
+- `cargo test -p rele-elisp primitives::core::json::tests --lib`
+- `cargo test -p rele-elisp --test reader_edges test_hash_table_literal -- --exact`
+- `CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/json-tests.el`
+- `CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/lread-tests.el`
+- `CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh`
+
+**Note:**
+
+- An attempted real cyclic-cons implementation fixed the JSON signal
+  shape but made `lread-tests.el` overflow the stack. The landed version
+  deliberately uses a sentinel until all list walkers have cycle guards.
+- `json-serialize/object` now reaches a later semantic assertion about
+  nested object serialization; it is no longer part of `DID_NOT_SIGNAL`.
+
+**Next leverage targets** (highest impact first; verify with refresh.sh):
+
+1. Group the remaining `DID_NOT_SIGNAL` bucket, now at 11. The largest
+   current subgroups are `charset` and `coding`, at 2 tests each.
+2. `timerp` should recognise Emacs's vector timer representation
+   (`10` process-tests errors).
+3. Implement `syntax-ppss` comment state/open-position fields used by
+   the remaining syntax fixture assertions (`8` top-pattern failures).
+4. Fix `editfns` marker and number coercion buckets
+   (`WRONG_TYPE_MARKER`, `WRONG_TYPE_NUMBER`).
+5. `json-serialize/object` still has a nested object semantic mismatch
+   after the no-signal assertions now pass.

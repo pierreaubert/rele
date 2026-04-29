@@ -39,6 +39,36 @@ fn page_lines_for_height(viewport_px: f32) -> usize {
     }
 }
 
+fn emacs_mode_key_string(key: &str, ctrl: bool, alt: bool, cmd: bool) -> Option<String> {
+    if cmd {
+        return None;
+    }
+    let base = match key {
+        "enter" => "RET",
+        "tab" => "TAB",
+        "escape" => "ESC",
+        "space" => "SPC",
+        "up" => "<up>",
+        "down" => "<down>",
+        "left" => "<left>",
+        "right" => "<right>",
+        "backspace" => "DEL",
+        "delete" => "<delete>",
+        single if single.chars().count() == 1 => single,
+        _ => return None,
+    };
+
+    let mut out = String::new();
+    if alt {
+        out.push_str("M-");
+    }
+    if ctrl {
+        out.push_str("C-");
+    }
+    out.push_str(base);
+    Some(out)
+}
+
 /// Multi-line source editor pane with syntax highlighting, keyboard input,
 /// line numbers, theme support, and mouse selection.
 pub struct EditorPane {
@@ -635,29 +665,132 @@ impl Render for EditorPane {
                 }
 
                 // ---- 2. Dired key map (when current buffer is dired) ----
-                let is_dired = state_for_keys.read(cx).current_buffer_kind
-                    == crate::document::BufferKind::Dired;
+                let (is_dired, has_legacy_dired_state) = {
+                    let state = state_for_keys.read(cx);
+                    (
+                        state.current_buffer_kind == crate::document::BufferKind::Dired,
+                        state.dired_states.contains_key(&state.current_buffer_id),
+                    )
+                };
                 if is_dired {
-                    match key {
-                        "n" | "down" => state_for_keys.update(cx, |s, _| s.dired_next()),
-                        "p" | "up" => state_for_keys.update(cx, |s, _| s.dired_prev()),
-                        "enter" => state_for_keys.update(cx, |s, _| s.dired_open_selected()),
-                        "d" => state_for_keys.update(cx, |s, _| s.dired_mark_delete()),
-                        "u" => state_for_keys.update(cx, |s, _| s.dired_unmark()),
-                        "x" => state_for_keys.update(cx, |s, _| s.dired_execute_marks()),
-                        "g" if !ctrl && !cmd && !alt => {
-                            state_for_keys.update(cx, |s, _| {
-                                let _ = s.dired_refresh();
-                            });
-                        }
-                        "^" => state_for_keys.update(cx, |s, _| s.dired_up_directory()),
-                        "q" => state_for_keys.update(cx, |s, _| {
-                            s.kill_current_buffer();
-                        }),
-                        _ => {} // ignore other keys in dired
+                    let plain = !ctrl && !cmd && !alt;
+                    let mut handled = false;
+
+                    if has_legacy_dired_state {
+                        handled = match key {
+                            "n" | "down" if plain => {
+                                state_for_keys.update(cx, |s, _| s.dired_next());
+                                true
+                            }
+                            "p" | "up" if plain => {
+                                state_for_keys.update(cx, |s, _| s.dired_prev());
+                                true
+                            }
+                            "enter" if plain => {
+                                state_for_keys.update(cx, |s, _| s.dired_open_selected());
+                                true
+                            }
+                            "d" if plain => {
+                                state_for_keys.update(cx, |s, _| s.dired_mark_delete());
+                                true
+                            }
+                            "u" if plain => {
+                                state_for_keys.update(cx, |s, _| s.dired_unmark());
+                                true
+                            }
+                            "x" if plain => {
+                                state_for_keys.update(cx, |s, _| s.dired_execute_marks());
+                                true
+                            }
+                            "g" if plain => {
+                                state_for_keys.update(cx, |s, _| {
+                                    let _ = s.dired_refresh();
+                                });
+                                true
+                            }
+                            "^" if plain => {
+                                state_for_keys.update(cx, |s, _| s.dired_up_directory());
+                                true
+                            }
+                            "q" if plain => {
+                                state_for_keys.update(cx, |s, _| {
+                                    s.kill_current_buffer();
+                                });
+                                true
+                            }
+                            _ => false,
+                        };
                     }
-                    window.refresh();
-                    return;
+
+                    if !handled && let Some(key_str) = emacs_mode_key_string(key, ctrl, alt, cmd) {
+                        handled = state_for_keys.update(cx, |s, _| {
+                            let Some(mode) = s.current_major_mode.clone() else {
+                                return false;
+                            };
+                            let Some(command) = rele_elisp::lookup_mode_key(
+                                s.lisp_host.interpreter(),
+                                &mode,
+                                &key_str,
+                            ) else {
+                                return false;
+                            };
+                            s.run_command_direct(&command, rele_server::CommandArgs::default());
+                            true
+                        });
+                    }
+
+                    if !handled {
+                        handled = match key {
+                            "n" | "down" if plain => {
+                                state_for_keys.update(cx, |s, _| {
+                                    s.run_command_direct(
+                                        "next-line",
+                                        rele_server::CommandArgs::default(),
+                                    );
+                                });
+                                true
+                            }
+                            "p" | "up" if plain => {
+                                state_for_keys.update(cx, |s, _| {
+                                    s.run_command_direct(
+                                        "previous-line",
+                                        rele_server::CommandArgs::default(),
+                                    );
+                                });
+                                true
+                            }
+                            "enter" if plain => {
+                                state_for_keys.update(cx, |s, _| {
+                                    s.dired_open_entry_at_point();
+                                });
+                                true
+                            }
+                            "g" if plain => {
+                                state_for_keys.update(cx, |s, _| {
+                                    s.dired_refresh_current_buffer();
+                                });
+                                true
+                            }
+                            "^" if plain => {
+                                state_for_keys.update(cx, |s, _| {
+                                    s.dired_up_current_directory();
+                                });
+                                true
+                            }
+                            "q" if plain => {
+                                state_for_keys.update(cx, |s, _| {
+                                    s.kill_current_buffer();
+                                });
+                                true
+                            }
+                            _ => false,
+                        };
+                    }
+
+                    if handled {
+                        window.refresh();
+                        return;
+                    }
                 }
 
                 // ---- 3. Universal arg digit accumulation ----

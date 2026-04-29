@@ -30,6 +30,12 @@
   "Move cursor up N lines, preserving column."
   (forward-line (- (or n 1))))
 
+;; ---- Dired movement ----
+
+(defvar dired-mode-map (make-sparse-keymap))
+(define-key dired-mode-map (kbd "n") 'next-line)
+(define-key dired-mode-map (kbd "p") 'previous-line)
+
 ;; ---- Editing ----
 
 (defun newline (&optional n)
@@ -312,7 +318,9 @@ elisp layer while the host owns buffer storage and rendering."
     (erase-buffer)
     (insert "  " dir ":\n")
     (insert-directory dir "-al" nil t)
+    (editor--set-current-buffer-major-mode 'dired-mode)
     (goto-char (point-min))
+    (forward-line 2)
     buffer-name))
 
 (provide 'rele-tui-commands)
