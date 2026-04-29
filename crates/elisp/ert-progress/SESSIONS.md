@@ -820,3 +820,105 @@ CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.
 3. Bind/editor-model `select-active-regions` and related mark-active
    variables; the rectangle work added buffer mark primitives but not
    the higher-level selection policy semantics.
+
+## 2026-04-29 — Coding-system DID_NOT_SIGNAL contracts
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib test_coding_system_contracts_signal_unknown_names -- --nocapture
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/coding-tests.el
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo check -p rele-elisp
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh
+```
+
+**Movement:**
+
+- Global `DID_NOT_SIGNAL` top pattern moved from `11` to `9`.
+- `coding-tests.el` is now `11` pass, `16` fail, `0` err, `1` skip
+  (`39%`).
+- The coding-system should-error cases for bogus read/write coding
+  variables and unknown `check-coding-system` names now signal
+  `coding-system-error`.
+
+**Code landed:**
+
+- `check-coding-system` now validates names instead of returning its
+  argument unconditionally.
+- `coding-system-p` and file I/O coding variable validation now accept
+  `nil`, built-in coding systems, aliases, and Emacs EOL-suffixed names
+  such as `raw-text-unix` and `utf-8-with-signature-unix`.
+- `coding-system-for-write` is initialized alongside
+  `coding-system-for-read`, and both are treated as special variables so
+  dynamic `let` bindings affect file primitives.
+
+**Refresh snapshot:**
+
+- Total: `778` pass, `196` fail, `67` err, `124` skip (`67%`).
+- Top patterns now: vector `timerp` (`10` process errors),
+  `DID_NOT_SIGNAL` (`9`), syntax `open-pos` assertions (`8`),
+  `WRONG_N_ARGS` (`6`), and `select-active-regions` void var (`5`).
+
+**Next leverage targets:**
+
+1. Implement the vector timer representation expected by `timerp`; it
+   is now the largest top pattern.
+2. Continue reducing the remaining `DID_NOT_SIGNAL` cases in
+   callint/casefiddle/charset/keyboard/keymap/minibuf/process/xfaces.
+3. Address the `WRONG_N_ARGS` call-interactively tests, which likely
+   share argument decoding behavior with the remaining callint signal
+   failures.
+
+## 2026-04-29 — Clear remaining src DID_NOT_SIGNAL bucket
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/callint-tests.el /Volumes/home_ext1/Src/emacs/test/src/casefiddle-tests.el /Volumes/home_ext1/Src/emacs/test/src/charset-tests.el /Volumes/home_ext1/Src/emacs/test/src/keyboard-tests.el /Volumes/home_ext1/Src/emacs/test/src/keymap-tests.el /Volumes/home_ext1/Src/emacs/test/src/minibuf-tests.el /Volumes/home_ext1/Src/emacs/test/src/process-tests.el /Volumes/home_ext1/Src/emacs/test/src/xfaces-tests.el
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo check -p rele-elisp
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib test_remaining_did_not_signal_contracts -- --nocapture
+```
+
+**Movement:**
+
+- Global `DID_NOT_SIGNAL` moved from `9` to `0`; it is no longer a top
+  failure pattern.
+- Total source baseline moved from `778` pass / `196` fail to `786`
+  pass / `187` fail, with errors unchanged at `67`.
+- The remaining source top pattern is now vector `timerp`
+  wrong-type-argument in `process-tests.el` (`10` cases).
+
+**Code landed:**
+
+- Replaced permissive no-op paths with narrow signal contracts for
+  invalid interactive specs, inhibited reads, noncontiguous region
+  extraction validation, charset arity/unify validation, network lookup
+  hints, duplicate `defvar-keymap`, and face inheritance cycles.
+- Bootstrap now binds affected primitives to their real names instead
+  of generic `ignore`, so the stateful validation layer can observe
+  lexical variables such as `inhibit-interaction` and
+  `region-extract-function`.
+- `define-keymap` now reports duplicate keys through an overridden
+  `message` function when present, while `defvar-keymap` signals.
+- Added `test_remaining_did_not_signal_contracts` to keep the cleared
+  bucket from silently regressing.
+
+**Refresh snapshot:**
+
+- Total: `786` pass, `187` fail, `67` err, `124` skip (`67%`).
+- Top patterns now: vector `timerp` (`10` process errors),
+  syntax `open-pos` assertions (`8`), `WRONG_N_ARGS` (`6`),
+  `select-active-regions` void var (`5`), and undo `user-error`
+  cases (`4`).
+
+**Next leverage targets:**
+
+1. Implement vector-backed timer recognition for `timerp`; this is now
+   the largest single pattern.
+2. Improve `call-interactively` argument decoding to address the
+   remaining `WRONG_N_ARGS` callint cases.
+3. Model `select-active-regions` / mark-active selection policy before
+   returning to undo tests.

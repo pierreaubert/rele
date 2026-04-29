@@ -299,6 +299,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     for name in alias_to_ignore {
         interp.define(name, LispObject::primitive("ignore"));
     }
+    interp.define("unify-charset", LispObject::primitive("unify-charset"));
 
     // Aliases that map to real primitives
     interp.define("position-symbol", LispObject::primitive("position-symbol"));
@@ -490,6 +491,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "read-key",
         "read-char",
         "read-char-exclusive",
+        "read-event",
         "network-lookup-address-info",
         "font-spec",
         "font-family-list",
@@ -549,6 +551,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "completing-read",
         "read-from-minibuffer",
         "read-string",
+        "read-no-blanks-input",
         "read-number",
         "read-buffer",
         "read-file-name",

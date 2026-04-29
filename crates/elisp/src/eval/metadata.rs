@@ -48,11 +48,32 @@ fn builtin_coding_system(name: &str) -> bool {
             | "utf-8-unix"
             | "utf-8-dos"
             | "utf-8-mac"
+            | "utf-8-with-signature"
+            | "us-ascii"
+            | "ascii"
+            | "prefer-utf-8"
+            | "prefer-utf-8-unix"
+            | "iso-latin-1"
+            | "iso-8859-1"
+            | "latin-1"
             | "undecided"
+            | "undecided-unix"
+            | "undecided-dos"
+            | "undecided-mac"
             | "raw-text"
             | "no-conversion"
+            | "binary"
             | "emacs-mule"
     )
+}
+
+fn strip_coding_eol_suffix(name: &str) -> &str {
+    for suffix in ["-unix", "-dos", "-mac"] {
+        if let Some(base) = name.strip_suffix(suffix) {
+            return base;
+        }
+    }
+    name
 }
 
 fn resolve_coding_name(state: &InterpreterState, obj: &LispObject) -> Option<String> {
@@ -62,10 +83,27 @@ fn resolve_coding_name(state: &InterpreterState, obj: &LispObject) -> Option<Str
 }
 
 fn coding_known(state: &InterpreterState, obj: &LispObject) -> bool {
+    if obj.is_nil() {
+        return true;
+    }
     let Some(name) = resolve_coding_name(state, obj) else {
         return false;
     };
-    builtin_coding_system(&name) || state.coding_systems.read().contains_key(&name)
+    let base = strip_coding_eol_suffix(&name);
+    builtin_coding_system(base)
+        || state.coding_systems.read().contains_key(&name)
+        || state.coding_systems.read().contains_key(base)
+}
+
+fn check_coding_system(state: &InterpreterState, obj: LispObject) -> ElispResult<LispObject> {
+    if obj.is_nil() || coding_known(state, &obj) {
+        Ok(obj)
+    } else {
+        Err(ElispError::Signal(Box::new(crate::error::SignalData {
+            symbol: LispObject::symbol("coding-system-error"),
+            data: LispObject::cons(obj, LispObject::nil()),
+        })))
+    }
 }
 
 fn coding_system_list(state: &InterpreterState) -> Vec<LispObject> {
@@ -361,7 +399,10 @@ pub(super) fn call_metadata_primitive(
         "coding-system-p" => Ok(LispObject::from(
             values.first().is_some_and(|obj| coding_known(state, obj)),
         )),
-        "check-coding-system" => Ok(values.first().cloned().unwrap_or_else(LispObject::nil)),
+        "check-coding-system" => match values.first() {
+            Some(value) => check_coding_system(state, value.clone()),
+            None => Err(ElispError::WrongNumberOfArguments),
+        },
         "coding-system-list" => Ok(list_obj(coding_system_list(state))),
         "coding-system-plist" => Ok(values
             .first()

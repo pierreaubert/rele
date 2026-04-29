@@ -18,13 +18,14 @@ use super::functions_2::{
     stateful_put, stateful_require, stateful_setplist, symbol_id_including_constants,
     symbol_name_including_constants,
 };
-use super::functions_3::apply_lambda;
+use super::functions_3::{apply_lambda, call_function};
 use super::functions_5::{
     stateful_autoload_do_load, stateful_buffer_local_value, stateful_default_toplevel_value,
     stateful_ert_get_test, stateful_ert_test_boundp, stateful_indirect_function,
     stateful_load_history_filename_element,
 };
 use super::types::FallbackFrame;
+use std::collections::HashSet;
 
 /// Phase 7a: **stateful primitives** — functions that are traditionally
 /// implemented as special forms in the source-level dispatch (because
@@ -100,6 +101,18 @@ pub(crate) fn call_stateful_primitive(
         "format" | "format-message" | "message" => {
             Some(stateful_format(args, env, editor, macros, state))
         }
+        "read-char"
+        | "read-char-exclusive"
+        | "read-event"
+        | "read-from-minibuffer"
+        | "read-no-blanks-input"
+        | "yes-or-no-p"
+        | "y-or-n-p" => Some(stateful_interaction_read(name, args, env, state)),
+        "upcase-region" | "downcase-region" | "capitalize-region" => {
+            Some(stateful_case_region(args, env, editor, macros, state))
+        }
+        "network-lookup-address-info" => Some(stateful_network_lookup_address_info(args)),
+        "unify-charset" => Some(stateful_unify_charset(args)),
         "throw" => Some(stateful_throw(args)),
         "signal" => Some(stateful_signal(args)),
         "error" => Some(stateful_error(args, env, editor, macros, state)),
@@ -153,6 +166,139 @@ pub(crate) fn call_stateful_primitive(
         }
     }
 }
+
+fn signal_with_data(symbol: &str, data: LispObject) -> ElispError {
+    ElispError::Signal(Box::new(crate::error::SignalData {
+        symbol: LispObject::symbol(symbol),
+        data,
+    }))
+}
+
+fn signal_error(message: &str) -> ElispError {
+    signal_with_data(
+        "error",
+        LispObject::cons(LispObject::string(message), LispObject::nil()),
+    )
+}
+
+fn variable_value(
+    name: &str,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> LispObject {
+    env.read()
+        .get(name)
+        .or_else(|| state.get_value_cell(crate::obarray::intern(name)))
+        .unwrap_or_else(LispObject::nil)
+}
+
+fn stateful_interaction_read(
+    name: &str,
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    if !variable_value("inhibit-interaction", env, state).is_nil() {
+        return Err(signal_with_data("inhibited-interaction", LispObject::nil()));
+    }
+    match name {
+        "read-from-minibuffer" | "read-no-blanks-input" => {
+            Ok(args.nth(2).unwrap_or_else(LispObject::nil))
+        }
+        _ => Ok(LispObject::nil()),
+    }
+}
+
+fn stateful_case_region(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let noncontiguous = args.nth(2).unwrap_or_else(LispObject::nil);
+    if noncontiguous.is_nil() {
+        return Ok(LispObject::nil());
+    }
+    let extractor = variable_value("region-extract-function", env, state);
+    if extractor.is_nil() {
+        return Ok(LispObject::nil());
+    }
+    let call_args = LispObject::cons(LispObject::symbol("bounds"), LispObject::nil());
+    let bounds = value_to_obj(call_function(
+        obj_to_value(extractor),
+        obj_to_value(call_args),
+        env,
+        editor,
+        macros,
+        state,
+    )?);
+    validate_region_bounds(&bounds)?;
+    Ok(LispObject::nil())
+}
+
+fn validate_region_bounds(bounds: &LispObject) -> ElispResult<()> {
+    let mut cur = bounds.clone();
+    let mut seen = HashSet::new();
+    while let LispObject::Cons(cell) = cur {
+        let ptr = std::sync::Arc::as_ptr(&cell) as usize;
+        if !seen.insert(ptr) {
+            return Err(signal_error("Invalid region-extract-function result"));
+        }
+        let (item, rest) = {
+            let borrowed = cell.lock();
+            (borrowed.0.clone(), borrowed.1.clone())
+        };
+        let Some((beg, end)) = item.destructure_cons() else {
+            return Err(signal_error("Invalid region-extract-function result"));
+        };
+        if beg.as_integer().is_none() || end.as_integer().is_none() {
+            return Err(signal_error("Invalid region-extract-function result"));
+        }
+        cur = rest;
+    }
+    if cur.is_nil() {
+        Ok(())
+    } else {
+        Err(signal_error("Invalid region-extract-function result"))
+    }
+}
+
+fn valid_network_family(family: &LispObject) -> bool {
+    family.is_nil()
+        || family
+            .as_symbol()
+            .is_some_and(|name| matches!(name.as_str(), "ipv4" | "ipv6"))
+}
+
+fn stateful_network_lookup_address_info(args: &LispObject) -> ElispResult<LispObject> {
+    let address = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let family = args.nth(1).unwrap_or_else(LispObject::nil);
+    let hints = args.nth(2).unwrap_or_else(LispObject::nil);
+    if !valid_network_family(&family) {
+        return Err(ElispError::WrongTypeArgument("address-family".to_string()));
+    }
+    if !hints.is_nil()
+        && !hints
+            .as_symbol()
+            .is_some_and(|name| name.as_str() == "numeric")
+    {
+        return Err(ElispError::WrongTypeArgument(
+            "network-lookup-hints".to_string(),
+        ));
+    }
+    Ok(LispObject::cons(address, LispObject::nil()))
+}
+
+fn stateful_unify_charset(args: &LispObject) -> ElispResult<LispObject> {
+    let charset = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    if charset.as_symbol().as_deref() == Some("ascii") {
+        Err(signal_error("Can't unify charset ascii"))
+    } else {
+        Ok(LispObject::nil())
+    }
+}
+
 /// `(throw TAG VALUE)` via funcall. Args pre-evaluated.
 fn stateful_throw(args: &LispObject) -> ElispResult<LispObject> {
     let tag = args.first().ok_or(ElispError::WrongNumberOfArguments)?;

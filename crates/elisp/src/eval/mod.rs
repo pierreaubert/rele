@@ -36,6 +36,119 @@ pub(crate) type SpecialVars = Arc<RwLock<HashSet<SymbolId>>>;
 /// Autoload table: maps function names to the file that defines them.
 pub(crate) type AutoloadTable = Arc<RwLock<HashMap<String, String>>>;
 
+fn signal_error_data(items: impl IntoIterator<Item = LispObject>) -> ElispError {
+    let mut data = LispObject::nil();
+    let mut values: Vec<_> = items.into_iter().collect();
+    while let Some(item) = values.pop() {
+        data = LispObject::cons(item, data);
+    }
+    ElispError::Signal(Box::new(crate::error::SignalData {
+        symbol: LispObject::symbol("error"),
+        data,
+    }))
+}
+
+fn interactive_spec_form(func: &LispObject) -> Option<LispObject> {
+    let (head, rest) = func.destructure_cons()?;
+    match head.as_symbol().as_deref()? {
+        "lambda" => rest.rest()?.first(),
+        "closure" => {
+            let after_env = rest.rest()?;
+            let after_params = after_env.rest()?;
+            after_params.first()
+        }
+        _ => None,
+    }
+}
+
+fn interactive_spec_string(func: &LispObject) -> Option<String> {
+    let form = interactive_spec_form(func)?;
+    let (head, rest) = form.destructure_cons()?;
+    if head.as_symbol().as_deref()? != "interactive" {
+        return None;
+    }
+    rest.first()?.as_string().cloned()
+}
+
+fn validate_interactive_spec(func: &LispObject) -> ElispResult<()> {
+    let Some(spec) = interactive_spec_string(func) else {
+        return Ok(());
+    };
+    let mut command_position = true;
+    for ch in spec.chars() {
+        if command_position {
+            if ch == '\n' {
+                continue;
+            }
+            if !ch.is_ascii() {
+                let raw = ch as u32;
+                let code = if (0xE000..=0xE0FF).contains(&raw) {
+                    raw - 0xE000
+                } else {
+                    raw
+                };
+                let display = char::from_u32(code).unwrap_or(ch);
+                return Err(signal_error_data([LispObject::string(&format!(
+                    "Invalid control letter `{display}' (#o{code:o}, #x{code:04x}) in interactive calling string"
+                ))]));
+            }
+            command_position = false;
+        }
+        if ch == '\n' {
+            command_position = true;
+        }
+    }
+    Ok(())
+}
+
+fn face_inherit_prop() -> SymbolId {
+    obarray::intern("rele--face-inherit")
+}
+
+fn face_inherit_target(state: &InterpreterState, face: SymbolId) -> Option<SymbolId> {
+    state.get_plist(face, face_inherit_prop()).as_symbol_id()
+}
+
+fn face_inheritance_reaches(state: &InterpreterState, start: SymbolId, target: SymbolId) -> bool {
+    let mut current = start;
+    let mut seen = HashSet::new();
+    while seen.insert(current) {
+        if current == target {
+            return true;
+        }
+        let Some(next) = face_inherit_target(state, current) else {
+            return false;
+        };
+        current = next;
+    }
+    false
+}
+
+fn update_face_inherit_attribute(
+    state: &InterpreterState,
+    values: &[LispObject],
+) -> ElispResult<()> {
+    let Some(face) = values.first().and_then(LispObject::as_symbol_id) else {
+        return Ok(());
+    };
+    let mut i = 2usize;
+    while i + 1 < values.len() {
+        if values[i].as_symbol().as_deref() == Some(":inherit")
+            && let Some(parent) = values[i + 1].as_symbol_id()
+        {
+            if face_inheritance_reaches(state, parent, face) {
+                return Err(signal_error_data([
+                    LispObject::string("Face inheritance results in inheritance cycle"),
+                    LispObject::Symbol(parent),
+                ]));
+            }
+            state.put_plist(face, face_inherit_prop(), LispObject::Symbol(parent));
+        }
+        i += 2;
+    }
+    Ok(())
+}
+
 // Type definitions and trait impls
 pub mod interpreter_traits;
 pub mod interpreterstate_traits;
@@ -3208,8 +3321,10 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?;
+                    let func_obj = value_to_obj(func);
+                    validate_interactive_spec(&func_obj)?;
                     functions::call_function(
-                        func,
+                        obj_to_value(func_obj),
                         obj_to_value(LispObject::nil()),
                         env,
                         editor,
@@ -6205,6 +6320,9 @@ pub(super) fn eval_inner(
                     Ok(Value::nil())
                 }
                 "define-charset-internal" => {
+                    if cdr.is_nil() {
+                        return Err(ElispError::WrongNumberOfArguments);
+                    }
                     let mut cur = cdr.clone();
                     while let Some((arg, rest)) = cur.destructure_cons() {
                         let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
@@ -6314,10 +6432,18 @@ pub(super) fn eval_inner(
                 "face-list" => Ok(Value::nil()),
                 "set-face-attribute" | "internal-set-lisp-face-attribute" | "face-spec-set" => {
                     let mut cur = cdr.clone();
+                    let mut values = Vec::new();
                     while let Some((arg, rest)) = cur.destructure_cons() {
-                        let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
+                        values.push(value_to_obj(eval(
+                            obj_to_value(arg),
+                            env,
+                            editor,
+                            macros,
+                            state,
+                        )?));
                         cur = rest;
                     }
+                    update_face_inherit_attribute(state, &values)?;
                     Ok(Value::nil())
                 }
                 "face-attribute"

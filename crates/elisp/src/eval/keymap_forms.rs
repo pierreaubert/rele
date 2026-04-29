@@ -9,6 +9,12 @@ use std::sync::Arc;
 const CURRENT_GLOBAL_MAP_SYMBOL: &str = "rele--current-global-map";
 const CURRENT_LOCAL_MAP_SYMBOL: &str = "rele--current-local-map";
 
+#[derive(Clone, Copy)]
+enum DuplicatePolicy {
+    Error,
+    Warn,
+}
+
 pub(super) fn eval_keymap_form(
     name: &str,
     args: &LispObject,
@@ -403,7 +409,15 @@ fn eval_define_keymap(
         "make-sparse-keymap",
         LispObject::nil(),
     )?);
-    apply_keymap_pairs(&keymap, args, env, editor, macros, state)?;
+    apply_keymap_pairs(
+        &keymap,
+        args,
+        env,
+        editor,
+        macros,
+        state,
+        DuplicatePolicy::Warn,
+    )?;
     Ok(obj_to_value(keymap))
 }
 
@@ -423,7 +437,15 @@ fn eval_defvar_keymap(
         LispObject::nil(),
     )?);
     let rest = args.rest().unwrap_or_else(LispObject::nil);
-    apply_keymap_pairs(&keymap, &rest, env, editor, macros, state)?;
+    apply_keymap_pairs(
+        &keymap,
+        &rest,
+        env,
+        editor,
+        macros,
+        state,
+        DuplicatePolicy::Error,
+    )?;
     env.write().define_id(id, keymap.clone());
     state.set_value_cell(id, keymap);
     Ok(obj_to_value(name))
@@ -436,8 +458,10 @@ fn apply_keymap_pairs(
     editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
     macros: &MacroTable,
     state: &InterpreterState,
+    duplicate_policy: DuplicatePolicy,
 ) -> ElispResult<()> {
     let mut cur = args.clone();
+    let mut seen_keys: Vec<LispObject> = Vec::new();
     while let Some((key_or_kw, rest)) = cur.destructure_cons() {
         if let Some(keyword) = key_or_kw.as_symbol().filter(|s| s.starts_with(':')) {
             let Some((value_form, next)) = rest.destructure_cons() else {
@@ -460,10 +484,42 @@ fn apply_keymap_pairs(
         let Some((def_form, next)) = rest.destructure_cons() else {
             break;
         };
+        let canonical_key = crate::primitives::core::keymaps::canonical_key_object(&key_or_kw);
+        if seen_keys.iter().any(|seen| seen == &canonical_key) {
+            match duplicate_policy {
+                DuplicatePolicy::Error => {
+                    return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                        symbol: LispObject::symbol("error"),
+                        data: LispObject::cons(
+                            LispObject::string("duplicate key definition"),
+                            LispObject::nil(),
+                        ),
+                    })));
+                }
+                DuplicatePolicy::Warn => {
+                    let message_args = LispObject::cons(
+                        LispObject::string("duplicate key definition"),
+                        LispObject::nil(),
+                    );
+                    if let Some(message_fn) = env.read().get_function("message") {
+                        let _ = super::functions::call_function(
+                            obj_to_value(message_fn),
+                            obj_to_value(message_args),
+                            env,
+                            editor,
+                            macros,
+                            state,
+                        )?;
+                    }
+                }
+            }
+        } else {
+            seen_keys.push(canonical_key.clone());
+        }
         let def = value_to_obj(eval(obj_to_value(def_form), env, editor, macros, state)?);
         let primitive_args = LispObject::cons(
             keymap.clone(),
-            LispObject::cons(key_or_kw, LispObject::cons(def, LispObject::nil())),
+            LispObject::cons(canonical_key, LispObject::cons(def, LispObject::nil())),
         );
         crate::primitives::call_primitive("define-key", &primitive_args)?;
         cur = next;

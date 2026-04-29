@@ -11,6 +11,83 @@ use crate::buffer;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 
+fn builtin_coding_system(name: &str) -> bool {
+    matches!(
+        name,
+        "utf-8"
+            | "utf-8-unix"
+            | "utf-8-dos"
+            | "utf-8-mac"
+            | "utf-8-with-signature"
+            | "us-ascii"
+            | "ascii"
+            | "prefer-utf-8"
+            | "prefer-utf-8-unix"
+            | "iso-latin-1"
+            | "iso-8859-1"
+            | "latin-1"
+            | "undecided"
+            | "undecided-unix"
+            | "undecided-dos"
+            | "undecided-mac"
+            | "raw-text"
+            | "no-conversion"
+            | "binary"
+            | "emacs-mule"
+    )
+}
+
+fn strip_coding_eol_suffix(name: &str) -> &str {
+    for suffix in ["-unix", "-dos", "-mac"] {
+        if let Some(base) = name.strip_suffix(suffix) {
+            return base;
+        }
+    }
+    name
+}
+
+fn coding_name(obj: &LispObject) -> Option<String> {
+    obj.as_symbol()
+        .or_else(|| obj.as_string().map(ToString::to_string))
+}
+
+fn coding_system_known(state: &crate::eval::InterpreterState, obj: &LispObject) -> bool {
+    if obj.is_nil() {
+        return true;
+    }
+    let Some(name) = coding_name(obj) else {
+        return false;
+    };
+    let aliases = state.coding_aliases.read();
+    let resolved = aliases.get(&name).map(String::as_str).unwrap_or(&name);
+    let base = strip_coding_eol_suffix(resolved);
+    builtin_coding_system(base)
+        || state.coding_systems.read().contains_key(resolved)
+        || state.coding_systems.read().contains_key(base)
+}
+
+fn coding_system_error(obj: LispObject) -> ElispError {
+    ElispError::Signal(Box::new(crate::error::SignalData {
+        symbol: LispObject::symbol("coding-system-error"),
+        data: LispObject::cons(obj, LispObject::nil()),
+    }))
+}
+
+fn validate_coding_variable(state: &crate::eval::InterpreterState, name: &str) -> ElispResult<()> {
+    let id = crate::obarray::intern(name);
+    let value = state
+        .global_env
+        .read()
+        .get_id(id)
+        .or_else(|| state.get_value_cell(id))
+        .unwrap_or_else(LispObject::nil);
+    if coding_system_known(state, &value) {
+        Ok(())
+    } else {
+        Err(coding_system_error(value))
+    }
+}
+
 fn str_arg(args: &LispObject, n: usize) -> Option<String> {
     args.nth(n)
         .and_then(|a| a.as_string().map(|s| s.to_string()))
@@ -778,7 +855,11 @@ pub fn prim_make_temp_name(args: &LispObject) -> ElispResult<LispObject> {
 
 // ---- File contents / buffer I/O ------------------------------------
 
-pub fn prim_insert_file_contents(args: &LispObject) -> ElispResult<LispObject> {
+pub fn prim_insert_file_contents(
+    args: &LispObject,
+    state: &crate::eval::InterpreterState,
+) -> ElispResult<LispObject> {
+    validate_coding_variable(state, "coding-system-for-read")?;
     let s = match str_arg(args, 0) {
         Some(s) => s,
         None => return Ok(LispObject::nil()),
@@ -809,7 +890,11 @@ pub fn prim_insert_file_contents(args: &LispObject) -> ElispResult<LispObject> {
     ))
 }
 
-pub fn prim_write_region(args: &LispObject) -> ElispResult<LispObject> {
+pub fn prim_write_region(
+    args: &LispObject,
+    state: &crate::eval::InterpreterState,
+) -> ElispResult<LispObject> {
+    validate_coding_variable(state, "coding-system-for-write")?;
     let file = str_arg(args, 2).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
     let append = args
         .nth(3)
@@ -1166,9 +1251,9 @@ pub fn call_file_primitive(
         "make-temp-file-internal" => prim_make_temp_file_internal(args),
         "make-temp-name" => prim_make_temp_name(args),
         "insert-file-contents" | "insert-file-contents-literally" => {
-            prim_insert_file_contents(args)
+            prim_insert_file_contents(args, state)
         }
-        "write-region" => prim_write_region(args),
+        "write-region" => prim_write_region(args, state),
         "find-file-noselect" | "find-file" => prim_find_file_noselect(args),
         "getenv" => prim_getenv(args),
         "setenv" => prim_setenv(args, state),

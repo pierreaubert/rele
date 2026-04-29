@@ -71,9 +71,12 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("purecopy", LispObject::primitive("identity"));
     interp.define("make-byte-code", LispObject::primitive("ignore"));
     interp.define("set-standard-case-table", LispObject::primitive("ignore"));
-    interp.define("downcase-region", LispObject::primitive("ignore"));
-    interp.define("upcase-region", LispObject::primitive("ignore"));
-    interp.define("capitalize-region", LispObject::primitive("ignore"));
+    interp.define("downcase-region", LispObject::primitive("downcase-region"));
+    interp.define("upcase-region", LispObject::primitive("upcase-region"));
+    interp.define(
+        "capitalize-region",
+        LispObject::primitive("capitalize-region"),
+    );
     interp.define(
         "replace-regexp-in-string",
         LispObject::primitive("identity"),
@@ -84,7 +87,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("set-process-sentinel", LispObject::primitive("ignore"));
     interp.define("event-modifiers", LispObject::primitive("ignore"));
     interp.define("event-basic-type", LispObject::primitive("ignore"));
-    interp.define("read-event", LispObject::primitive("ignore"));
+    interp.define("read-event", LispObject::primitive("read-event"));
     interp.define("listify-key-sequence", LispObject::primitive("ignore"));
     interp.define("features", LispObject::nil());
     interp.define("obarray", LispObject::nil());
@@ -512,9 +515,17 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("terminal-coding-system", LispObject::nil());
     interp.define("selection-coding-system", LispObject::nil());
     interp.define("coding-system-for-read", LispObject::nil());
+    interp.define("coding-system-for-write", LispObject::nil());
     interp.define("file-name-coding-system", LispObject::nil());
     interp.define("default-process-coding-system", LispObject::nil());
     interp.define("language-info-alist", LispObject::nil());
+    for name in ["coding-system-for-read", "coding-system-for-write"] {
+        interp
+            .state
+            .special_vars
+            .write()
+            .insert(crate::obarray::intern(name));
+    }
     interp.define("set-language-info-alist", LispObject::primitive("ignore"));
     interp.define("register-input-method", LispObject::primitive("ignore"));
     interp.define("set-case-syntax-pair", LispObject::primitive("ignore"));
@@ -537,11 +548,15 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("lock-buffer", LispObject::primitive("ignore"));
     interp.define("unlock-buffer", LispObject::primitive("ignore"));
     interp.define("file-locked-p", LispObject::primitive("ignore"));
-    interp.define("yes-or-no-p", LispObject::primitive("ignore"));
-    interp.define("y-or-n-p", LispObject::primitive("ignore"));
+    interp.define("yes-or-no-p", LispObject::primitive("yes-or-no-p"));
+    interp.define("y-or-n-p", LispObject::primitive("y-or-n-p"));
     interp.define("read-file-name", LispObject::primitive("ignore"));
     interp.define("read-directory-name", LispObject::primitive("ignore"));
-    interp.define("read-string", LispObject::primitive("ignore"));
+    interp.define("read-string", LispObject::primitive("read-string"));
+    interp.define(
+        "read-no-blanks-input",
+        LispObject::primitive("read-no-blanks-input"),
+    );
     interp.define("completing-read", LispObject::primitive("ignore"));
     interp.define("sit-for", LispObject::primitive("ignore"));
     interp.define("sleep-for", LispObject::primitive("ignore"));
@@ -719,7 +734,11 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("minibuffer-window", LispObject::primitive("ignore"));
     interp.define("active-minibuffer-window", LispObject::primitive("ignore"));
     interp.define("minibuffer-depth", LispObject::primitive("ignore"));
-    interp.define("read-from-minibuffer", LispObject::primitive("ignore"));
+    interp.define(
+        "read-from-minibuffer",
+        LispObject::primitive("read-from-minibuffer"),
+    );
+    interp.define("inhibit-interaction", LispObject::nil());
     interp.define("try-completion", LispObject::primitive("ignore"));
     interp.define("all-completions", LispObject::primitive("ignore"));
     interp.define("test-completion", LispObject::primitive("ignore"));

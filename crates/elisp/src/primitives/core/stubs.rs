@@ -107,7 +107,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 
         // Reading stubs
         "read-key-sequence" | "read-key-sequence-vector" | "read-key" => Ok(LispObject::nil()),
-        "read-char" | "read-char-exclusive" => Ok(LispObject::nil()),
+        "read-char" | "read-char-exclusive" | "read-event" => Ok(LispObject::nil()),
 
         // Font/charset stubs
         "font-spec" | "font-family-list" | "font-info" | "font-face-attributes" => {
@@ -177,6 +177,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         // Completion / minibuffer stubs
         "completing-read"
         | "read-from-minibuffer"
+        | "read-no-blanks-input"
         | "read-string"
         | "read-number"
         | "read-buffer"

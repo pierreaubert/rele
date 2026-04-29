@@ -536,6 +536,84 @@ fn test_batched_defun_stubs_resolve() {
         );
     }
 }
+
+#[test]
+fn test_coding_system_contracts_signal_unknown_names() {
+    let interp = make_stdlib_interp();
+    let cases: &[(&str, &str)] = &[
+        ("(coding-system-p nil)", "t"),
+        ("(coding-system-p 'utf-8)", "t"),
+        ("(coding-system-p 'coding-tests-no-such-system)", "nil"),
+        ("(check-coding-system 'utf-8)", "utf-8"),
+        ("(check-coding-system nil)", "nil"),
+        (
+            "(condition-case e (check-coding-system 'coding-tests-no-such-system) (coding-system-error 'caught))",
+            "caught",
+        ),
+        (
+            "(condition-case e (let ((coding-system-for-read 'bogus)) (insert-file-contents \"tmp/coding-no-such-file\")) (coding-system-error 'caught))",
+            "caught",
+        ),
+        (
+            "(condition-case e (let ((coding-system-for-write (intern \"\\\"us-ascii\\\"\"))) (write-region \"some text\" nil \"tmp/coding-did-not-write\")) (coding-system-error 'caught))",
+            "caught",
+        ),
+    ];
+
+    for (src, expected) in cases {
+        let val = interp.eval(read(src).expect(src)).unwrap_or_else(|err| {
+            panic!("eval({src}) failed: {err:?}");
+        });
+        assert_eq!(val.princ_to_string(), *expected, "coding source {src}");
+    }
+}
+
+#[test]
+fn test_remaining_did_not_signal_contracts() {
+    let interp = make_stdlib_interp();
+    let cases: &[(&str, &str)] = &[
+        (
+            "(condition-case e (call-interactively (lambda () (interactive \"\\xFF\"))) (error 'caught))",
+            "caught",
+        ),
+        (
+            "(condition-case e (let ((inhibit-interaction t)) (read-from-minibuffer \"foo: \")) (inhibited-interaction 'caught))",
+            "caught",
+        ),
+        (
+            "(condition-case e (define-charset-internal) (wrong-number-of-arguments 'caught))",
+            "caught",
+        ),
+        (
+            "(condition-case e (unify-charset 'ascii) (error 'caught))",
+            "caught",
+        ),
+        (
+            "(condition-case e (defvar-keymap did-keymap \"a\" #'next-line \"a\" #'previous-line) (error 'caught))",
+            "caught",
+        ),
+        (
+            "(condition-case e (network-lookup-address-info \"1.1.1.1\" nil t) (wrong-type-argument 'caught))",
+            "caught",
+        ),
+        (
+            "(condition-case e (progn (set-face-attribute 'button nil :inherit 'link) (set-face-attribute 'link nil :inherit 'button)) (error 'caught))",
+            "caught",
+        ),
+        (
+            "(progn (defun did-bad-region-extract (method) (if (eq method 'bounds) '(()))) (condition-case e (let ((region-extract-function 'did-bad-region-extract)) (upcase-region nil nil t)) (error 'caught)))",
+            "caught",
+        ),
+    ];
+
+    for (src, expected) in cases {
+        let val = interp.eval(read(src).expect(src)).unwrap_or_else(|err| {
+            panic!("eval({src}) failed: {err:?}");
+        });
+        assert_eq!(val.princ_to_string(), *expected, "source {src}");
+    }
+}
+
 #[test]
 fn test_batched_defun_stubs_resolve_round3() {
     let interp = make_stdlib_interp();
