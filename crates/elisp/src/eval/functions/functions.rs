@@ -144,7 +144,7 @@ pub(crate) fn call_stateful_primitive(
             if let Some(r) =
                 super::state_cl::call_stateful_cl(name, args, env, editor, macros, state)
             {
-                return Some(r.map(|v| value_to_obj(v)));
+                return Some(r.map(value_to_obj));
             }
             if let Some(r) = crate::primitives_cl::call_cl_primitive(name, args) {
                 return Some(r);
@@ -467,6 +467,7 @@ fn sync_lexical_assignment_to_closures(
     }
 }
 
+#[allow(clippy::if_same_then_else)]
 pub(crate) fn assign_symbol_value(
     mut sym_id: crate::obarray::SymbolId,
     mut value: LispObject,
@@ -993,7 +994,7 @@ fn stateful_buffer_local_toplevel_value(args: &LispObject) -> ElispResult<LispOb
     let name = crate::obarray::symbol_name(sym_id);
     current_buffer_local(&local_toplevel_key(&name))
         .or_else(|| current_buffer_local(&name))
-        .ok_or_else(|| ElispError::VoidVariable(name))
+        .ok_or(ElispError::VoidVariable(name))
 }
 
 fn stateful_set_buffer_local_toplevel_value(args: &LispObject) -> ElispResult<LispObject> {
@@ -1308,9 +1309,9 @@ fn stateful_make_hash_table(
     let mut test = crate::object::HashTableTest::Eql;
     let mut cur = args.clone();
     while let Some((key, rest)) = cur.destructure_cons() {
-        if let Some(s) = key.as_symbol() {
-            if s == ":test" {
-                if let Some((val, rest2)) = rest.destructure_cons() {
+        if let Some(s) = key.as_symbol()
+            && s == ":test"
+                && let Some((val, rest2)) = rest.destructure_cons() {
                     if let Some(t) = val.as_symbol() {
                         test = match t.as_str() {
                             "eq" => crate::object::HashTableTest::Eq,
@@ -1322,8 +1323,6 @@ fn stateful_make_hash_table(
                     cur = rest2;
                     continue;
                 }
-            }
-        }
         cur = rest;
     }
     let v = state.heap_hashtable(crate::object::LispHashTable::new(test));
@@ -1389,10 +1388,10 @@ fn stateful_defalias(
     let name_str = name
         .as_symbol()
         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-    if let Some((car, rest)) = value.destructure_cons() {
-        if car.as_symbol().as_deref() == Some("macro") {
-            if let Some((lambda_sym, lambda_rest)) = rest.destructure_cons() {
-                if lambda_sym.as_symbol().as_deref() == Some("lambda") {
+    if let Some((car, rest)) = value.destructure_cons()
+        && car.as_symbol().as_deref() == Some("macro")
+            && let Some((lambda_sym, lambda_rest)) = rest.destructure_cons()
+                && lambda_sym.as_symbol().as_deref() == Some("lambda") {
                     let macro_args = lambda_rest.first().unwrap_or(LispObject::nil());
                     let macro_body = lambda_rest.rest().unwrap_or(LispObject::nil());
                     macros.write().insert(
@@ -1404,9 +1403,6 @@ fn stateful_defalias(
                     );
                     return Ok(LispObject::symbol(&name_str));
                 }
-            }
-        }
-    }
     let id = crate::obarray::intern(&name_str);
     set_function_cell_checked(id, value, state)?;
     Ok(LispObject::symbol(&name_str))

@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! JIT safety/performance microbenchmarks.
 //!
 //! Run with:

@@ -3550,20 +3550,18 @@ impl MdAppState {
                 uri, diagnostics, ..
             } => {
                 // Update diagnostics for the matching buffer.
-                if let Some(ref mut lsp_state) = self.lsp_buffer_state {
-                    if lsp_state.uri == uri {
+                if let Some(ref mut lsp_state) = self.lsp_buffer_state
+                    && lsp_state.uri == uri {
                         lsp_state.diagnostics = diagnostics;
                         return;
                     }
-                }
                 // Check stored buffers.
                 for buf in &mut self.stored_buffers {
-                    if let Some(ref mut lsp) = buf.lsp_state {
-                        if lsp.uri == uri {
+                    if let Some(ref mut lsp) = buf.lsp_state
+                        && lsp.uri == uri {
                             lsp.diagnostics = diagnostics;
                             return;
                         }
-                    }
                 }
             }
             LspEvent::CompletionResponse { items, .. } => {

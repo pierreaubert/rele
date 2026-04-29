@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use gpui_md::state::MdAppState;
 
 /// Construct a state, set its text and cursor, and load the shared elisp
@@ -14,7 +15,6 @@ fn state_with(text: &str) -> Box<MdAppState> {
 #[test]
 fn elisp_interpreter_initialized() {
     let _s = MdAppState::new();
-    assert!(true);
 }
 
 #[test]
@@ -464,7 +464,7 @@ fn elisp_dired_lazy_loads_and_runs() {
     // single-threaded inside the spawn.
     let handle = std::thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
-        .spawn(|| dired_lazy_load_inner())
+        .spawn(dired_lazy_load_inner)
         .expect("spawn bigger-stack thread");
     handle.join().expect("dired lazy-load probe panicked");
 }

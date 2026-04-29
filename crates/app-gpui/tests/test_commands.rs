@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Integration tests for the command registry.
 
 use std::rc::Rc;

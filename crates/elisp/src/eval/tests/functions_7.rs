@@ -1,3 +1,4 @@
+#![allow(clippy::manual_checked_ops)]
 //! Auto-generated module
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
@@ -557,26 +558,20 @@ fn test_framework_status() {
 }
 #[test]
 fn test_emacs_lisp_dir_honours_env_var() {
-    match emacs_lisp_dir() {
-        Some(path) => {
-            assert!(
-                std::path::Path::new(path).is_dir(),
-                "emacs_lisp_dir returned {path} which isn't a directory"
-            )
-        }
-        None => {}
+    if let Some(path) = emacs_lisp_dir() {
+        assert!(
+            std::path::Path::new(path).is_dir(),
+            "emacs_lisp_dir returned {path} which isn't a directory"
+        )
     }
 }
 #[test]
 fn test_emacs_source_root_is_directory_when_present() {
-    match emacs_source_root() {
-        Some(path) => {
-            assert!(
-                std::path::Path::new(path).is_dir(),
-                "emacs_source_root returned {path} which isn't a directory"
-            )
-        }
-        None => {}
+    if let Some(path) = emacs_source_root() {
+        assert!(
+            std::path::Path::new(path).is_dir(),
+            "emacs_source_root returned {path} which isn't a directory"
+        )
     }
 }
 /// Read an Emacs source file as UTF-8 with Latin-1 fallback.

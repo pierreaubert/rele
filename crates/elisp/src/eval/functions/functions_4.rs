@@ -277,8 +277,8 @@ pub(in crate::eval) fn eval_cl_loop(
                             .ok_or(ElispError::WrongNumberOfArguments)?;
                         cur = r3;
                         let mut then_form: Option<LispObject> = None;
-                        if let Some((tok, r4)) = cur.clone().destructure_cons() {
-                            if tok.as_symbol().as_deref() == Some("then") {
+                        if let Some((tok, r4)) = cur.clone().destructure_cons()
+                            && tok.as_symbol().as_deref() == Some("then") {
                                 let (n_form, r5) = r4
                                     .clone()
                                     .destructure_cons()
@@ -286,7 +286,6 @@ pub(in crate::eval) fn eval_cl_loop(
                                 cur = r5;
                                 then_form = Some(n_form);
                             }
-                        }
                         bindings.push((
                             var_obj,
                             Iter::Assignment {
@@ -388,8 +387,8 @@ pub(in crate::eval) fn eval_cl_loop(
                     .as_symbol()
                     .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
                 let mut init_value = LispObject::nil();
-                if let Some((eq_tok, r2)) = cur.clone().destructure_cons() {
-                    if eq_tok.as_symbol().as_deref() == Some("=") {
+                if let Some((eq_tok, r2)) = cur.clone().destructure_cons()
+                    && eq_tok.as_symbol().as_deref() == Some("=") {
                         let (init_form, r3) = r2
                             .clone()
                             .destructure_cons()
@@ -403,7 +402,6 @@ pub(in crate::eval) fn eval_cl_loop(
                             state,
                         )?);
                     }
-                }
                 loop_env.write().define(&var, init_value);
             }
             "repeat" => {
@@ -479,8 +477,8 @@ pub(in crate::eval) fn eval_cl_loop(
                     .ok_or(ElispError::WrongNumberOfArguments)?;
                 cur = r;
                 let mut acc_name = String::new();
-                if let Some((into, r2)) = cur.clone().destructure_cons() {
-                    if into.as_symbol().as_deref() == Some("into") {
+                if let Some((into, r2)) = cur.clone().destructure_cons()
+                    && into.as_symbol().as_deref() == Some("into") {
                         let (n_obj, r3) = r2
                             .clone()
                             .destructure_cons()
@@ -488,7 +486,6 @@ pub(in crate::eval) fn eval_cl_loop(
                         cur = r3;
                         acc_name = n_obj.as_symbol().unwrap_or_default();
                     }
-                }
                 if acc_name.is_empty() {
                     acc_name = format!("__cl_loop_default_{}_", word);
                     default_collect_name = Some(acc_name.clone());
@@ -559,9 +556,9 @@ pub(in crate::eval) fn eval_cl_loop(
                     .destructure_cons()
                     .ok_or(ElispError::WrongNumberOfArguments)?;
                 cur = r;
-                if let Some((then_kw, r2)) = cur.clone().destructure_cons() {
-                    if then_kw.as_symbol().as_deref() == Some("do")
-                        || then_kw.as_symbol().as_deref() == Some("doing")
+                if let Some((then_kw, r2)) = cur.clone().destructure_cons()
+                    && (then_kw.as_symbol().as_deref() == Some("do")
+                        || then_kw.as_symbol().as_deref() == Some("doing"))
                     {
                         cur = r2;
                         let mut body: Vec<LispObject> = Vec::new();
@@ -596,7 +593,6 @@ pub(in crate::eval) fn eval_cl_loop(
                         };
                         actions.push(Action::Do(conditional));
                     }
-                }
             }
             "and" | "else" | "end" => {}
             _ => {}
@@ -844,10 +840,9 @@ pub(in crate::eval) fn eval_cl_loop(
     if had_always || had_never {
         return Ok(obj_to_value(LispObject::t()));
     }
-    if let Some(name) = default_collect_name {
-        if let Some((acc, integer_mode)) = accs.remove(&name) {
+    if let Some(name) = default_collect_name
+        && let Some((acc, integer_mode)) = accs.remove(&name) {
             return Ok(obj_to_value(acc.into_value(integer_mode)));
         }
-    }
     Ok(Value::nil())
 }

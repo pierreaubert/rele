@@ -134,11 +134,10 @@ const FIXNUM_MAX: i64 = (1_i64 << 47) - 1;
 const FIXNUM_MIN: i64 = -(1_i64 << 47);
 
 fn normalize_integer(n: BigInt) -> LispObject {
-    if let Some(small) = n.to_i64() {
-        if (FIXNUM_MIN..=FIXNUM_MAX).contains(&small) {
+    if let Some(small) = n.to_i64()
+        && (FIXNUM_MIN..=FIXNUM_MAX).contains(&small) {
             return LispObject::integer(small);
         }
-    }
     LispObject::BigInt(n)
 }
 

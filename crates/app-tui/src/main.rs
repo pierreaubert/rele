@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 mod commands;
 mod state;
 mod ui;

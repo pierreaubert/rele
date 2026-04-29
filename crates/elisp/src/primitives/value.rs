@@ -232,20 +232,14 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
         }
         "zerop" => {
             let v = one_arg(args)?;
-            match v.as_fixnum() {
-                Some(n) => Some(Ok(if n == 0 { Value::t() } else { Value::nil() })),
-                None => None, // non-fixnum → fall back
-            }
+            v.as_fixnum().map(|n| Ok(if n == 0 { Value::t() } else { Value::nil() }))
         }
         "natnump" => {
             let v = one_arg(args)?;
             if v.as_heap_ptr().is_some() {
                 return None;
             }
-            match v.as_fixnum() {
-                Some(n) => Some(Ok(if n >= 0 { Value::t() } else { Value::nil() })),
-                None => None,
-            }
+            v.as_fixnum().map(|n| Ok(if n >= 0 { Value::t() } else { Value::nil() }))
         }
 
         // Cons accessors — pure raw-pointer read, no alloc, no lock.
@@ -375,6 +369,37 @@ pub fn try_call_primitive_value(name: &str, args: Value) -> Option<ElispResult<V
 
         _ => None,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Instrumentation — useful to tell whether the fast path is actually firing.
+// ---------------------------------------------------------------------------
+
+use std::sync::atomic::{AtomicU64, Ordering};
+static FAST_HITS: AtomicU64 = AtomicU64::new(0);
+static SLOW_HITS: AtomicU64 = AtomicU64::new(0);
+
+pub fn inc_fast_hits() {
+    FAST_HITS.fetch_add(1, Ordering::Relaxed);
+}
+pub fn inc_slow_hits() {
+    SLOW_HITS.fetch_add(1, Ordering::Relaxed);
+}
+pub fn fast_hits() -> u64 {
+    FAST_HITS.load(Ordering::Relaxed)
+}
+pub fn slow_hits() -> u64 {
+    SLOW_HITS.load(Ordering::Relaxed)
+}
+pub fn reset_hit_counters() {
+    FAST_HITS.store(0, Ordering::Relaxed);
+    SLOW_HITS.store(0, Ordering::Relaxed);
+}
+
+// Silence unused-import lint when the module's only user is behind a cfg.
+#[allow(dead_code)]
+fn _unused_marker() -> ElispResult<Value> {
+    Ok(Value::nil())
 }
 
 #[cfg(test)]
@@ -549,35 +574,4 @@ mod accessor_tests {
                 .is_nil()
         );
     }
-}
-
-// ---------------------------------------------------------------------------
-// Instrumentation — useful to tell whether the fast path is actually firing.
-// ---------------------------------------------------------------------------
-
-use std::sync::atomic::{AtomicU64, Ordering};
-static FAST_HITS: AtomicU64 = AtomicU64::new(0);
-static SLOW_HITS: AtomicU64 = AtomicU64::new(0);
-
-pub fn inc_fast_hits() {
-    FAST_HITS.fetch_add(1, Ordering::Relaxed);
-}
-pub fn inc_slow_hits() {
-    SLOW_HITS.fetch_add(1, Ordering::Relaxed);
-}
-pub fn fast_hits() -> u64 {
-    FAST_HITS.load(Ordering::Relaxed)
-}
-pub fn slow_hits() -> u64 {
-    SLOW_HITS.load(Ordering::Relaxed)
-}
-pub fn reset_hit_counters() {
-    FAST_HITS.store(0, Ordering::Relaxed);
-    SLOW_HITS.store(0, Ordering::Relaxed);
-}
-
-// Silence unused-import lint when the module's only user is behind a cfg.
-#[allow(dead_code)]
-fn _unused_marker() -> ElispResult<Value> {
-    Ok(Value::nil())
 }

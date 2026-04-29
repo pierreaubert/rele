@@ -188,7 +188,7 @@ fn coding_get(state: &InterpreterState, args: &[LispObject]) -> ElispResult<Lisp
 }
 
 fn set_coding_priority(state: &InterpreterState, args: &[LispObject]) -> LispObject {
-    let names: Vec<String> = args.iter().filter_map(|arg| symbol_name(arg)).collect();
+    let names: Vec<String> = args.iter().filter_map(symbol_name).collect();
     if !names.is_empty() {
         *state.coding_priority.write() = names;
     }

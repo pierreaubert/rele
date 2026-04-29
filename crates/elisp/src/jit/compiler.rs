@@ -364,8 +364,8 @@ impl JitCompiler {
 
         while pc < bytecode.len() {
             // If this offset is a jump target, we may need to switch blocks.
-            if let Some(&target_block) = offset_to_block.get(&pc) {
-                if target_block != entry_block || pc != 0 {
+            if let Some(&target_block) = offset_to_block.get(&pc)
+                && (target_block != entry_block || pc != 0) {
                     // End the previous block with a fallthrough jump (if not terminated).
                     if !block_terminated {
                         builder.ins().jump(target_block, &[]);
@@ -374,7 +374,6 @@ impl JitCompiler {
                     builder.seal_block(target_block);
                     block_terminated = false;
                 }
-            }
 
             if block_terminated {
                 // We're in dead code after a return/goto. Skip until the next

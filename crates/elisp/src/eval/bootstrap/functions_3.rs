@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Auto-generated module
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
@@ -135,7 +136,7 @@ pub fn load_prerequisites(interp: &Interpreter) {
             let _ = interp.eval_source(&s);
         }
     }
-    if let Ok(s) = std::fs::read_to_string(&format!("{STDLIB_DIR}/subr.el")) {
+    if let Ok(s) = std::fs::read_to_string(format!("{STDLIB_DIR}/subr.el")) {
         let _ = interp.eval_source(&s);
     }
     apply_post_subr_workarounds(interp);
@@ -349,8 +350,8 @@ pub fn load_cl_lib(interp: &Interpreter) {
     }
     for f in files {
         let dest = format!("{STDLIB_DIR}/{f}.el");
-        if let Some(source) = read_emacs_source(&dest) {
-            if let Ok(forms) = crate::read_all(&source) {
+        if let Some(source) = read_emacs_source(&dest)
+            && let Ok(forms) = crate::read_all(&source) {
                 interp.set_eval_ops_limit(10_000_000);
                 let mut since_gc = 0;
                 for form in forms {
@@ -365,18 +366,16 @@ pub fn load_cl_lib(interp: &Interpreter) {
                 interp.gc();
                 interp.set_eval_ops_limit(0);
             }
-        }
     }
 }
 pub fn emacs_source_root() -> Option<&'static str> {
     use std::sync::OnceLock;
     static CACHED: OnceLock<Option<String>> = OnceLock::new();
     let slot = CACHED.get_or_init(|| {
-        if let Ok(p) = std::env::var("EMACS_SRC_ROOT") {
-            if std::path::Path::new(&p).is_dir() {
+        if let Ok(p) = std::env::var("EMACS_SRC_ROOT")
+            && std::path::Path::new(&p).is_dir() {
                 return Some(p);
             }
-        }
         let home = std::env::var("HOME").unwrap_or_default();
         let home_src = format!("{home}/src/emacs");
         let home_emacs = format!("{home}/emacs");
@@ -406,11 +405,10 @@ pub fn emacs_lisp_dir() -> Option<&'static str> {
         // any dir if no source-bearing one is found.
         let has_source = |p: &str| std::path::Path::new(&format!("{p}/subr.el")).is_file();
 
-        if let Ok(p) = std::env::var("EMACS_LISP_DIR") {
-            if std::path::Path::new(&p).is_dir() {
+        if let Ok(p) = std::env::var("EMACS_LISP_DIR")
+            && std::path::Path::new(&p).is_dir() {
                 return Some(p);
             }
-        }
         // Source-tree pins (where `make` was run but not `make install`).
         // Strongly preferred over installs because they ship `.el`
         // alongside `.elc` and our interpreter handles `.el` better.
@@ -497,17 +495,16 @@ pub fn probe_emacs_file(interp: &Interpreter, file_path: &str) -> Option<(usize,
               (defun ert-resource-directory () \"{esc_res}/\") \
               (defun ert-resource-file (name) (concat \"{esc_res}/\" name)))"
         );
-        if let Ok(mut adds) = crate::read_all(&add_form) {
-            if let Some(f) = adds.pop() {
+        if let Ok(mut adds) = crate::read_all(&add_form)
+            && let Some(f) = adds.pop() {
                 interp.reset_eval_ops();
                 interp.set_eval_ops_limit(100_000);
                 let _ = interp.eval(f);
             }
-        }
     }
     let total = forms.len();
     let mut ok = 0;
-    for (_i, form) in forms.into_iter().enumerate() {
+    for form in forms.into_iter() {
         interp.reset_eval_ops();
         interp.set_eval_ops_limit(5_000_000);
         interp.set_deadline(std::time::Instant::now() + std::time::Duration::from_secs(5));

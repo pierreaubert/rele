@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Phase 5 semantic parity gates.
 //!
 //! These tests are intentionally broader than single-regression fixtures:

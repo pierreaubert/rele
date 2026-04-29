@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Auto-generated module
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
@@ -533,7 +534,7 @@ fn test_macro_rest_arg_binds_as_list() {
         return;
     }
     let interp = make_stdlib_interp();
-    let bq = std::fs::read_to_string(&format!("{STDLIB_DIR}/emacs-lisp/backquote.el")).unwrap();
+    let bq = std::fs::read_to_string(format!("{STDLIB_DIR}/emacs-lisp/backquote.el")).unwrap();
     let _ = interp.eval_source(&bq);
     let cases: &[&str] = &[
         r#"`(a ,(identity "x") b)"#,

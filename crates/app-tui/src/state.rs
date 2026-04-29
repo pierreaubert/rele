@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use std::path::{Path, PathBuf};
 
 use rele_server::CancellationFlag;
@@ -27,6 +28,7 @@ fn write_document_to_path(document: &mut DocumentBuffer, path: &Path) -> std::io
     Ok(())
 }
 
+#[allow(dead_code)]
 fn special_buffer_attrs(name: &str) -> Option<(BufferKind, bool)> {
     if name == "*Buffer List*" {
         Some((BufferKind::BufferList, true))
@@ -37,6 +39,7 @@ fn special_buffer_attrs(name: &str) -> Option<(BufferKind, bool)> {
     }
 }
 
+#[allow(dead_code)]
 fn major_mode_for_kind(kind: &BufferKind) -> &'static str {
     match kind {
         BufferKind::Dired => "dired-mode",
@@ -187,6 +190,7 @@ pub struct TuiAppState {
     pub lsp_status: Option<String>,
 }
 
+#[allow(dead_code)]
 impl TuiAppState {
     pub fn new() -> Self {
         let mut commands = CommandRegistry::new();
@@ -560,7 +564,7 @@ impl TuiAppState {
             cursor: std::mem::replace(&mut self.cursor, EditorCursor::new()),
             kind: std::mem::replace(&mut self.current_buffer_kind, BufferKind::File),
             read_only: std::mem::replace(&mut self.current_buffer_read_only, false),
-            major_mode: std::mem::replace(&mut self.current_major_mode, None),
+            major_mode: self.current_major_mode.take(),
             scroll_line: std::mem::replace(&mut self.scroll_line, 0),
             last_edit_was_char_insert: std::mem::replace(
                 &mut self.last_edit_was_char_insert,
@@ -1885,11 +1889,10 @@ impl TuiAppState {
             LspEvent::Diagnostics {
                 uri, diagnostics, ..
             } => {
-                if let Some(ref mut lsp_state) = self.lsp_buffer_state {
-                    if lsp_state.uri == uri {
+                if let Some(ref mut lsp_state) = self.lsp_buffer_state
+                    && lsp_state.uri == uri {
                         lsp_state.diagnostics = diagnostics;
                     }
-                }
             }
             LspEvent::CompletionResponse { items, .. } => {
                 self.lsp_completion_items = items;

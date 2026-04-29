@@ -61,8 +61,5 @@ fn prim_read(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::String(s) => s.clone(),
         _ => return Ok(LispObject::nil()),
     };
-    match crate::reader::read(&s) {
-        Ok(obj) => Ok(obj),
-        Err(e) => Err(e),
-    }
+    crate::reader::read(&s)
 }

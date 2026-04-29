@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use std::sync::Arc;
 
 use comrak::nodes::{AstNode, ListType, NodeValue};
@@ -45,6 +46,7 @@ pub fn render_markdown<'a>(
     (elements, a11y_nodes)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_node<'a>(
     node: &'a AstNode<'a>,
     source_map: &mut SourceMap,

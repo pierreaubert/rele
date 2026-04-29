@@ -129,7 +129,7 @@ fn prim_copy_hash_table(args: &LispObject) -> ElispResult<LispObject> {
         let guard = h.lock();
         let new_ht = crate::object::LispHashTable {
             data: guard.data.clone(),
-            test: guard.test.clone(),
+            test: guard.test,
         };
         Ok(LispObject::HashTable(std::sync::Arc::new(
             crate::eval::SyncRefCell::new(new_ht),

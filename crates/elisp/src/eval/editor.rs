@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 // Editor callbacks: buffer-string, insert, point, goto-char, find-file, etc.
 
 use super::SyncRefCell as RwLock;

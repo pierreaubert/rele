@@ -1,3 +1,4 @@
+#![allow(clippy::manual_checked_ops)]
 //! Auto-generated module
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)

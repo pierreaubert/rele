@@ -70,7 +70,7 @@ fn arb_atom() -> impl Strategy<Value = JsonVal> {
         Just(JsonVal::nil()),
         Just(JsonVal::t()),
         (-1000i64..1000).prop_map(JsonVal::int),
-        "[a-z]{1,8}".prop_map(|s| JsonVal::string(s)),
+        "[a-z]{1,8}".prop_map(JsonVal::string),
     ]
 }
 
@@ -547,6 +547,7 @@ fn arb_lambda_from_let_escape() -> impl Strategy<Value = JsonVal> {
 }
 
 /// (condition-case BODY ((TAG) HANDLER...)) — catches throws with matching tag.
+#[allow(dead_code)]
 fn arb_condition_case() -> impl Strategy<Value = JsonVal> {
     (
         arb_atom(),
@@ -568,6 +569,7 @@ fn arb_condition_case() -> impl Strategy<Value = JsonVal> {
 }
 
 /// (save-excursion BODY...) — save and restore point/mark.
+#[allow(dead_code)]
 fn arb_save_excursion() -> impl Strategy<Value = JsonVal> {
     (arb_atom(), arb_atom())
         .prop_map(|(a, b)| JsonVal::list(vec![JsonVal::sym("save-excursion"), a, b]))

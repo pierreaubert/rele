@@ -221,11 +221,10 @@ pub fn prim_assoc(args: &LispObject) -> ElispResult<LispObject> {
                 "assoc: list too long or circular".to_string(),
             ));
         }
-        if let Some((k, _)) = entry.destructure_cons() {
-            if key == k {
+        if let Some((k, _)) = entry.destructure_cons()
+            && key == k {
                 return Ok(entry);
             }
-        }
         current = rest;
     }
     Ok(LispObject::nil())
@@ -357,11 +356,10 @@ pub fn prim_assq(args: &LispObject) -> ElispResult<LispObject> {
                 "assq: list too long or circular".to_string(),
             ));
         }
-        if let Some((k, _)) = entry.destructure_cons() {
-            if eq_test(&key, &k) {
+        if let Some((k, _)) = entry.destructure_cons()
+            && eq_test(&key, &k) {
                 return Ok(entry);
             }
-        }
         current = rest;
     }
     Ok(LispObject::nil())

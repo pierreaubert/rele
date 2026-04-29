@@ -253,7 +253,7 @@ fn r23_ert_deftest_docstring_before_body() {
         .expect("ert-test-documentation");
     let doc_str = doc.as_string();
     assert_eq!(
-        doc_str.as_deref().map(|s| s.as_str()),
+        doc_str.map(|s| s.as_str()),
         Some("This test checks something important."),
         "docstring did not survive to documentation slot: {doc:?}",
     );

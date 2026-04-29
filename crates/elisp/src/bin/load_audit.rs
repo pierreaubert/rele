@@ -1,3 +1,5 @@
+#![allow(clippy::manual_checked_ops)]
+#![allow(clippy::disallowed_methods)]
 //! Audit the bootstrap loading chain.
 //!
 //! Loads the bootstrap files in order, reporting per-file and per-form

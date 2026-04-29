@@ -116,8 +116,8 @@ fn collect_translation_table_names(form: &LispObject, out: &mut Vec<String>) {
     let Some((head, rest)) = form.destructure_cons() else {
         return;
     };
-    if head.as_symbol().as_deref() == Some("define-translation-table") {
-        if let Some(name_form) = rest.first() {
+    if head.as_symbol().as_deref() == Some("define-translation-table")
+        && let Some(name_form) = rest.first() {
             let name = name_form
                 .as_quote_content()
                 .and_then(|obj| obj.as_symbol())
@@ -126,7 +126,6 @@ fn collect_translation_table_names(form: &LispObject, out: &mut Vec<String>) {
                 out.push(name);
             }
         }
-    }
     collect_translation_table_names(&head, out);
     collect_translation_table_names(&rest, out);
 }

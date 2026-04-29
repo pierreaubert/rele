@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 use std::collections::HashMap;
@@ -214,28 +215,25 @@ fn unicode_name_to_char(name: &str) -> Option<char> {
         _ => {
             // U+XXXX hex codepoint form, used by Emacs's reader as a
             // catch-all for characters that don't have a registered name.
-            if let Some(rest) = key.strip_prefix("U+") {
-                if let Ok(code) = u32::from_str_radix(rest, 16) {
+            if let Some(rest) = key.strip_prefix("U+")
+                && let Ok(code) = u32::from_str_radix(rest, 16) {
                     return char::from_u32(code);
                 }
-            }
             // VARIATION SELECTOR-N (1..256). 1..16 maps to U+FE00..U+FE0F,
             // 17..256 maps to U+E0100..U+E01EF.
-            if let Some(num_str) = key.strip_prefix("VARIATION SELECTOR ") {
-                if let Ok(n) = num_str.parse::<u32>() {
+            if let Some(num_str) = key.strip_prefix("VARIATION SELECTOR ")
+                && let Ok(n) = num_str.parse::<u32>() {
                     if (1..=16).contains(&n) {
                         return char::from_u32(0xFE00 + n - 1);
                     } else if (17..=256).contains(&n) {
                         return char::from_u32(0xE0100 + n - 17);
                     }
                 }
-            }
             // CJK COMPATIBILITY IDEOGRAPH-XXXX hex codepoint.
-            if let Some(rest) = key.strip_prefix("CJK COMPATIBILITY IDEOGRAPH ") {
-                if let Ok(code) = u32::from_str_radix(rest, 16) {
+            if let Some(rest) = key.strip_prefix("CJK COMPATIBILITY IDEOGRAPH ")
+                && let Ok(code) = u32::from_str_radix(rest, 16) {
                     return char::from_u32(code);
                 }
-            }
             return None;
         }
     };
@@ -436,8 +434,8 @@ impl Reader {
                 let saved_pos = self.pos;
                 let result = self.read_number_from(c);
                 // If the next char is a symbol char (not delimiter/whitespace), it's a symbol
-                if let Some(next) = self.peek() {
-                    if is_symbol_char(next)
+                if let Some(next) = self.peek()
+                    && is_symbol_char(next)
                         && !next.is_ascii_digit()
                         && next != '.'
                         && next != 'e'
@@ -447,7 +445,6 @@ impl Reader {
                         self.pos = saved_pos;
                         return self.read_symbol(c);
                     }
-                }
                 result
             }
             '.' => {
@@ -478,12 +475,11 @@ impl Reader {
     fn read_list(&mut self) -> ElispResult<LispObject> {
         self.skip_whitespace();
 
-        if let Some(c) = self.peek() {
-            if c == ')' {
+        if let Some(c) = self.peek()
+            && c == ')' {
                 self.advance();
                 return Ok(LispObject::nil());
             }
-        }
 
         let car = self.read()?;
 
@@ -1254,12 +1250,11 @@ impl Reader {
                 s.push(c);
                 self.advance();
                 // Optional sign after exponent
-                if let Some(sign) = self.peek() {
-                    if sign == '+' || sign == '-' {
+                if let Some(sign) = self.peek()
+                    && (sign == '+' || sign == '-') {
                         s.push(sign);
                         self.advance();
                     }
-                }
                 // Emacs accepts INF / NaN as exponent mantissas, e.g. 1.0e+INF.
                 // Rust's f64::parse doesn't, so detect and substitute.
                 let rest_is_inf = self.peek().map(|c| matches!(c, 'I' | 'i')).unwrap_or(false);
@@ -1267,11 +1262,10 @@ impl Reader {
                 if rest_is_inf || rest_is_nan {
                     // Consume the 3 letters (INF or NaN).
                     for _ in 0..3 {
-                        if let Some(ch) = self.peek() {
-                            if ch.is_ascii_alphabetic() {
+                        if let Some(ch) = self.peek()
+                            && ch.is_ascii_alphabetic() {
                                 self.advance();
                             }
-                        }
                     }
                     let sign_is_negative = s.trim_start().starts_with('-');
                     return Ok(LispObject::float(if rest_is_inf {
@@ -1292,7 +1286,7 @@ impl Reader {
         if has_dot || has_exp {
             // Ensure exponent has at least one digit (Rust requires it;
             // Emacs reads "0E" as 0.0).
-            if has_exp && s.ends_with(|c: char| c == 'e' || c == 'E' || c == '+' || c == '-') {
+            if has_exp && s.ends_with(['e', 'E', '+', '-']) {
                 s.push('0');
             }
             let f: f64 = s
@@ -1313,13 +1307,12 @@ impl Reader {
     fn read_radix_number(&mut self, radix: u32) -> ElispResult<LispObject> {
         let mut s = String::new();
         let mut has_sign = false;
-        if let Some(c) = self.peek() {
-            if c == '+' || c == '-' {
+        if let Some(c) = self.peek()
+            && (c == '+' || c == '-') {
                 has_sign = true;
                 s.push(c);
                 self.advance();
             }
-        }
         while let Some(c) = self.peek() {
             if c.is_ascii_alphanumeric() {
                 s.push(c);

@@ -1178,8 +1178,8 @@ pub(super) fn eval_defvar(
     // value — that must NOT block initialization of this interpreter's
     // binding.
     let is_bound = state.get_value_cell(id).is_some();
-    if !is_bound {
-        if let Some(value_expr) = args_obj.nth(1) {
+    if !is_bound
+        && let Some(value_expr) = args_obj.nth(1) {
             let value = value_to_obj(eval(obj_to_value(value_expr), env, editor, macros, state)?);
             // If this variable is currently let-bound, defvar updates only the
             // toplevel default — not the active dynamic binding. The toplevel
@@ -1199,7 +1199,6 @@ pub(super) fn eval_defvar(
                 state.get_value_cell(id).unwrap_or_else(LispObject::nil),
             );
         }
-    }
     Ok(obj_to_value(LispObject::Symbol(id)))
 }
 pub(super) fn eval_defconst(
@@ -1245,10 +1244,10 @@ pub(super) fn eval_defalias(
     let name = crate::obarray::symbol_name(id);
     let value = value_to_obj(eval(obj_to_value(definition), env, editor, macros, state)?);
 
-    if let Some((car, rest)) = value.destructure_cons() {
-        if car.as_symbol().as_deref() == Some("macro") {
-            if let Some((lambda_sym, lambda_rest)) = rest.destructure_cons() {
-                if lambda_sym.as_symbol().as_deref() == Some("lambda") {
+    if let Some((car, rest)) = value.destructure_cons()
+        && car.as_symbol().as_deref() == Some("macro")
+            && let Some((lambda_sym, lambda_rest)) = rest.destructure_cons()
+                && lambda_sym.as_symbol().as_deref() == Some("lambda") {
                     let macro_args = lambda_rest.first().unwrap_or(LispObject::nil());
                     let macro_body = lambda_rest.rest().unwrap_or(LispObject::nil());
                     macros.write().insert(
@@ -1260,9 +1259,6 @@ pub(super) fn eval_defalias(
                     );
                     return Ok(obj_to_value(LispObject::symbol(&name)));
                 }
-            }
-        }
-    }
 
     // defalias writes the function cell — value is a function definition.
     set_function_cell_checked(id, value, state)?;

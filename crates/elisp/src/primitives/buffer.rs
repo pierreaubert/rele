@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Buffer / marker / narrow / regex-search primitives.
 //!
 //! These are all state-less from the elisp perspective: they don't
@@ -664,7 +665,7 @@ pub fn prim_insert_char(args: &LispObject) -> ElispResult<LispObject> {
         .ok_or_else(|| ElispError::WrongTypeArgument("character".into()))?;
     let count = int_arg(args, 1, 1) as usize;
     if let Some(c) = char::from_u32(ch as u32) {
-        let s: String = std::iter::repeat(c).take(count).collect();
+        let s: String = std::iter::repeat_n(c, count).collect();
         buffer::with_registry_mut(|r| r.insert_current(&s, false));
     }
     Ok(LispObject::nil())
@@ -1009,6 +1010,7 @@ pub fn prim_match_data(_args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_set_match_data(args: &LispObject) -> ElispResult<LispObject> {
     let mut list = args.first().unwrap_or(LispObject::nil());
     let mut groups = Vec::new();
+    #[allow(clippy::while_let_loop)]
     loop {
         let a = match list.destructure_cons() {
             Some((car, cdr)) => {
@@ -1214,20 +1216,20 @@ fn apply_zero_width_repetition_compat(regex: &str) -> String {
 /// Map an Emacs syntax-class letter to a Rust regex character class.
 ///
 /// Emacs syntax-table letters (from `syntax.h`):
-///   -   whitespace              `[[:space:]]`
-///   w   word                    `\w`
-///   _   symbol constituent      `[\w]` (approx — Emacs is richer)
-///   .   punctuation             `[[:punct:]]`
-///   (   open paren              `[(\[{]`
-///   )   close paren             `[)\]}]`
-///   "   string quote            `["']`
-///   '   expression prefix       `['`~,@]`
-///   <   comment start           `[;#]`
-///   >   comment end             `[\n\r]`
-///   \\  escape                  `\\`
-///   /   char-quote              `\\`
-///   |   gen. string delimiter   `["]`
-///   $   paired delimiter        `[$]`
+///       -   whitespace              `[[:space:]]`
+///       w   word                    `\w`
+///       _   symbol constituent      `[\w]` (approx — Emacs is richer)
+///       .   punctuation             `[[:punct:]]`
+///       (   open paren              `[(\[{]`
+///       )   close paren             `[)\]}]`
+///       "   string quote            `["']`
+///       '   expression prefix       `['`~,@]`
+///       <   comment start           `[;#]`
+///       >   comment end             `[\n\r]`
+///       \   escape                  `\\`
+///       /   char-quote              `\\`
+///       |   gen. string delimiter   `["]`
+///       $   paired delimiter        `[$]`
 ///
 /// Returns a Rust regex fragment. Unknown classes fall through to `.`
 /// (match any), which is the safest over-approximation for search.
@@ -1978,9 +1980,7 @@ pub fn prim_overlay_buffer(args: &LispObject) -> ElispResult<LispObject> {
         let ov = r.overlay_get(id)?;
         // A detached overlay (deleted) has start/end None and
         // `overlay-buffer` must return nil.
-        if ov.start.is_none() {
-            return None;
-        }
+        ov.start?;
         r.get(ov.buffer).map(|_| ov.buffer)
     });
     Ok(buffer_id

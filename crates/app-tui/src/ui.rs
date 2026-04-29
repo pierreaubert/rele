@@ -154,7 +154,7 @@ fn draw_window_tree(frame: &mut Frame, state: &mut TuiAppState, area: Rect) {
         let pruned = state
             .windows
             .prune(&hide)
-            .unwrap_or_else(|| crate::windows::Window::Leaf(WindowContent::Buffer));
+            .unwrap_or(crate::windows::Window::Leaf(WindowContent::Buffer));
         let leaf_count = pruned.leaf_count();
         let new_focus = state
             .windows
@@ -215,7 +215,7 @@ fn draw_separator(frame: &mut Frame, state: &TuiAppState, sep: crate::windows::S
             let style = Style::default().fg(Color::DarkGray);
             let lines: Vec<Line<'_>> = (0..rows)
                 .map(|_| {
-                    let text: String = std::iter::repeat('│').take(cols).collect();
+                    let text: String = std::iter::repeat_n('│', cols).collect();
                     Line::from(Span::styled(text, style))
                 })
                 .collect();
@@ -559,11 +559,10 @@ fn push_highlighted_spans(
         {
             next_boundary = next_boundary.min(r.end_col);
         }
-        if let Some(r) = range_iter.peek() {
-            if r.start_col > col {
+        if let Some(r) = range_iter.peek()
+            && r.start_col > col {
                 next_boundary = next_boundary.min(r.start_col);
             }
-        }
         for d in diag_overlay {
             if d.start_col <= col && col < d.end_col {
                 next_boundary = next_boundary.min(d.end_col);

@@ -312,8 +312,8 @@ fn call_function_inner(
                     return call_function(obj_to_value(cdr_val), args, env, editor, macros, state);
                 }
                 if s == "autoload" {
-                    if let Some(file_obj) = cdr_val.first() {
-                        if let LispObject::String(ref f) = file_obj {
+                    if let Some(file_obj) = cdr_val.first()
+                        && let LispObject::String(ref f) = file_obj {
                             let load_args = LispObject::cons(
                                 LispObject::string(f),
                                 LispObject::cons(LispObject::t(), LispObject::nil()),
@@ -326,7 +326,6 @@ fn call_function_inner(
                                 state,
                             );
                         }
-                    }
                     return Err(ElispError::VoidFunction("autoload".into()));
                 }
                 if s == "closure" {
@@ -340,11 +339,10 @@ fn call_function_inner(
                     let mut captured_env = Environment::with_parent(global_snapshot);
                     let mut cur = captured_alist.clone();
                     while let Some((pair, rest_alist)) = cur.destructure_cons() {
-                        if let Some((k, v)) = pair.destructure_cons() {
-                            if let Some(id) = k.as_symbol_id() {
+                        if let Some((k, v)) = pair.destructure_cons()
+                            && let Some(id) = k.as_symbol_id() {
                                 captured_env.define_id(id, v);
                             }
-                        }
                         cur = rest_alist;
                     }
                     let closure_env = Arc::new(RwLock::new(captured_env));
@@ -422,7 +420,7 @@ fn call_function_inner(
         }
         LispObject::Symbol(id) => {
             let name = crate::obarray::symbol_name(id);
-            let args_obj = value_to_obj(args.clone());
+            let args_obj = value_to_obj(args);
             if let Some(result) =
                 super::state_cl::call_stateful_cl(&name, &args_obj, env, editor, macros, state)
             {

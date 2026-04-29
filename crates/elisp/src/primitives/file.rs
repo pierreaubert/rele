@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! File / filename / directory primitives — batch 3.
 //!
 //! Pathname manipulation is kept in Rust (never touches the
@@ -740,11 +741,10 @@ pub fn prim_make_temp_file(args: &LispObject) -> ElispResult<LispObject> {
         .unwrap_or(0);
     let tmp = std::env::temp_dir();
     let path = tmp.join(format!("{}XXXX-{pid}-{nonce}", sanitize(&prefix)));
-    if let Ok(mut f) = std::fs::File::create(&path) {
-        if let Some(text) = str_arg(args, 2) {
+    if let Ok(mut f) = std::fs::File::create(&path)
+        && let Some(text) = str_arg(args, 2) {
             let _ = f.write_all(text.as_bytes());
         }
-    }
     Ok(LispObject::string(&path.to_string_lossy()))
 }
 
@@ -1061,9 +1061,9 @@ pub fn prim_rfc822_addresses(args: &LispObject) -> ElispResult<LispObject> {
     let mut addresses: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
-    let mut chars = s.chars().peekable();
+    let chars = s.chars().peekable();
 
-    while let Some(ch) = chars.next() {
+    for ch in chars {
         match ch {
             '"' => {
                 in_quotes = !in_quotes;
@@ -1094,8 +1094,7 @@ pub fn prim_rfc822_addresses(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_url_expand_file_name(args: &LispObject) -> ElispResult<LispObject> {
     let url = str_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
-    if url.starts_with("file://") {
-        let path = &url[7..];
+    if let Some(path) = url.strip_prefix("file://") {
         prim_expand_file_name(&LispObject::cons(
             LispObject::string(path),
             LispObject::nil(),

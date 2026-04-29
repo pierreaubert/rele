@@ -666,11 +666,10 @@ pub fn cl_map(
         let mut out = String::new();
         let mut cur = listified;
         while let Some((car, cdr)) = cur.destructure_cons() {
-            if let Some(n) = car.as_integer() {
-                if let Some(c) = char::from_u32(n as u32) {
+            if let Some(n) = car.as_integer()
+                && let Some(c) = char::from_u32(n as u32) {
                     out.push(c);
                 }
-            }
             cur = cdr;
         }
         return Ok(LispObject::string(&out));
@@ -1174,6 +1173,7 @@ pub fn cl_substitute_if_not(
 
 // ---- subst-if / sublis (tree substitution with predicate) -----------
 
+#[allow(clippy::too_many_arguments)]
 fn subst_if_rec(
     new: &LispObject,
     pred: &LispObject,

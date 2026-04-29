@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 // Builtin functions: put, get, provide, featurep, require, mapcar, mapc, dolist, format.
 
 use super::SyncRefCell as RwLock;
@@ -652,12 +653,11 @@ pub(super) fn eval_format(
                 }
                 'c' => {
                     if arg_idx < format_args.len() {
-                        if let LispObject::Integer(n) = &format_args[arg_idx] {
-                            if let Some(ch) = char::from_u32(*n as u32) {
+                        if let LispObject::Integer(n) = &format_args[arg_idx]
+                            && let Some(ch) = char::from_u32(*n as u32) {
                                 let s = ch.to_string();
                                 result.push_str(&apply_width(s));
                             }
-                        }
                         arg_idx += 1;
                     }
                 }

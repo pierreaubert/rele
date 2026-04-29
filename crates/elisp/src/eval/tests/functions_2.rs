@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Auto-generated module
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
@@ -23,7 +24,7 @@ fn test_unwind_protect_on_throw() {
 }
 #[test]
 fn test_load_debug_early_el() {
-    let source = match std::fs::read_to_string(&format!("{STDLIB_DIR}/emacs-lisp/debug-early.el")) {
+    let source = match std::fs::read_to_string(format!("{STDLIB_DIR}/emacs-lisp/debug-early.el")) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -35,7 +36,7 @@ fn test_load_debug_early_el() {
 }
 #[test]
 fn test_load_byte_run_el() {
-    let source = match std::fs::read_to_string(&format!("{STDLIB_DIR}/emacs-lisp/byte-run.el")) {
+    let source = match std::fs::read_to_string(format!("{STDLIB_DIR}/emacs-lisp/byte-run.el")) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -62,12 +63,12 @@ fn test_load_byte_run_el() {
 }
 #[test]
 fn test_load_backquote_el() {
-    let source = match std::fs::read_to_string(&format!("{STDLIB_DIR}/emacs-lisp/backquote.el")) {
+    let source = match std::fs::read_to_string(format!("{STDLIB_DIR}/emacs-lisp/backquote.el")) {
         Ok(s) => s,
         Err(_) => return,
     };
     let interp = make_stdlib_interp();
-    if let Ok(byte_run) = std::fs::read_to_string(&format!("{STDLIB_DIR}/emacs-lisp/byte-run.el")) {
+    if let Ok(byte_run) = std::fs::read_to_string(format!("{STDLIB_DIR}/emacs-lisp/byte-run.el")) {
         let _ = interp.eval_source(&byte_run);
     }
     match interp.eval_source(&source) {
@@ -77,7 +78,7 @@ fn test_load_backquote_el() {
 }
 #[test]
 fn test_load_subr_el_progress() {
-    let source = match std::fs::read_to_string(&format!("{STDLIB_DIR}/subr.el")) {
+    let source = match std::fs::read_to_string(format!("{STDLIB_DIR}/subr.el")) {
         Ok(s) => s,
         Err(_) => return,
     };

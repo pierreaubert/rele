@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Audit the reader against a tree of `.el` files.
 //!
 //! Usage:
@@ -58,7 +59,7 @@ fn main() {
             *by_kind.entry(key).or_default() += 1;
         }
         let mut sorted: Vec<_> = by_kind.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
         for (kind, count) in sorted.iter().take(30) {
             eprintln!("  [{count:4}] {kind}");
         }

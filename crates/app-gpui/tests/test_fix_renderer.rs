@@ -31,11 +31,10 @@ fn issue_11_comrak_produces_ordered_list_type() {
     let mut found_ordered = false;
     for child in root.children() {
         let data = child.data.borrow();
-        if let NodeValue::List(ref list) = data.value {
-            if list.list_type == ListType::Ordered {
+        if let NodeValue::List(ref list) = data.value
+            && list.list_type == ListType::Ordered {
                 found_ordered = true;
             }
-        }
     }
     assert!(
         found_ordered,

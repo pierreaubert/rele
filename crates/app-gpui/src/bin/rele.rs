@@ -95,7 +95,7 @@ fn main() {
             if let Some(mut rx) = lsp_rx {
                 cx.spawn(async move |cx| {
                     while let Some(event) = rx.recv().await {
-                        let _ = cx.update(|cx| {
+                        cx.update(|cx| {
                             lsp_state.update(cx, |s, _cx| {
                                 s.handle_lsp_event(event);
                             });

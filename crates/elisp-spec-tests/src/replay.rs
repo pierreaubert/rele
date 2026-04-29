@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Quint trace replay harness.
 //!
 //! Reads JSON traces produced by `quint run --out-itf` and replays them

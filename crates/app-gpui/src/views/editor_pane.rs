@@ -1265,6 +1265,7 @@ fn char_col_to_byte_offset(line_text: &str, char_col: usize) -> usize {
 /// Bakes in syntax highlighting, selection background, cursor block, and find
 /// match highlights as TextRun properties. Returns the text string and runs
 /// vector ready for StyledText.
+#[allow(clippy::too_many_arguments)]
 fn build_line_text_runs(
     spans: &[crate::markdown::HighlightSpan],
     line_text: &str,
@@ -1347,8 +1348,8 @@ fn build_line_text_runs(
             color: Some(gpui::red()),
             wavy: true,
         };
-        for b in byte_start..byte_end.min(text_bytes) {
-            underlines[b] = Some(diag_underline);
+        for slot in &mut underlines[byte_start..byte_end.min(text_bytes)] {
+            *slot = Some(diag_underline);
         }
     }
 

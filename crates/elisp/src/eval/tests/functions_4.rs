@@ -1,3 +1,5 @@
+#![allow(clippy::manual_checked_ops)]
+#![allow(clippy::disallowed_methods)]
 //! Auto-generated module
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
@@ -585,7 +587,7 @@ fn test_load_macroexp_el() {
     if !ensure_stdlib_files() {
         return;
     }
-    let source = match std::fs::read_to_string(&format!("{STDLIB_DIR}/emacs-lisp/macroexp.el")) {
+    let source = match std::fs::read_to_string(format!("{STDLIB_DIR}/emacs-lisp/macroexp.el")) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -603,13 +605,13 @@ fn test_load_cconv_el() {
     if !ensure_stdlib_files() {
         return;
     }
-    let source = match std::fs::read_to_string(&format!("{STDLIB_DIR}/emacs-lisp/cconv.el")) {
+    let source = match std::fs::read_to_string(format!("{STDLIB_DIR}/emacs-lisp/cconv.el")) {
         Ok(s) => s,
         Err(_) => return,
     };
     let interp = make_stdlib_interp();
     load_prerequisites(&interp);
-    if let Ok(s) = std::fs::read_to_string(&format!("{STDLIB_DIR}/emacs-lisp/macroexp.el")) {
+    if let Ok(s) = std::fs::read_to_string(format!("{STDLIB_DIR}/emacs-lisp/macroexp.el")) {
         let _ = interp.eval_source(&s);
     }
     let (ok, total, errors) = load_file_progress(&interp, &source);
@@ -624,7 +626,7 @@ fn test_load_simple_el() {
     if !ensure_stdlib_files() {
         return;
     }
-    let source = match std::fs::read_to_string(&format!("{STDLIB_DIR}/simple.el")) {
+    let source = match std::fs::read_to_string(format!("{STDLIB_DIR}/simple.el")) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -642,7 +644,7 @@ fn test_load_files_el() {
     if !ensure_stdlib_files() {
         return;
     }
-    let source = match std::fs::read_to_string(&format!("{STDLIB_DIR}/files.el")) {
+    let source = match std::fs::read_to_string(format!("{STDLIB_DIR}/files.el")) {
         Ok(s) => s,
         Err(_) => return,
     };

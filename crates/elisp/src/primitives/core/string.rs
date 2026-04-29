@@ -199,8 +199,8 @@ pub fn prim_string_to_number(args: &LispObject) -> ElispResult<LispObject> {
         _ if arg.is_nil() => return Ok(LispObject::integer(0)),
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
-    if let Some(radix) = args.nth(1).and_then(|obj| obj.as_integer()) {
-        if (2..=36).contains(&radix) {
+    if let Some(radix) = args.nth(1).and_then(|obj| obj.as_integer())
+        && (2..=36).contains(&radix) {
             let trimmed = s.trim();
             let sign = if trimmed.starts_with('-') { -1 } else { 1 };
             let digits = if trimmed.starts_with('+') || trimmed.starts_with('-') {
@@ -210,7 +210,7 @@ pub fn prim_string_to_number(args: &LispObject) -> ElispResult<LispObject> {
             };
             let valid: String = digits
                 .chars()
-                .take_while(|c| c.to_digit(radix as u32).is_some())
+                .take_while(|c| c.is_digit(radix as u32))
                 .collect();
             if valid.is_empty() {
                 return Ok(LispObject::integer(0));
@@ -219,7 +219,6 @@ pub fn prim_string_to_number(args: &LispObject) -> ElispResult<LispObject> {
                 i64::from_str_radix(&valid, radix as u32).unwrap_or(0) * sign,
             ));
         }
-    }
     if let Ok(i) = s.trim().parse::<i64>() {
         Ok(LispObject::integer(i))
     } else if let Ok(f) = s.trim().parse::<f64>() {
@@ -806,7 +805,7 @@ pub fn prim_split_string(args: &LispObject) -> ElispResult<LispObject> {
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
 
-    let parts: Vec<LispObject> = s.split(&sep).map(|p| LispObject::string(p)).collect();
+    let parts: Vec<LispObject> = s.split(&sep).map(LispObject::string).collect();
 
     let mut result = LispObject::nil();
     for part in parts.into_iter().rev() {

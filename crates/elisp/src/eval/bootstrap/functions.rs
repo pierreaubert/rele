@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Auto-generated module
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
@@ -36,23 +37,21 @@ fn stage_stdlib_file(emacs_lisp_dir: &str, file: &str) -> bool {
     if std::path::Path::new(&dest).exists() {
         return true;
     }
-    if let Some(parent) = std::path::Path::new(&dest).parent() {
-        if std::fs::create_dir_all(parent).is_err() {
+    if let Some(parent) = std::path::Path::new(&dest).parent()
+        && std::fs::create_dir_all(parent).is_err() {
             return false;
         }
-    }
     let plain = format!("{emacs_lisp_dir}/{file}.el");
     let gz = format!("{emacs_lisp_dir}/{file}.el.gz");
     if std::path::Path::new(&plain).exists() {
         return std::fs::copy(&plain, &dest).is_ok();
     }
-    if std::path::Path::new(&gz).exists() {
-        if let Ok(out) = std::process::Command::new("gunzip")
+    if std::path::Path::new(&gz).exists()
+        && let Ok(out) = std::process::Command::new("gunzip")
             .args(["-c", &gz])
             .output()
         {
             return out.status.success() && std::fs::write(&dest, out.stdout).is_ok();
         }
-    }
     true
 }

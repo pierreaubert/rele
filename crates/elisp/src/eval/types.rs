@@ -41,6 +41,7 @@ pub struct InterpreterState {
     /// Match data from source-level `string-match` / `match-string`.
     /// This used to be thread-local, which let two interpreter instances
     /// on the same test worker observe each other's captures.
+    #[allow(clippy::type_complexity)]
     pub match_data: Arc<RwLock<Vec<Option<(usize, usize)>>>>,
     pub match_string: Arc<RwLock<Option<String>>>,
     /// EIEIO class registry. This is interpreter-local so loading EIEIO
@@ -87,13 +88,11 @@ impl InterpreterState {
                 "eval operation limit exceeded".to_string(),
             ));
         }
-        if new_ops & 0x3FF == 0 {
-            if let Some(dl) = self.deadline.get() {
-                if std::time::Instant::now() >= dl {
+        if new_ops & 0x3FF == 0
+            && let Some(dl) = self.deadline.get()
+                && std::time::Instant::now() >= dl {
                     return Err(ElispError::EvalError("hard eval limit".into()));
                 }
-            }
-        }
         Ok(())
     }
     pub fn get_value_cell(&self, sym: obarray::SymbolId) -> Option<LispObject> {

@@ -320,7 +320,7 @@ impl LispObject {
     }
 
     pub fn bigint(i: BigInt) -> Self {
-        if let Some(n) = i.to_string().parse::<i64>().ok() {
+        if let Ok(n) = i.to_string().parse::<i64>() {
             LispObject::Integer(n)
         } else {
             LispObject::BigInt(i)
@@ -519,11 +519,10 @@ impl LispObject {
         match self {
             LispObject::Cons(cell) => {
                 let b = cell.lock();
-                if let LispObject::Symbol(id) = &b.0 {
-                    if obarray::symbol_name(*id) == "quote" {
+                if let LispObject::Symbol(id) = &b.0
+                    && obarray::symbol_name(*id) == "quote" {
                         return b.1.first();
                     }
-                }
                 None
             }
             _ => None,

@@ -804,8 +804,9 @@ mod tests {
 
     #[test]
     fn test_match_data_roundtrip() {
-        let mut md = MatchData::default();
-        md.groups = vec![Some((0, 5)), Some((2, 3))];
+        let md = MatchData {
+            groups: vec![Some((0, 5)), Some((2, 3))],
+        };
         let positions = md.as_positions();
         assert_eq!(positions, vec![Some(1), Some(6), Some(3), Some(4)]);
 

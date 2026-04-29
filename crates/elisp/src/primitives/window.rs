@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Window / frame / keymap primitives — batch 2.
 //!
 //! This runtime is headless (no graphical frames, no actual windows),
@@ -40,8 +41,8 @@ thread_local! {
     /// `current-local-map`, etc. can round-trip their state without
     /// "void function" errors.
     static KEYMAPS: RefCell<HashMap<String, LispObject>> = RefCell::new(HashMap::new());
-    static CURRENT_LOCAL_MAP: RefCell<Option<LispObject>> = RefCell::new(None);
-    static CURRENT_GLOBAL_MAP: RefCell<Option<LispObject>> = RefCell::new(None);
+    static CURRENT_LOCAL_MAP: RefCell<Option<LispObject>> = const { RefCell::new(None) };
+    static CURRENT_GLOBAL_MAP: RefCell<Option<LispObject>> = const { RefCell::new(None) };
 }
 
 /// Tag used on the cons cell that represents a window-configuration
@@ -261,9 +262,7 @@ pub fn prim_switch_to_buffer(args: &LispObject) -> ElispResult<LispObject> {
         buffer::with_registry_mut(|r| r.set_current(id));
     }
     let id = buffer::with_registry(|r| r.current_id());
-    Ok(Some(id)
-        .map(crate::primitives_buffer::make_buffer_object)
-        .unwrap_or(LispObject::nil()))
+    Ok(crate::primitives_buffer::make_buffer_object(id))
 }
 
 pub fn prim_set_buffer(args: &LispObject) -> ElispResult<LispObject> {
@@ -644,7 +643,7 @@ pub fn prim_color_blend(args: &LispObject) -> ElispResult<LispObject> {
         .and_then(|a| a.as_string().cloned())
         .unwrap_or_default();
     let alpha = match args.nth(2).and_then(|a| a.as_float()) {
-        Some(f) => f.max(0.0).min(1.0),
+        Some(f) => f.clamp(0.0, 1.0),
         None => 0.5,
     };
     let parse = |s: &str| -> Option<(u8, u8, u8)> {

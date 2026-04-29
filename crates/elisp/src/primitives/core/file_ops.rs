@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 

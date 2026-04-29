@@ -151,10 +151,10 @@ pub(super) fn stateful_autoload_do_load(
 ) -> ElispResult<LispObject> {
     let _ = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let funname = args.nth(1);
-    if let Some(sym_obj) = funname {
-        if let Some(sym_name) = sym_obj.as_symbol() {
-            if let Some(sym_id) = crate::obarray::GLOBAL_OBARRAY.read().find(&sym_name) {
-                if let Some(def) = state.get_function_cell(sym_id) {
+    if let Some(sym_obj) = funname
+        && let Some(sym_name) = sym_obj.as_symbol()
+            && let Some(sym_id) = crate::obarray::GLOBAL_OBARRAY.read().find(&sym_name)
+                && let Some(def) = state.get_function_cell(sym_id) {
                     let is_autoload_stub = def
                         .first()
                         .and_then(|head| head.as_symbol())
@@ -163,9 +163,6 @@ pub(super) fn stateful_autoload_do_load(
                         return Ok(def);
                     }
                 }
-            }
-        }
-    }
     Ok(LispObject::nil())
 }
 pub(super) fn stateful_load_history_filename_element(
@@ -183,13 +180,11 @@ pub(super) fn stateful_load_history_filename_element(
         .unwrap_or(LispObject::nil());
     let mut current = load_history;
     while let Some((entry, rest)) = current.destructure_cons() {
-        if let Some((key, _)) = entry.destructure_cons() {
-            if let Some(key_str) = key.as_string() {
-                if *key_str == filename {
+        if let Some((key, _)) = entry.destructure_cons()
+            && let Some(key_str) = key.as_string()
+                && *key_str == filename {
                     return Ok(entry);
                 }
-            }
-        }
         current = rest;
     }
     Ok(LispObject::nil())

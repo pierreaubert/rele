@@ -238,11 +238,10 @@ pub fn prim_cl_concatenate(args: &LispObject) -> ElispResult<LispObject> {
                     // A list of chars.
                     let items = to_vec(&seq, 1 << 16);
                     for it in items {
-                        if let Some(n) = it.as_integer() {
-                            if let Some(c) = char::from_u32(n as u32) {
+                        if let Some(n) = it.as_integer()
+                            && let Some(c) = char::from_u32(n as u32) {
                                 out.push(c);
                             }
-                        }
                     }
                 }
                 rest_cur = rest;
@@ -356,7 +355,7 @@ pub fn prim_cl_pairlis(args: &LispObject) -> ElispResult<LispObject> {
     let vals = to_vec(&args.nth(1).unwrap_or(LispObject::nil()), 1 << 20);
     let tail = args.nth(2).unwrap_or(LispObject::nil());
     let mut out = tail;
-    for (k, v) in keys.into_iter().zip(vals.into_iter()).rev() {
+    for (k, v) in keys.into_iter().zip(vals).rev() {
         out = LispObject::cons(LispObject::cons(k, v), out);
     }
     Ok(out)
@@ -769,8 +768,8 @@ fn check_type_recursive(v: &LispObject, type_spec: &LispObject) -> bool {
         LispObject::Nil => false, // nil as a type means nothing matches
         _ => {
             // Compound form like (or ...), (and ...), (not ...), (member ...), (satisfies ...)
-            if let Some((car, cdr)) = type_spec.destructure_cons() {
-                if let Some(op) = car.as_symbol() {
+            if let Some((car, cdr)) = type_spec.destructure_cons()
+                && let Some(op) = car.as_symbol() {
                     return match op.as_str() {
                         "or" => {
                             // (or TYPE1 TYPE2 ...) — at least one must match
@@ -825,7 +824,6 @@ fn check_type_recursive(v: &LispObject, type_spec: &LispObject) -> bool {
                         }
                     };
                 }
-            }
             false
         }
     }
@@ -880,11 +878,10 @@ pub fn prim_cl_coerce(args: &LispObject) -> ElispResult<LispObject> {
                 let items = to_vec(&v, 1 << 20);
                 let mut out = String::new();
                 for it in items {
-                    if let Some(n) = it.as_integer() {
-                        if let Some(c) = char::from_u32(n as u32) {
+                    if let Some(n) = it.as_integer()
+                        && let Some(c) = char::from_u32(n as u32) {
                             out.push(c);
                         }
-                    }
                 }
                 Ok(LispObject::string(&out))
             }
@@ -1130,8 +1127,8 @@ pub fn prim_cl_fill(args: &LispObject) -> ElispResult<LispObject> {
             let items = to_vec(&seq, 1 << 20);
             let stop = end.unwrap_or(items.len()).min(items.len());
             let mut out = items;
-            for i in start.min(stop)..stop {
-                out[i] = item.clone();
+            for slot in &mut out[start.min(stop)..stop] {
+                *slot = item.clone();
             }
             Ok(from_slice(&out))
         }
@@ -1169,9 +1166,7 @@ pub fn prim_cl_replace(args: &LispObject) -> ElispResult<LispObject> {
     let e2 = end2.unwrap_or(b.len()).min(b.len());
     let n = (e1 - start1.min(e1)).min(e2 - start2.min(e2));
     let mut out = a.clone();
-    for i in 0..n {
-        out[start1 + i] = b[start2 + i].clone();
-    }
+    out[start1..start1 + n].clone_from_slice(&b[start2..start2 + n]);
     Ok(from_slice(&out))
 }
 

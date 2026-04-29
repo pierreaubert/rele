@@ -41,6 +41,7 @@ impl LspConfig {
     /// # Errors
     /// Returns an error if the file cannot be read or parsed.
     pub fn load_from_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        #[allow(clippy::disallowed_methods)]
         let content = std::fs::read_to_string(path)?;
         let config: Self = serde_json::from_str(&content)?;
         Ok(config)

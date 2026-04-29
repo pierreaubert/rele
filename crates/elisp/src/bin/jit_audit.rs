@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Audit JIT opcode coverage over real bytecode loaded by bootstrap.
 //!
 //! Usage:

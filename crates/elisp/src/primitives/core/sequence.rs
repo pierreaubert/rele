@@ -283,11 +283,10 @@ pub fn prim_rassq(args: &LispObject) -> ElispResult<LispObject> {
     let alist = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     let mut current = alist;
     while let Some((entry, rest)) = current.destructure_cons() {
-        if let Some((_, val)) = entry.destructure_cons() {
-            if eq_test(&val, &key) {
+        if let Some((_, val)) = entry.destructure_cons()
+            && eq_test(&val, &key) {
                 return Ok(entry);
             }
-        }
         current = rest;
     }
     Ok(LispObject::nil())
@@ -298,11 +297,10 @@ pub fn prim_rassoc(args: &LispObject) -> ElispResult<LispObject> {
     let alist = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     let mut current = alist;
     while let Some((entry, rest)) = current.destructure_cons() {
-        if let Some((_, val)) = entry.destructure_cons() {
-            if val == key {
+        if let Some((_, val)) = entry.destructure_cons()
+            && val == key {
                 return Ok(entry);
             }
-        }
         current = rest;
     }
     Ok(LispObject::nil())

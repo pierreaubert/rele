@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Auto-generated module structure
 
 // Re-export from parent eval module so sub-files can use `super::X`
@@ -13,6 +14,7 @@ pub(super) use super::sync_cell::SyncRefCell;
 pub(super) use super::types::InterpreterState;
 
 pub mod fallbackframe_traits;
+#[allow(clippy::module_inception)]
 pub mod functions;
 pub mod functions_2;
 pub mod functions_3;

@@ -221,10 +221,10 @@ impl EditorCore {
                 DocumentBuffer::from_file(canonical, content),
             ),
             history: std::mem::take(&mut self.history),
-            cursor: std::mem::replace(&mut self.cursor, EditorCursor::new()),
+            cursor: std::mem::take(&mut self.cursor),
             kind: std::mem::replace(&mut self.current_buffer_kind, BufferKind::File),
             read_only: std::mem::replace(&mut self.current_buffer_read_only, false),
-            major_mode: std::mem::replace(&mut self.current_major_mode, None),
+            major_mode: self.current_major_mode.take(),
             scroll_line: std::mem::replace(&mut self.scroll_line, 0),
             last_edit_was_char_insert: std::mem::replace(
                 &mut self.last_edit_was_char_insert,
@@ -1853,9 +1853,7 @@ impl LispHost {
         if let Some(interactive) = rust_interactive {
             return command_plan_for_interactive(interactive);
         }
-        if self.is_user_defined_command(name) {
-            CommandPlan::Run
-        } else if self.is_autoloaded_command(name) {
+        if self.is_user_defined_command(name) || self.is_autoloaded_command(name) {
             CommandPlan::Run
         } else {
             CommandPlan::Missing

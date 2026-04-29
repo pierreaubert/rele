@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! Unified mini-buffer abstraction.
 //!
 //! Replaces ad-hoc prompt state (command palette, isearch overlays, goto-line)

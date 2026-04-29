@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 //! End-to-end LSP integration test against a real `rust-analyzer` server.
 //!
 //! The test:

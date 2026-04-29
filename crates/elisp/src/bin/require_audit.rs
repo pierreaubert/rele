@@ -1,3 +1,5 @@
+#![allow(clippy::manual_checked_ops)]
+#![allow(clippy::disallowed_methods)]
 //! Audit the require chain for secondary libraries.
 //!
 //! Bootstraps the stdlib, then attempts to load cl-lib, cl-macs,
