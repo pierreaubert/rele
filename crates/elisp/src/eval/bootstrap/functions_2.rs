@@ -149,6 +149,12 @@ pub fn make_stdlib_interp() -> Interpreter {
         "remote-file-name-inhibit-cache",
         "default-directory",
         "buffer-display-table",
+        "redisplay-highlight-region-function",
+        "redisplay-unhighlight-region-function",
+        "region-extract-function",
+        "region-insert-function",
+        "yank-handled-properties",
+        "yank-excluded-properties",
     ] {
         interp.define(name, LispObject::nil());
     }
@@ -505,6 +511,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("keyboard-coding-system", LispObject::nil());
     interp.define("terminal-coding-system", LispObject::nil());
     interp.define("selection-coding-system", LispObject::nil());
+    interp.define("coding-system-for-read", LispObject::nil());
     interp.define("file-name-coding-system", LispObject::nil());
     interp.define("default-process-coding-system", LispObject::nil());
     interp.define("language-info-alist", LispObject::nil());
@@ -613,7 +620,7 @@ pub fn make_stdlib_interp() -> Interpreter {
         "buffer-substring-no-properties",
         LispObject::primitive("buffer-substring-no-properties"),
     );
-    interp.define("indent-to", LispObject::primitive("ignore"));
+    interp.define("indent-to", LispObject::primitive("indent-to"));
     if let Some(emacs_lisp_dir) = emacs_lisp_dir() {
         let mut path = LispObject::nil();
         if let Some(source_root) = emacs_source_root() {
@@ -762,7 +769,7 @@ pub fn make_stdlib_interp() -> Interpreter {
         "current-indentation",
         LispObject::primitive("current-indentation"),
     );
-    interp.define("indent-to", LispObject::primitive("ignore"));
+    interp.define("indent-to", LispObject::primitive("indent-to"));
     interp.define("make-syntax-table", LispObject::primitive("ignore"));
     interp.define("syntax-table-p", LispObject::primitive("ignore"));
     interp.define("category-table-p", LispObject::primitive("ignore"));

@@ -697,3 +697,126 @@ CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.
    (`WRONG_TYPE_MARKER`, `WRONG_TYPE_NUMBER`).
 5. `json-serialize/object` still has a nested object semantic mismatch
    after the no-signal assertions now pass.
+
+## 2026-04-29 — Real dired runtime bridge
+
+**Command run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp test_dired_load_progress -- --nocapture
+```
+
+**Movement:**
+
+- Real `lisp/dired.el` still loads `336/337` forms; the remaining load
+  miss is `dired-loaddefs.el` not being found in the probed source tree.
+- The runtime probe moved from:
+  - `(dired-noselect DIR)` => `(wrong-type-argument "string")`
+  - `(dired DIR)` => `(wrong-type-argument "string")`
+- To:
+  - `(dired-noselect DIR)` => `(buffer . N)`
+  - `(dired DIR)` => `(window . 0)`
+
+**Code landed:**
+
+- Editor-backed `current-buffer`, `get-buffer-create`, `get-buffer`,
+  `buffer-list`, `set-buffer`, and `with-current-buffer` now use Lisp
+  buffer objects via the existing buffer registry instead of string
+  stand-ins.
+- Editor callback mutations now keep the shadow Lisp buffer text/point
+  synchronized enough for buffer-local Lisp code to run inside real
+  buffer objects.
+- Fixed `compare-strings` to use Emacs argument order:
+  `(STRING1 START1 END1 STRING2 START2 END2 &optional IGNORE-CASE)`.
+  This unblocks upstream `subr.el`'s `string-prefix-p`, which was the
+  first `create-file-buffer` failure.
+- Added local-runtime shims for common dumped/primitive APIs used by
+  real Dired: `connection-local-value`, `connection-local-p`,
+  `file-system-info`, `propertized-buffer-identification`,
+  `substitute-command-keys`, `bound-and-true-p`, and
+  `coding-system-for-read`.
+- The dired progress probe now explicitly loads `uniquify.el`, matching
+  the `create-file-buffer` path used by real `files.el`.
+
+**Verification:**
+
+- `cargo test -p rele-elisp test_dired_load_progress -- --nocapture`
+- `cargo test -p rele-elisp test_compare_strings_emacs_argument_order`
+- `cargo test -p rele-gpui elisp_get_buffer_create_appears_in_editor_buffer_list`
+- `cargo test -p rele-gpui elisp_with_current_buffer_switches_editor_buffer_object`
+- `cargo check -p rele-elisp`
+- `cargo check -p rele-gpui`
+
+**Next leverage targets:**
+
+1. Teach the loader/autoload path to find generated `*-loaddefs.el`
+   files from an Emacs source tree; `dired-loaddefs.el` is still the
+   only `dired.el` load miss in this probe.
+2. Replace the ad hoc dumped-runtime shims with a bootstrap preload list
+   or generated loaddefs ingestion so more real `.el` files work without
+   per-file patches.
+3. Implement enough display/window table API for direct
+   `dired-internal-noselect` probes; public `dired-noselect` and `dired`
+   already return the expected object shapes.
+
+## 2026-04-29 — Real rectangle runtime bridge
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp test_rect_load_progress -- --nocapture
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh
+```
+
+**Movement:**
+
+- Real upstream `lisp/rect.el` moved from `74/78` forms loaded to
+  `78/78`.
+- The initial runtime probe had four `wrong-type-argument "number"`
+  failures from comparing marker objects with numeric positions, plus
+  missing `filter-buffer-substring`, `push-mark`, and yank property
+  bindings.
+- The real Lisp implementations now produce concrete results for:
+  `extract-rectangle`, `delete-extract-rectangle`, `insert-rectangle`,
+  `open-rectangle`, `clear-rectangle`, and `string-rectangle`.
+
+**Code landed:**
+
+- Numeric primitives now accept marker positions where Emacs treats
+  markers as numbers, including comparison and integer arithmetic paths.
+- Buffer position arguments now accept markers, unblocking real
+  rectangle loops that use `copy-marker` sentinels.
+- Added headless buffer primitives for `filter-buffer-substring`,
+  `mark`, `mark-marker`, `set-mark`, `push-mark`, `region-beginning`,
+  `region-end`, `region-active-p`, and `indent-to`.
+- `move-to-column` now honors non-nil force by extending short lines
+  with spaces.
+- Bound the redisplay/region function variables used by `rect.el`'s
+  `add-function` forms, plus yank property variables used by
+  upstream `insert-for-yank`.
+- Added `test_rect_load_progress` as a repeatable real-library probe.
+
+**Verification:**
+
+- `cargo test -p rele-elisp test_rect_load_progress -- --nocapture`
+- `cargo test -p rele-elisp --lib`
+- `cargo check -p rele-elisp`
+- `./ert-progress/refresh.sh` with `CARGO_TARGET_DIR` set to
+  `/Users/pierre/src/rele/tmp/codex-target`
+
+**Refresh snapshot:**
+
+- Total: `775` pass, `199` fail, `67` err, `124` skip (`66%`).
+- Top patterns remain: `DID_NOT_SIGNAL` (`11`), vector `timerp`
+  (`10` process errors), syntax `open-pos` assertions (`8`),
+  `WRONG_N_ARGS` (`6`), and `select-active-regions` void var (`5`).
+
+**Next leverage targets:**
+
+1. Implement the vector timer representation expected by `timerp`; it
+   is the largest error bucket in `process-tests.el`.
+2. Continue the syntax parser work around `syntax-ppss` comment
+   state/open-position fields.
+3. Bind/editor-model `select-active-regions` and related mark-active
+   variables; the rectangle work added buffer mark primitives but not
+   the higher-level selection policy semantics.

@@ -10,6 +10,82 @@ use std::sync::Arc;
 
 use super::{Environment, InterpreterState, MacroTable, eval, eval_progn};
 
+pub(super) fn shadow_buffer_object_for_name(name: &str) -> LispObject {
+    let id = crate::buffer::with_registry_mut(|registry| registry.create(name));
+    crate::primitives_buffer::make_buffer_object(id)
+}
+
+fn set_shadow_current_buffer_by_name(name: &str) -> LispObject {
+    let id = crate::buffer::with_registry_mut(|registry| {
+        let id = registry.create(name);
+        registry.set_current(id);
+        id
+    });
+    crate::primitives_buffer::make_buffer_object(id)
+}
+
+fn shadow_buffer_name(buffer: &LispObject) -> Option<String> {
+    match buffer {
+        LispObject::String(name) => Some(name.clone()),
+        LispObject::Symbol(id) => Some(crate::obarray::symbol_name(*id)),
+        LispObject::Cons(_) => {
+            let id = crate::primitives_buffer::buffer_object_id(buffer)?;
+            crate::buffer::with_registry(|registry| registry.get(id).map(|b| b.name.clone()))
+        }
+        _ => None,
+    }
+}
+
+fn sync_shadow_current_text(text: &str) {
+    crate::buffer::with_current_mut(|buffer| {
+        buffer.text = text.to_string();
+        let point_max = buffer.point_max();
+        buffer.point = buffer.point.clamp(buffer.point_min(), point_max);
+    });
+}
+
+fn insert_shadow_current(text: &str) {
+    crate::buffer::with_current_mut(|buffer| buffer.insert(text));
+}
+
+pub(super) fn switch_editor_and_shadow_to_buffer(
+    target: &LispObject,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+) -> ElispResult<Option<LispObject>> {
+    let name = match shadow_buffer_name(target) {
+        Some(name) => name,
+        None => return Err(ElispError::WrongTypeArgument("buffer".into())),
+    };
+    let mut e = editor.write();
+    if let Some(cb) = e.as_mut() {
+        if !cb.switch_to_buffer_by_name(&name) {
+            return Ok(None);
+        }
+        let text = cb.buffer_string();
+        drop(e);
+        let object = set_shadow_current_buffer_by_name(&name);
+        sync_shadow_current_text(&text);
+        return Ok(Some(object));
+    }
+    drop(e);
+    let args = LispObject::cons(target.clone(), LispObject::nil());
+    let result = crate::primitives_window::prim_set_buffer(&args)?;
+    if result.is_nil() {
+        Ok(None)
+    } else {
+        Ok(Some(result))
+    }
+}
+
+pub(super) fn current_editor_buffer_name(
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+) -> Option<String> {
+    editor
+        .read()
+        .as_ref()
+        .and_then(|callback| callback.current_buffer_name())
+}
+
 pub(super) fn eval_buffer_string(
     editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
 ) -> ElispResult<Value> {
@@ -61,7 +137,13 @@ pub(super) fn eval_insert(
     let text_str: String = chunks.concat();
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {
+        let current_name = cb.current_buffer_name();
         cb.insert(&text_str);
+        drop(e);
+        if let Some(name) = current_name {
+            set_shadow_current_buffer_by_name(&name);
+            insert_shadow_current(&text_str);
+        }
     } else {
         drop(e);
         super::insert_with_overlay_hooks(&text_str, before_markers, env, editor, macros, state)?;
@@ -95,11 +177,17 @@ pub(super) fn eval_goto_char(
     };
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {
+        let current_name = cb.current_buffer_name();
         // Preserve existing behaviour: pass through whatever the caller
         // gave us (the editor callback handles its own bounds). Test
         // `test_save_excursion_restores_point` relies on `(goto-char 0)`
         // round-tripping through `point` as 0.
         cb.goto_char(pos_i.max(0) as usize);
+        drop(e);
+        if let Some(name) = current_name {
+            set_shadow_current_buffer_by_name(&name);
+            crate::buffer::with_current_mut(|b| b.goto_char(pos_i.max(1) as usize));
+        }
     } else {
         drop(e);
         // StubBuffer path: clamp to point-min (1) since char offsets
@@ -256,7 +344,15 @@ pub(super) fn eval_forward_line(
     };
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {
+        let current_name = cb.current_buffer_name();
         cb.forward_line(n);
+        drop(e);
+        if let Some(name) = current_name {
+            set_shadow_current_buffer_by_name(&name);
+            crate::buffer::with_current_mut(|b| {
+                b.forward_line(n);
+            });
+        }
     }
     Ok(Value::nil())
 }
@@ -266,7 +362,16 @@ pub(super) fn eval_move_beginning_of_line(
 ) -> ElispResult<Value> {
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {
+        let current_name = cb.current_buffer_name();
         cb.move_beginning_of_line();
+        drop(e);
+        if let Some(name) = current_name {
+            set_shadow_current_buffer_by_name(&name);
+            crate::buffer::with_current_mut(|b| {
+                let pos = b.line_beginning_position(b.point);
+                b.goto_char(pos);
+            });
+        }
     }
     Ok(Value::nil())
 }
@@ -276,7 +381,16 @@ pub(super) fn eval_move_end_of_line(
 ) -> ElispResult<Value> {
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {
+        let current_name = cb.current_buffer_name();
         cb.move_end_of_line();
+        drop(e);
+        if let Some(name) = current_name {
+            set_shadow_current_buffer_by_name(&name);
+            crate::buffer::with_current_mut(|b| {
+                let pos = b.line_end_position(b.point);
+                b.goto_char(pos);
+            });
+        }
     }
     Ok(Value::nil())
 }
@@ -286,7 +400,13 @@ pub(super) fn eval_beginning_of_buffer(
 ) -> ElispResult<Value> {
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {
+        let current_name = cb.current_buffer_name();
         cb.move_beginning_of_buffer();
+        drop(e);
+        if let Some(name) = current_name {
+            set_shadow_current_buffer_by_name(&name);
+            crate::buffer::with_current_mut(|b| b.goto_char(b.point_min()));
+        }
     }
     Ok(Value::nil())
 }
@@ -296,7 +416,13 @@ pub(super) fn eval_end_of_buffer(
 ) -> ElispResult<Value> {
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {
+        let current_name = cb.current_buffer_name();
         cb.move_end_of_buffer();
+        drop(e);
+        if let Some(name) = current_name {
+            set_shadow_current_buffer_by_name(&name);
+            crate::buffer::with_current_mut(|b| b.goto_char(b.point_max()));
+        }
     }
     Ok(Value::nil())
 }
@@ -876,10 +1002,7 @@ pub(super) fn eval_get_buffer_create_bridge(
         let mut e = editor.write();
         if let Some(cb) = e.as_mut() {
             cb.get_or_create_buffer(&name);
-            // Return the name as the buffer object representation —
-            // matches how `prim_get_buffer_create` shapes its result
-            // for the stub registry.
-            return Ok(obj_to_value(LispObject::string(&name)));
+            return Ok(obj_to_value(shadow_buffer_object_for_name(&name)));
         }
     }
     // Fall back to the stub buffer registry so non-editor uses keep
@@ -901,30 +1024,8 @@ pub(super) fn eval_set_buffer_bridge(
     let args_obj = value_to_obj(args);
     let target_arg = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let target = value_to_obj(eval(obj_to_value(target_arg), env, editor, macros, state)?);
-    let name = match &target {
-        LispObject::String(s) => s.clone(),
-        LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
-        // A buffer object `(buffer . id)` — fall through to stub.
-        LispObject::Cons(_) => {
-            // Defer to the stub registry — `prim_set_buffer` semantics.
-            let args_list = LispObject::cons(target.clone(), LispObject::nil());
-            return Ok(obj_to_value(crate::primitives_window::prim_set_buffer(
-                &args_list,
-            )?));
-        }
-        _ => return Err(ElispError::WrongTypeArgument("buffer".into())),
-    };
-    {
-        let mut e = editor.write();
-        if let Some(cb) = e.as_mut() {
-            cb.switch_to_buffer_by_name(&name);
-            return Ok(obj_to_value(LispObject::string(&name)));
-        }
-    }
-    let args_list = LispObject::cons(LispObject::string(&name), LispObject::nil());
-    Ok(obj_to_value(crate::primitives_window::prim_set_buffer(
-        &args_list,
-    )?))
+    let result = switch_editor_and_shadow_to_buffer(&target, editor)?;
+    Ok(obj_to_value(result.unwrap_or_else(LispObject::nil)))
 }
 
 pub(super) fn eval_current_buffer_bridge(
@@ -935,7 +1036,9 @@ pub(super) fn eval_current_buffer_bridge(
         if let Some(cb) = e.as_ref()
             && let Some(name) = cb.current_buffer_name()
         {
-            return Ok(obj_to_value(LispObject::string(&name)));
+            drop(e);
+            let object = set_shadow_current_buffer_by_name(&name);
+            return Ok(obj_to_value(object));
         }
     }
     let id = crate::buffer::with_registry(|r| r.current_id());
@@ -955,7 +1058,7 @@ pub(super) fn eval_buffer_list_bridge(
             if !names.is_empty() {
                 let mut out = LispObject::nil();
                 for name in names.into_iter().rev() {
-                    out = LispObject::cons(LispObject::string(&name), out);
+                    out = LispObject::cons(shadow_buffer_object_for_name(&name), out);
                 }
                 return Ok(obj_to_value(out));
             }
@@ -1007,7 +1110,13 @@ pub(super) fn eval_insert_directory(
     let listing = render_directory_listing(&file_str, &switches_str, full_dir_p);
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {
+        let current_name = cb.current_buffer_name();
         cb.insert(&listing);
+        drop(e);
+        if let Some(name) = current_name {
+            set_shadow_current_buffer_by_name(&name);
+            insert_shadow_current(&listing);
+        }
     } else {
         drop(e);
         crate::buffer::with_current_mut(|b| b.insert(&listing));

@@ -93,6 +93,7 @@ fn test_dired_load_progress() {
                 "lisp/emacs-lisp/easymenu.el",
                 "lisp/menu-bar.el",
                 "lisp/files.el",
+                "lisp/uniquify.el",
                 "lisp/dnd.el",
                 "lisp/autorevert.el",
                 "lisp/dired-loaddefs.el",
@@ -126,6 +127,17 @@ fn test_dired_load_progress() {
             for (label, src) in [
                 ("expand-file-name", format!("(expand-file-name \"{tmp_str}\")")),
                 ("abbreviate-file-name", format!("(abbreviate-file-name \"{tmp_str}\")")),
+                ("dired-find-buffer-nocreate", format!("(prin1-to-string (condition-case e (dired-find-buffer-nocreate \"{tmp_str}\") (error e)))")),
+                ("directory-file-name", format!("(prin1-to-string (condition-case e (directory-file-name \"{tmp_str}\") (error e)))")),
+                ("file-name-nondirectory", format!("(prin1-to-string (condition-case e (file-name-nondirectory \"{tmp_str}\") (error e)))")),
+                ("file-name-nondirectory-directory-file-name", format!("(prin1-to-string (condition-case e (file-name-nondirectory (directory-file-name \"{tmp_str}\")) (error e)))")),
+                ("letstar-repeat-string", "(prin1-to-string (condition-case e (let* ((x \"T\") (x (if (string= x \"\") \"F\" x))) x) (error e)))".to_string()),
+                ("string-prefix-p-space", "(prin1-to-string (condition-case e (string-prefix-p \" \" \"T\") (error e)))".to_string()),
+                ("create-file-buffer-basename", format!("(prin1-to-string (condition-case e (let* ((filename \"{tmp_str}\") (lastname (file-name-nondirectory (directory-file-name filename))) (lastname (if (string= lastname \"\") filename lastname)) (basename (if (string-prefix-p \" \" lastname) (concat \"|\" lastname) lastname))) basename) (error e)))")),
+                ("generate-new-buffer", format!("(prin1-to-string (condition-case e (generate-new-buffer \"T\") (error e)))")),
+                ("uniquify-create-advice", format!("(prin1-to-string (condition-case e (let* ((filename \"{tmp_str}\") (basename \"T\") (buf (generate-new-buffer basename))) (uniquify--create-file-buffer-advice buf filename basename) buf) (error e)))")),
+                ("create-file-buffer", format!("(prin1-to-string (condition-case e (create-file-buffer \"{tmp_str}\") (error e)))")),
+                ("dired-internal-noselect", format!("(prin1-to-string (condition-case e (dired-internal-noselect \"{tmp_str}\") (error e)))")),
                 ("dired-noselect", format!("(prin1-to-string (condition-case e (dired-noselect \"{tmp_str}\") (error e)))")),
                 ("dired", format!("(prin1-to-string (condition-case e (dired \"{tmp_str}\") (error e)))")),
             ] {
@@ -150,6 +162,142 @@ fn test_dired_load_progress() {
         })
         .expect("failed to spawn dired probe thread");
     handle.join().expect("dired probe thread panicked");
+}
+
+/// Probe how much of `lisp/rect.el` (the real Emacs rectangle library)
+/// loads and whether the core noninteractive rectangle functions can
+/// run against the headless Lisp buffer model.
+#[test]
+fn test_rect_load_progress() {
+    let Some(root) = emacs_source_root() else {
+        return;
+    };
+    if !ensure_stdlib_files() {
+        return;
+    }
+    let root = root.to_string();
+    let handle = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let interp = make_stdlib_interp();
+            for prereq in [
+                "lisp/subr.el",
+                "lisp/emacs-lisp/cl-lib.el",
+                "lisp/emacs-lisp/cl-macs.el",
+            ] {
+                let path = format!("{root}/{prereq}");
+                if let Some((ok, total)) = probe_emacs_file(&interp, &path) {
+                    eprintln!("  prereq {prereq}: {ok}/{total}");
+                }
+            }
+            let path = format!("{root}/lisp/rect.el");
+            if let Ok(src) = std::fs::read_to_string(&path) {
+                let (ok, total, errs) = load_file_progress(&interp, &src);
+                let pct = if total > 0 { ok * 100 / total } else { 0 };
+                eprintln!("  lisp/rect.el: {ok}/{total} ({pct}%)");
+                for (i, e) in errs.iter().take(10) {
+                    eprintln!("    form #{i}: {e}");
+                }
+            } else {
+                eprintln!("  lisp/rect.el: (not readable)");
+            }
+
+            for (label, src) in [
+                (
+                    "extract-rectangle",
+                    r#"
+(prin1-to-string
+ (condition-case e
+     (with-temp-buffer
+       (insert "abcde\nfghij\nklmno\n")
+       (extract-rectangle 2 15))
+   (error e)))
+"#,
+                ),
+                (
+                    "delete-extract-rectangle",
+                    r#"
+(prin1-to-string
+ (condition-case e
+     (with-temp-buffer
+       (insert "abcde\nfghij\nklmno\n")
+       (let ((rect (delete-extract-rectangle 2 15)))
+         (list rect (buffer-string))))
+   (error e)))
+"#,
+                ),
+                (
+                    "insert-rectangle",
+                    r#"
+(prin1-to-string
+ (condition-case e
+     (with-temp-buffer
+       (insert "aa\naa\n")
+       (goto-char 2)
+       (insert-rectangle '("X" "Y"))
+       (buffer-string))
+   (error e)))
+"#,
+                ),
+                (
+                    "open-rectangle",
+                    r#"
+(prin1-to-string
+ (condition-case e
+     (with-temp-buffer
+       (insert "abcde\nfghij\nklmno\n")
+       (open-rectangle 2 15)
+       (buffer-string))
+   (error e)))
+"#,
+                ),
+                (
+                    "clear-rectangle",
+                    r#"
+(prin1-to-string
+ (condition-case e
+     (with-temp-buffer
+       (insert "abcde\nfghij\nklmno\n")
+       (clear-rectangle 2 15)
+       (buffer-string))
+   (error e)))
+"#,
+                ),
+                (
+                    "string-rectangle",
+                    r#"
+(prin1-to-string
+ (condition-case e
+     (with-temp-buffer
+       (insert "abcde\nfghij\nklmno\n")
+       (string-rectangle 2 15 "ZZ")
+       (buffer-string))
+   (error e)))
+"#,
+                ),
+            ] {
+                match crate::read_all(src) {
+                    Ok(mut forms) => {
+                        if let Some(form) = forms.pop() {
+                            interp.reset_eval_ops();
+                            interp.set_eval_ops_limit(5_000_000);
+                            interp.set_deadline(
+                                std::time::Instant::now() + std::time::Duration::from_secs(5),
+                            );
+                            match interp.eval(form) {
+                                Ok(v) => eprintln!("  {label} => {v:?}"),
+                                Err(e) => eprintln!("  {label} ERROR: {e}"),
+                            }
+                            interp.set_eval_ops_limit(0);
+                            interp.clear_deadline();
+                        }
+                    }
+                    Err(e) => eprintln!("  {label} parse error: {e}"),
+                }
+            }
+        })
+        .expect("failed to spawn rect probe thread");
+    handle.join().expect("rect probe thread panicked");
 }
 
 mod module_stubs {

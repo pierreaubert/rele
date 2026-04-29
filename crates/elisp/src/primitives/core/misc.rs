@@ -7,6 +7,11 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "ignore" => Some(prim_ignore(args)),
         "rele--rx-translate" => Some(prim_rele_rx_translate(args)),
         "autoload-compute-prefixes" => Some(Ok(LispObject::nil())),
+        "connection-local-value" => Some(prim_identity(args)),
+        "connection-local-p" => Some(Ok(LispObject::nil())),
+        "file-system-info" => Some(Ok(LispObject::nil())),
+        "propertized-buffer-identification" => Some(prim_propertized_buffer_identification(args)),
+        "substitute-command-keys" => Some(prim_identity(args)),
         "format-message" => Some(super::string::prim_concat(args)),
         _ => None,
     }
@@ -19,6 +24,11 @@ pub fn prim_identity(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_ignore(args: &LispObject) -> ElispResult<LispObject> {
     let _ = args;
     Ok(LispObject::nil())
+}
+
+pub fn prim_propertized_buffer_identification(args: &LispObject) -> ElispResult<LispObject> {
+    let fmt = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    Ok(LispObject::cons(fmt, LispObject::nil()))
 }
 
 pub fn prim_rele_rx_translate(args: &LispObject) -> ElispResult<LispObject> {

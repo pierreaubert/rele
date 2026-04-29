@@ -71,21 +71,23 @@ use builtins::{
     eval_mapc, eval_mapcar, eval_provide, eval_put, eval_require,
 };
 use editor::{
-    eval_beginning_of_buffer, eval_buffer_list_bridge, eval_buffer_size, eval_buffer_string,
-    eval_clear_rectangle, eval_copy_region_as_kill, eval_current_buffer_bridge, eval_delete_char,
-    eval_delete_rectangle, eval_downcase_word, eval_end_of_buffer, eval_exchange_point_and_mark,
-    eval_find_file, eval_forward_char, eval_forward_line, eval_get_buffer_create_bridge,
-    eval_goto_char, eval_insert, eval_insert_directory, eval_keyboard_quit, eval_kill_line,
-    eval_kill_rectangle, eval_kill_region, eval_kill_word, eval_move_beginning_of_line,
-    eval_move_end_of_line, eval_next_buffer, eval_open_rectangle, eval_point, eval_point_max,
-    eval_point_min, eval_previous_buffer, eval_query_replace, eval_query_replace_regexp,
-    eval_re_search_backward, eval_re_search_forward, eval_redo_primitive, eval_replace_match,
-    eval_replace_regexp, eval_replace_string, eval_save_buffer, eval_save_current_buffer,
-    eval_save_excursion, eval_search_backward, eval_search_forward, eval_set_buffer_bridge,
+    current_editor_buffer_name, eval_beginning_of_buffer, eval_buffer_list_bridge,
+    eval_buffer_size, eval_buffer_string, eval_clear_rectangle, eval_copy_region_as_kill,
+    eval_current_buffer_bridge, eval_delete_char, eval_delete_rectangle, eval_downcase_word,
+    eval_end_of_buffer, eval_exchange_point_and_mark, eval_find_file, eval_forward_char,
+    eval_forward_line, eval_get_buffer_create_bridge, eval_goto_char, eval_insert,
+    eval_insert_directory, eval_keyboard_quit, eval_kill_line, eval_kill_rectangle,
+    eval_kill_region, eval_kill_word, eval_move_beginning_of_line, eval_move_end_of_line,
+    eval_next_buffer, eval_open_rectangle, eval_point, eval_point_max, eval_point_min,
+    eval_previous_buffer, eval_query_replace, eval_query_replace_regexp, eval_re_search_backward,
+    eval_re_search_forward, eval_redo_primitive, eval_replace_match, eval_replace_regexp,
+    eval_replace_string, eval_save_buffer, eval_save_current_buffer, eval_save_excursion,
+    eval_search_backward, eval_search_forward, eval_set_buffer_bridge,
     eval_set_current_buffer_major_mode, eval_set_mark, eval_string_rectangle,
     eval_toggle_line_numbers, eval_toggle_preview, eval_toggle_preview_line_numbers,
     eval_transpose_chars, eval_transpose_words, eval_undo_primitive, eval_upcase_word, eval_yank,
-    eval_yank_pop, eval_yank_rectangle,
+    eval_yank_pop, eval_yank_rectangle, shadow_buffer_object_for_name,
+    switch_editor_and_shadow_to_buffer,
 };
 use error_forms::{
     eval_catch, eval_condition_case, eval_error_fn, eval_signal, eval_throw, eval_unwind_protect,
@@ -1982,10 +1984,25 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let args = LispObject::cons(name, LispObject::nil());
+                    let args = LispObject::cons(name.clone(), LispObject::nil());
                     let result =
                         crate::primitives_buffer::call_buffer_primitive("get-buffer", &args)
                             .ok_or_else(|| ElispError::VoidFunction("get-buffer".to_string()))??;
+                    if result.is_nil() {
+                        let name = match &name {
+                            LispObject::String(name) => Some(name.clone()),
+                            LispObject::Symbol(id) => Some(crate::obarray::symbol_name(*id)),
+                            _ => None,
+                        };
+                        if let Some(name) = name {
+                            let exists_in_editor = editor.read().as_ref().is_some_and(|callback| {
+                                callback.list_buffer_names().iter().any(|n| n == &name)
+                            });
+                            if exists_in_editor {
+                                return Ok(obj_to_value(shadow_buffer_object_for_name(&name)));
+                            }
+                        }
+                    }
                     Ok(obj_to_value(result))
                 }
                 "get-buffer-create" => {
@@ -2018,9 +2035,8 @@ pub(super) fn eval_inner(
                         state,
                     )?);
                     let previous = crate::buffer::with_registry(|registry| registry.current_id());
-                    let args = LispObject::cons(buf, LispObject::nil());
-                    let _ = crate::primitives_window::call_window_primitive("set-buffer", &args)
-                        .ok_or_else(|| ElispError::VoidFunction("set-buffer".to_string()))??;
+                    let previous_editor_name = current_editor_buffer_name(editor);
+                    switch_editor_and_shadow_to_buffer(&buf, editor)?;
                     let run_pending_buffer_hook = crate::buffer::with_registry_mut(|registry| {
                         let current = registry.current_id();
                         let Some(buffer) = registry.get_mut(current) else {
@@ -2059,6 +2075,10 @@ pub(super) fn eval_inner(
                     }
                     let body = cdr.rest().unwrap_or(LispObject::nil());
                     let result = eval_progn(obj_to_value(body), env, editor, macros, state);
+                    if let Some(name) = previous_editor_name {
+                        let target = LispObject::string(&name);
+                        let _ = switch_editor_and_shadow_to_buffer(&target, editor);
+                    }
                     crate::buffer::with_registry_mut(|registry| {
                         registry.set_current(previous);
                     });
@@ -2083,6 +2103,17 @@ pub(super) fn eval_inner(
                         && let Some(name) = cb.current_buffer_name()
                     {
                         cb.set_buffer_text(&name, "");
+                        drop(e);
+                        let id = crate::buffer::with_registry_mut(|registry| {
+                            let id = registry.create(&name);
+                            registry.set_current(id);
+                            id
+                        });
+                        crate::buffer::with_registry_mut(|registry| {
+                            if let Some(buffer) = registry.get_mut(id) {
+                                buffer.erase();
+                            }
+                        });
                         return Ok(Value::nil());
                     }
                     drop(e);
@@ -2261,6 +2292,13 @@ pub(super) fn eval_inner(
                     };
                     let target_id = crate::primitives_buffer::resolve_buffer(&target)
                         .unwrap_or_else(|| crate::buffer::with_registry(|r| r.current_id()));
+                    let target_name_for_editor = match &target {
+                        LispObject::String(name) => Some(name.clone()),
+                        LispObject::Symbol(id) => Some(crate::obarray::symbol_name(*id)),
+                        _ => crate::buffer::with_registry(|registry| {
+                            registry.get(target_id).map(|buffer| buffer.name.clone())
+                        }),
+                    };
                     let previous = crate::buffer::with_registry(|registry| registry.current_id());
                     let pushed_target = previous != target_id;
                     let inhibit = crate::buffer::with_registry_mut(|registry| {
@@ -2360,6 +2398,12 @@ pub(super) fn eval_inner(
                     let result =
                         crate::primitives_buffer::call_buffer_primitive("kill-buffer", &args)
                             .ok_or_else(|| ElispError::VoidFunction("kill-buffer".to_string()))??;
+                    if !result.is_nil()
+                        && let Some(name) = target_name_for_editor
+                        && let Some(callback) = editor.write().as_mut()
+                    {
+                        callback.kill_buffer_by_name(&name);
+                    }
                     crate::buffer::with_registry_mut(|registry| {
                         if registry.get(previous).is_some() {
                             registry.set_current(previous);
@@ -5206,6 +5250,29 @@ pub(super) fn eval_inner(
                                 .get(&name)
                                 .is_some_and(|val| !val.is_unbound_marker()),
                     )))
+                }
+                "bound-and-true-p" => {
+                    let sym = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                    let sym_id = sym
+                        .as_symbol_id()
+                        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    let name = crate::obarray::symbol_name(sym_id);
+                    let value = env
+                        .read()
+                        .get_id_local(sym_id)
+                        .or_else(|| {
+                            crate::buffer::with_registry(|registry| {
+                                registry
+                                    .get(registry.current_id())
+                                    .and_then(|buffer| buffer.locals.get(&name).cloned())
+                            })
+                        })
+                        .or_else(|| state.get_value_cell(sym_id))
+                        .or_else(|| env.read().get(&name));
+                    let value = value
+                        .filter(|value| !value.is_unbound_marker() && !value.is_nil())
+                        .unwrap_or_else(LispObject::nil);
+                    Ok(obj_to_value(value))
                 }
                 "variable-binding-locus" => {
                     let sym = value_to_obj(eval(

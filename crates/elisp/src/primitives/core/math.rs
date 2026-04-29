@@ -134,7 +134,7 @@ pub fn get_number(obj: &LispObject) -> Option<f64> {
         LispObject::Float(f) => Some(*f),
         LispObject::Nil => Some(0.0),
         LispObject::T => Some(1.0),
-        _ => None,
+        _ => marker_position_integer(obj).and_then(|n| n.to_f64()),
     }
 }
 
@@ -150,7 +150,7 @@ fn normalize_integer(n: BigInt) -> LispObject {
     LispObject::BigInt(n)
 }
 
-fn get_integer(obj: &LispObject) -> Option<BigInt> {
+fn integer_object_value(obj: &LispObject) -> Option<BigInt> {
     match obj {
         LispObject::Integer(i) => Some(BigInt::from(*i)),
         LispObject::BigInt(i) => Some(i.clone()),
@@ -158,15 +158,21 @@ fn get_integer(obj: &LispObject) -> Option<BigInt> {
     }
 }
 
-fn get_marker_or_integer(obj: &LispObject) -> Option<BigInt> {
-    get_integer(obj).or_else(|| {
-        crate::primitives_buffer::prim_marker_position(&LispObject::cons(
-            obj.clone(),
-            LispObject::nil(),
-        ))
-        .ok()
-        .and_then(|pos| get_integer(&pos))
-    })
+fn marker_position_integer(obj: &LispObject) -> Option<BigInt> {
+    crate::primitives_buffer::prim_marker_position(&LispObject::cons(
+        obj.clone(),
+        LispObject::nil(),
+    ))
+    .ok()
+    .and_then(|pos| integer_object_value(&pos))
+}
+
+fn get_integer(obj: &LispObject) -> Option<BigInt> {
+    integer_object_value(obj).or_else(|| marker_position_integer(obj))
+}
+
+fn is_integer_or_marker(obj: &LispObject) -> bool {
+    get_integer(obj).is_some()
 }
 
 fn get_float_arg(args: &LispObject) -> ElispResult<f64> {
@@ -177,7 +183,9 @@ fn get_float_arg(args: &LispObject) -> ElispResult<f64> {
             .to_f64()
             .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
         LispObject::Float(f) => Ok(f),
-        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
+        _ => marker_position_integer(&a)
+            .and_then(|n| n.to_f64())
+            .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
     }
 }
 
@@ -188,7 +196,9 @@ fn number_as_f64(obj: &LispObject) -> ElispResult<f64> {
             .to_f64()
             .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
         LispObject::Float(f) => Ok(*f),
-        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
+        _ => marker_position_integer(obj)
+            .and_then(|n| n.to_f64())
+            .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
     }
 }
 
@@ -199,9 +209,7 @@ pub fn prim_add(args: &LispObject) -> ElispResult<LispObject> {
         raw.push(arg);
         current = rest;
     }
-    let all_int = raw
-        .iter()
-        .all(|a| matches!(a, LispObject::Integer(_) | LispObject::BigInt(_)));
+    let all_int = raw.iter().all(is_integer_or_marker);
     if all_int {
         let sum = raw
             .iter()
@@ -229,9 +237,7 @@ pub fn prim_sub(args: &LispObject) -> ElispResult<LispObject> {
     if raw.is_empty() {
         return Err(ElispError::WrongNumberOfArguments);
     }
-    let all_int = raw
-        .iter()
-        .all(|a| matches!(a, LispObject::Integer(_) | LispObject::BigInt(_)));
+    let all_int = raw.iter().all(is_integer_or_marker);
     if all_int {
         let ints: Vec<BigInt> = raw.iter().filter_map(get_integer).collect();
         let result = if ints.len() == 1 {
@@ -261,9 +267,7 @@ pub fn prim_mul(args: &LispObject) -> ElispResult<LispObject> {
         raw.push(arg);
         current = rest;
     }
-    let all_int = raw
-        .iter()
-        .all(|a| matches!(a, LispObject::Integer(_) | LispObject::BigInt(_)));
+    let all_int = raw.iter().all(is_integer_or_marker);
     if all_int {
         let product = raw
             .iter()
@@ -296,9 +300,7 @@ pub fn prim_div(args: &LispObject) -> ElispResult<LispObject> {
             return Err(ElispError::WrongTypeArgument("number".to_string()));
         }
     }
-    let all_integer = raw_args
-        .iter()
-        .all(|a| matches!(a, LispObject::Integer(_) | LispObject::BigInt(_)));
+    let all_integer = raw_args.iter().all(is_integer_or_marker);
     if all_integer {
         let ints: Vec<BigInt> = raw_args.iter().filter_map(get_integer).collect();
         for d in &ints[1..] {
@@ -408,22 +410,26 @@ pub fn prim_ne(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_1_plus(args: &LispObject) -> ElispResult<LispObject> {
     let n = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     match n {
-        LispObject::Integer(_) | LispObject::BigInt(_) => {
-            Ok(normalize_integer(get_integer(&n).unwrap() + BigInt::one()))
-        }
+        LispObject::Integer(_) | LispObject::BigInt(_) => Ok(normalize_integer(
+            integer_object_value(&n).unwrap() + BigInt::one(),
+        )),
         LispObject::Float(f) => Ok(LispObject::float(f + 1.0)),
-        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
+        _ => marker_position_integer(&n)
+            .map(|n| normalize_integer(n + BigInt::one()))
+            .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
     }
 }
 
 pub fn prim_1_minus(args: &LispObject) -> ElispResult<LispObject> {
     let n = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     match n {
-        LispObject::Integer(_) | LispObject::BigInt(_) => {
-            Ok(normalize_integer(get_integer(&n).unwrap() - BigInt::one()))
-        }
+        LispObject::Integer(_) | LispObject::BigInt(_) => Ok(normalize_integer(
+            integer_object_value(&n).unwrap() - BigInt::one(),
+        )),
         LispObject::Float(f) => Ok(LispObject::float(f - 1.0)),
-        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
+        _ => marker_position_integer(&n)
+            .map(|n| normalize_integer(n - BigInt::one()))
+            .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
     }
 }
 
@@ -459,10 +465,12 @@ pub fn prim_abs(args: &LispObject) -> ElispResult<LispObject> {
     let n = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     match n {
         LispObject::Integer(_) | LispObject::BigInt(_) => {
-            Ok(normalize_integer(get_integer(&n).unwrap().abs()))
+            Ok(normalize_integer(integer_object_value(&n).unwrap().abs()))
         }
         LispObject::Float(f) => Ok(LispObject::float(f.abs())),
-        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
+        _ => marker_position_integer(&n)
+            .map(|n| normalize_integer(n.abs()))
+            .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
     }
 }
 
@@ -476,11 +484,7 @@ pub fn prim_max(args: &LispObject) -> ElispResult<LispObject> {
     if raw.is_empty() {
         return Err(ElispError::WrongNumberOfArguments);
     }
-    if let Some(mut ints) = raw
-        .iter()
-        .map(get_marker_or_integer)
-        .collect::<Option<Vec<_>>>()
-    {
+    if let Some(mut ints) = raw.iter().map(get_integer).collect::<Option<Vec<_>>>() {
         let first = ints.remove(0);
         Ok(normalize_integer(
             ints.into_iter()
@@ -510,11 +514,7 @@ pub fn prim_min(args: &LispObject) -> ElispResult<LispObject> {
     if raw.is_empty() {
         return Err(ElispError::WrongNumberOfArguments);
     }
-    if let Some(mut ints) = raw
-        .iter()
-        .map(get_marker_or_integer)
-        .collect::<Option<Vec<_>>>()
-    {
+    if let Some(mut ints) = raw.iter().map(get_integer).collect::<Option<Vec<_>>>() {
         let first = ints.remove(0);
         Ok(normalize_integer(
             ints.into_iter()
@@ -578,7 +578,9 @@ fn round_number(args: &LispObject, mode: RoundingMode) -> ElispResult<LispObject
     match n {
         LispObject::Integer(_) | LispObject::BigInt(_) => Ok(n),
         LispObject::Float(f) => round_float(f, mode),
-        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
+        _ => marker_position_integer(&n)
+            .map(normalize_integer)
+            .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
     }
 }
 
@@ -676,7 +678,10 @@ pub fn prim_float(args: &LispObject) -> ElispResult<LispObject> {
             .map(LispObject::float)
             .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
         LispObject::Float(_) => Ok(n),
-        _ => Err(ElispError::WrongTypeArgument("number".to_string())),
+        _ => marker_position_integer(&n)
+            .and_then(|n| n.to_f64())
+            .map(LispObject::float)
+            .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
     }
 }
 
@@ -812,7 +817,9 @@ fn prim_plusp(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::Integer(i) => i > 0,
         LispObject::BigInt(i) => i > BigInt::zero(),
         LispObject::Float(f) => f > 0.0,
-        _ => return Err(ElispError::WrongTypeArgument("number".to_string())),
+        _ => marker_position_integer(&arg)
+            .map(|n| n > BigInt::zero())
+            .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?,
     };
     Ok(LispObject::from(p))
 }
@@ -823,7 +830,9 @@ fn prim_minusp(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::Integer(i) => i < 0,
         LispObject::BigInt(i) => i < BigInt::zero(),
         LispObject::Float(f) => f < 0.0,
-        _ => return Err(ElispError::WrongTypeArgument("number".to_string())),
+        _ => marker_position_integer(&arg)
+            .map(|n| n < BigInt::zero())
+            .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?,
     };
     Ok(LispObject::from(n))
 }
@@ -930,7 +939,7 @@ fn prim_expt(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let b = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     match (&a, &b) {
-        (LispObject::Integer(_) | LispObject::BigInt(_), LispObject::Integer(exp)) if *exp >= 0 => {
+        (_, LispObject::Integer(exp)) if is_integer_or_marker(&a) && *exp >= 0 => {
             let exp = u32::try_from(*exp)
                 .map_err(|_| ElispError::WrongTypeArgument("integer".to_string()))?;
             Ok(normalize_integer(get_integer(&a).unwrap().pow(exp)))
@@ -994,6 +1003,28 @@ mod tests {
             LispObject::cons(LispObject::nil(), LispObject::nil()),
         );
         assert_eq!(prim_gt(&args).unwrap(), LispObject::t());
+    }
+
+    #[test]
+    fn numeric_primitives_accept_marker_positions() {
+        crate::buffer::reset();
+        let marker = crate::primitives_buffer::prim_copy_marker(&list1(LispObject::integer(7)))
+            .expect("copy-marker ok");
+
+        assert_eq!(
+            prim_num_eq(&list2(marker.clone(), LispObject::integer(7))).unwrap(),
+            LispObject::t()
+        );
+        assert_eq!(
+            prim_le(&list2(LispObject::integer(3), marker.clone())).unwrap(),
+            LispObject::t()
+        );
+        assert_eq!(
+            prim_sub(&list2(marker, LispObject::integer(2)))
+                .unwrap()
+                .as_integer(),
+            Some(5)
+        );
     }
 
     #[test]

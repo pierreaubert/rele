@@ -625,31 +625,54 @@ pub fn prim_string_lessp(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_compare_strings(args: &LispObject) -> ElispResult<LispObject> {
     let s1 = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let s2 = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-    let start1 = args.nth(2).and_then(|a| a.as_integer()).unwrap_or(0);
-    let end1 = args.nth(3).and_then(|a| a.as_integer());
+    let start1 = args.nth(1).and_then(|a| a.as_integer()).unwrap_or(0);
+    let end1 = args.nth(2).and_then(|a| a.as_integer());
+    let s2 = args.nth(3).ok_or(ElispError::WrongNumberOfArguments)?;
     let start2 = args.nth(4).and_then(|a| a.as_integer()).unwrap_or(0);
     let end2 = args.nth(5).and_then(|a| a.as_integer());
+    let ignore_case = args.nth(6).is_some_and(|arg| !arg.is_nil());
 
-    let s1 = match &s1 {
+    let s1 = match s1 {
         LispObject::String(s) => s.clone(),
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
-    let s2 = match &s2 {
+    let s2 = match s2 {
         LispObject::String(s) => s.clone(),
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
 
-    let end1 = end1.unwrap_or(s1.len() as i64).min(s1.len() as i64) as usize;
-    let end2 = end2.unwrap_or(s2.len() as i64).min(s2.len() as i64) as usize;
-    let start1 = start1.min(end1 as i64) as usize;
-    let start2 = start2.min(end2 as i64) as usize;
+    fn slice_chars(s: &str, start: i64, end: Option<i64>) -> String {
+        let len = s.chars().count() as i64;
+        let start = start.clamp(0, len) as usize;
+        let end = end.unwrap_or(len).clamp(start as i64, len) as usize;
+        s.chars().skip(start).take(end - start).collect()
+    }
 
-    let s1_sub = &s1[start1..end1];
-    let s2_sub = &s2[start2..end2];
+    let mut s1_sub = slice_chars(&s1, start1, end1);
+    let mut s2_sub = slice_chars(&s2, start2, end2);
+    if ignore_case {
+        s1_sub = s1_sub.to_lowercase();
+        s2_sub = s2_sub.to_lowercase();
+    }
 
-    let cmp = s1_sub.cmp(s2_sub);
-    Ok(LispObject::from(matches!(cmp, std::cmp::Ordering::Less)))
+    for (idx, (a, b)) in s1_sub.chars().zip(s2_sub.chars()).enumerate() {
+        if a != b {
+            let position = idx as i64 + 1;
+            return Ok(LispObject::integer(if a < b {
+                -position
+            } else {
+                position
+            }));
+        }
+    }
+
+    let len1 = s1_sub.chars().count();
+    let len2 = s2_sub.chars().count();
+    match len1.cmp(&len2) {
+        std::cmp::Ordering::Equal => Ok(LispObject::t()),
+        std::cmp::Ordering::Less => Ok(LispObject::integer(-((len1 as i64) + 1))),
+        std::cmp::Ordering::Greater => Ok(LispObject::integer((len2 as i64) + 1)),
+    }
 }
 
 pub fn prim_string_bytes(args: &LispObject) -> ElispResult<LispObject> {

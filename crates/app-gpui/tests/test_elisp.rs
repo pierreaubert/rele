@@ -649,6 +649,47 @@ fn elisp_get_buffer_create_appears_in_editor_buffer_list() {
         after.contains(&"*phase1-bridge-test*".to_string()),
         "elisp-created buffer should appear in editor buffer list (before={before:?} after={after:?})",
     );
+    let result = s
+        .eval_lisp(
+            rele_elisp::read(
+                "(let ((buf (get-buffer \"*phase1-bridge-test*\")))
+                   (and (bufferp buf) (buffer-live-p buf) (buffer-name buf)))",
+            )
+            .unwrap(),
+        )
+        .expect("editor-backed get-buffer should return a Lisp buffer object");
+    assert_eq!(
+        result,
+        rele_elisp::LispObject::string("*phase1-bridge-test*")
+    );
+}
+
+#[test]
+fn elisp_with_current_buffer_switches_editor_buffer_object() {
+    let mut s = Box::new(MdAppState::new());
+    s.install_elisp_editor_callbacks();
+    let original_buffer = s.current_buffer_name.clone();
+    let result = s
+        .eval_lisp(
+            rele_elisp::read(
+                "(let ((buf (get-buffer-create \"*phase1-current-test*\")))
+                   (with-current-buffer buf
+                     (erase-buffer)
+                     (insert \"shadowed\")
+                     (buffer-name (current-buffer))))",
+            )
+            .unwrap(),
+        )
+        .expect("with-current-buffer should accept editor-backed buffer objects");
+    assert_eq!(
+        result,
+        rele_elisp::LispObject::string("*phase1-current-test*")
+    );
+    assert_eq!(s.current_buffer_name, original_buffer);
+    s.eval_lisp(rele_elisp::read("(set-buffer \"*phase1-current-test*\")").unwrap())
+        .expect("set-buffer should switch to the editor-backed buffer");
+    assert_eq!(s.current_buffer_name, "*phase1-current-test*");
+    assert_eq!(s.document.text(), "shadowed");
 }
 
 /// Phase 4 — `(global-set-key "C-h" 'foo)` populates the global

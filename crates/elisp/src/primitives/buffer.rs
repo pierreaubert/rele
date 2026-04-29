@@ -50,8 +50,18 @@ pub fn resolve_buffer(arg: &LispObject) -> Option<BufferId> {
     }
 }
 
+fn integer_or_marker_value(value: &LispObject) -> Option<i64> {
+    value.as_integer().or_else(|| {
+        prim_marker_position(&LispObject::cons(value.clone(), LispObject::nil()))
+            .ok()
+            .and_then(|pos| pos.as_integer())
+    })
+}
+
 fn int_arg(args: &LispObject, n: usize, default: i64) -> i64 {
-    args.nth(n).and_then(|v| v.as_integer()).unwrap_or(default)
+    args.nth(n)
+        .and_then(|v| integer_or_marker_value(&v))
+        .unwrap_or(default)
 }
 
 fn string_arg(args: &LispObject, n: usize) -> Option<String> {
@@ -329,6 +339,17 @@ pub fn prim_buffer_substring(args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::string(&s))
 }
 
+pub fn prim_filter_buffer_substring(args: &LispObject) -> ElispResult<LispObject> {
+    let start = int_arg(args, 0, 1) as usize;
+    let end = int_arg(args, 1, 1) as usize;
+    let delete = args.nth(2).is_some_and(|value| !value.is_nil());
+    let s = buffer::with_current(|b| b.substring(start, end));
+    if delete {
+        buffer::with_registry_mut(|r| r.delete_current_region(start, end));
+    }
+    Ok(LispObject::string(&s))
+}
+
 pub fn prim_buffer_file_name(args: &LispObject) -> ElispResult<LispObject> {
     let id = args
         .first()
@@ -365,6 +386,63 @@ pub fn prim_point_max(_args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::integer(
         buffer::with_current(|b| b.point_max()) as i64
     ))
+}
+
+pub fn prim_mark(args: &LispObject) -> ElispResult<LispObject> {
+    let force = args.first().is_some_and(|value| !value.is_nil());
+    let mark = buffer::with_current(|b| b.mark);
+    match (mark, force) {
+        (Some(pos), _) => Ok(LispObject::integer(pos as i64)),
+        (None, true) => Ok(LispObject::nil()),
+        (None, false) => Err(ElispError::InvalidOperation("mark not set".into())),
+    }
+}
+
+pub fn prim_mark_marker(_args: &LispObject) -> ElispResult<LispObject> {
+    let id = buffer::with_registry_mut(|r| {
+        let buf = r.current_id();
+        let pos = r.get(buf).and_then(|b| b.mark);
+        let id = r.make_marker(buf);
+        r.marker_set(id, buf, pos);
+        id
+    });
+    Ok(make_marker_object(id))
+}
+
+pub fn prim_set_mark(args: &LispObject) -> ElispResult<LispObject> {
+    let pos = int_arg(args, 0, buffer::with_current(|b| b.point) as i64) as usize;
+    buffer::with_current_mut(|b| {
+        let pos = pos.clamp(b.point_min(), b.point_max());
+        b.mark = Some(pos);
+        b.mark_active = true;
+    });
+    Ok(LispObject::nil())
+}
+
+pub fn prim_push_mark(args: &LispObject) -> ElispResult<LispObject> {
+    let pos = int_arg(args, 0, buffer::with_current(|b| b.point) as i64) as usize;
+    let activate = args.nth(2).is_some_and(|value| !value.is_nil());
+    buffer::with_current_mut(|b| {
+        let pos = pos.clamp(b.point_min(), b.point_max());
+        b.mark = Some(pos);
+        b.mark_active = activate;
+    });
+    Ok(LispObject::nil())
+}
+
+pub fn prim_region_beginning(_args: &LispObject) -> ElispResult<LispObject> {
+    let pos = buffer::with_current(|b| b.mark.map_or(b.point, |mark| mark.min(b.point)));
+    Ok(LispObject::integer(pos as i64))
+}
+
+pub fn prim_region_end(_args: &LispObject) -> ElispResult<LispObject> {
+    let pos = buffer::with_current(|b| b.mark.map_or(b.point, |mark| mark.max(b.point)));
+    Ok(LispObject::integer(pos as i64))
+}
+
+pub fn prim_region_active_p(_args: &LispObject) -> ElispResult<LispObject> {
+    let active = buffer::with_current(|b| b.mark_active && b.mark.is_some());
+    Ok(LispObject::from(active))
 }
 
 pub fn prim_bobp(_args: &LispObject) -> ElispResult<LispObject> {
@@ -508,14 +586,37 @@ pub fn prim_current_column(_args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_move_to_column(args: &LispObject) -> ElispResult<LispObject> {
     let col = int_arg(args, 0, 0) as usize;
-    let reached = buffer::with_current_mut(|b| {
+    let force = args.nth(1).is_some_and(|value| !value.is_nil());
+    let (reached, spaces) = buffer::with_current_mut(|b| {
         let bol = b.line_beginning_position(b.point);
         let eol = b.line_end_position(b.point);
+        let eol_col = eol.saturating_sub(bol);
         let target = (bol + col).min(eol);
         b.point = target;
-        target - bol
+        if force && col > eol_col {
+            (col, col - eol_col)
+        } else {
+            (target - bol, 0)
+        }
     });
+    if spaces > 0 {
+        buffer::with_registry_mut(|r| r.insert_current(&" ".repeat(spaces), false));
+    }
     Ok(LispObject::integer(reached as i64))
+}
+
+pub fn prim_indent_to(args: &LispObject) -> ElispResult<LispObject> {
+    let col = int_arg(args, 0, 0).max(0) as usize;
+    let current = buffer::with_current(|b| {
+        let bol = b.line_beginning_position(b.point);
+        b.point.saturating_sub(bol)
+    });
+    if col > current {
+        buffer::with_registry_mut(|r| r.insert_current(&" ".repeat(col - current), false));
+        Ok(LispObject::integer(col as i64))
+    } else {
+        Ok(LispObject::integer(current as i64))
+    }
 }
 
 // ---- Narrowing --------------------------------------------------------
@@ -2846,6 +2947,7 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "buffer-size" => prim_buffer_size(args),
         "buffer-string" => prim_buffer_string(args),
         "buffer-substring" | "buffer-substring-no-properties" => prim_buffer_substring(args),
+        "filter-buffer-substring" => prim_filter_buffer_substring(args),
         "buffer-file-name" => prim_buffer_file_name(args),
         "buffer-enable-undo" => prim_buffer_enable_undo(args),
         "buffer-disable-undo" => prim_buffer_disable_undo(args),
@@ -2853,6 +2955,13 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "point" => prim_point(args),
         "point-min" => prim_point_min(args),
         "point-max" => prim_point_max(args),
+        "mark" => prim_mark(args),
+        "mark-marker" => prim_mark_marker(args),
+        "set-mark" => prim_set_mark(args),
+        "push-mark" => prim_push_mark(args),
+        "region-beginning" => prim_region_beginning(args),
+        "region-end" => prim_region_end(args),
+        "region-active-p" => prim_region_active_p(args),
         "bobp" => prim_bobp(args),
         "eobp" => prim_eobp(args),
         "bolp" => prim_bolp(args),
@@ -2868,6 +2977,7 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "line-number-at-pos" => prim_line_number_at_pos(args),
         "current-column" => prim_current_column(args),
         "move-to-column" => prim_move_to_column(args),
+        "indent-to" => prim_indent_to(args),
         "narrow-to-region" => prim_narrow_to_region(args),
         "widen" => prim_widen(args),
         "buffer-narrowed-p" => prim_buffer_narrowed_p(args),
@@ -2972,6 +3082,7 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "buffer-string",
     "buffer-substring",
     "buffer-substring-no-properties",
+    "filter-buffer-substring",
     "buffer-file-name",
     "buffer-last-name",
     "buffer-base-buffer",
@@ -2983,6 +3094,13 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "point",
     "point-min",
     "point-max",
+    "mark",
+    "mark-marker",
+    "set-mark",
+    "push-mark",
+    "region-beginning",
+    "region-end",
+    "region-active-p",
     "bobp",
     "eobp",
     "bolp",
@@ -3000,6 +3118,7 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "line-number-at-pos",
     "current-column",
     "move-to-column",
+    "indent-to",
     "narrow-to-region",
     "widen",
     "buffer-narrowed-p",
@@ -3104,6 +3223,65 @@ mod tests {
         let pos_args = LispObject::cons(marker, LispObject::nil());
         let pos = prim_marker_position(&pos_args).expect("marker-position ok");
         assert_eq!(pos.as_integer(), Some(1));
+    }
+
+    #[test]
+    fn filter_buffer_substring_can_delete() {
+        buffer::reset();
+        buffer::with_current_mut(|b| b.insert("abcde"));
+        let args = LispObject::cons(
+            LispObject::integer(2),
+            LispObject::cons(
+                LispObject::integer(4),
+                LispObject::cons(LispObject::t(), LispObject::nil()),
+            ),
+        );
+        let out = prim_filter_buffer_substring(&args).expect("filter-buffer-substring ok");
+        assert_eq!(out.as_string().map(String::as_str), Some("bc"));
+        assert_eq!(buffer::with_current(|b| b.buffer_string()), "ade");
+    }
+
+    #[test]
+    fn move_to_column_force_extends_short_line() {
+        buffer::reset();
+        buffer::with_current_mut(|b| {
+            b.insert("ab\n");
+            b.point = 1;
+        });
+        let args = LispObject::cons(
+            LispObject::integer(5),
+            LispObject::cons(LispObject::t(), LispObject::nil()),
+        );
+        let reached = prim_move_to_column(&args).expect("move-to-column ok");
+        assert_eq!(reached.as_integer(), Some(5));
+        assert_eq!(buffer::with_current(|b| b.buffer_string()), "ab   \n");
+        assert_eq!(
+            prim_current_column(&LispObject::nil())
+                .unwrap()
+                .as_integer(),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn push_mark_sets_region_bounds() {
+        buffer::reset();
+        buffer::with_current_mut(|b| {
+            b.insert("abcdef");
+            b.point = 5;
+        });
+        prim_push_mark(&LispObject::cons(LispObject::integer(2), LispObject::nil()))
+            .expect("push-mark ok");
+        assert_eq!(
+            prim_region_beginning(&LispObject::nil())
+                .unwrap()
+                .as_integer(),
+            Some(2)
+        );
+        assert_eq!(
+            prim_region_end(&LispObject::nil()).unwrap().as_integer(),
+            Some(5)
+        );
     }
 
     /// Regression: R5. Emacs's `\sX` / `\SX` / `\_<` / `\_>`

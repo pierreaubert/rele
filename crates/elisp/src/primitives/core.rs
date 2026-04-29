@@ -197,6 +197,11 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "rele--rx-translate",
         "autoload-do-load",
         "autoload-compute-prefixes",
+        "connection-local-value",
+        "connection-local-p",
+        "file-system-info",
+        "propertized-buffer-identification",
+        "substitute-command-keys",
         "load-history-filename-element",
         "format-message",
     ] {

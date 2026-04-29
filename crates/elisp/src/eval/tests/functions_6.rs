@@ -430,6 +430,20 @@ fn test_file_name_unquote_no_prefix() {
         .unwrap();
     assert_eq!(result, LispObject::string("/tmp/foo"));
 }
+
+#[test]
+fn test_compare_strings_emacs_argument_order() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let result = interp
+        .eval(read("(compare-strings \"foo\" 0 3 \"foo\" 0 3 nil)").unwrap())
+        .unwrap();
+    assert_eq!(result, LispObject::t());
+    let result = interp
+        .eval(read("(compare-strings \"a\" 0 nil \"b\" 0 nil nil)").unwrap())
+        .unwrap();
+    assert_eq!(result, LispObject::integer(-1));
+}
 #[test]
 fn test_autoload_records_mapping() {
     let mut interp = Interpreter::new();
