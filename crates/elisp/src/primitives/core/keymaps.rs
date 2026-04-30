@@ -6,14 +6,22 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "make-sparse-keymap" => Some(prim_make_sparse_keymap(args)),
         "make-keymap" => Some(prim_make_keymap(args)),
         "keymapp" => Some(prim_keymapp(args)),
+        "kbd" | "key-parse" => Some(prim_kbd(args)),
         "define-key" | "keymap-set" => Some(prim_define_key(args)),
+        "define-key-after" => Some(prim_define_key(args)),
+        "substitute-key-definition" => Some(prim_substitute_key_definition(args)),
         "define-keymap" => Some(prim_define_keymap(args)),
         "key-valid-p" => Some(prim_key_valid_p(args)),
         "make-composed-keymap" => Some(prim_make_composed_keymap(args)),
         "set-keymap-parent" => Some(prim_set_keymap_parent(args)),
         "keymap-parent" => Some(prim_keymap_parent(args)),
         "lookup-key" | "keymap-lookup" | "key-binding" => Some(prim_lookup_key(args)),
+        "where-is-internal" => Some(prim_where_is_internal(args)),
         "copy-keymap" => Some(prim_copy_keymap(args)),
+        "global-unset-key" | "local-unset-key" => Some(prim_unset_key(args)),
+        "map-keymap" | "map-keymap-internal" | "keyboard-translate" | "set-quit-char" => {
+            Some(Ok(LispObject::nil()))
+        }
         "global-set-key" | "local-set-key" => Some(prim_set_current_map_key(name, args)),
         "use-global-map" => Some(prim_use_global_map(args)),
         "use-local-map" => Some(prim_use_local_map(args)),
@@ -41,8 +49,16 @@ fn make_full_keymap() -> LispObject {
     )
 }
 
+fn vector(items: Vec<LispObject>) -> LispObject {
+    LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(items)))
+}
+
 fn key_equal(a: &LispObject, b: &LispObject) -> bool {
-    a == b
+    a == b || {
+        let a_events = key_events(a);
+        let b_events = key_events(b);
+        !a_events.is_empty() && a_events == b_events
+    }
 }
 
 fn canonical_key_token(token: &str) -> String {
@@ -95,15 +111,62 @@ pub fn canonical_key_string(input: &str) -> String {
         .join(" ")
 }
 
+fn key_token_event(token: &str) -> LispObject {
+    let mut chars = token.chars();
+    match (chars.next(), chars.next()) {
+        (Some(ch), None) => LispObject::integer(i64::from(u32::from(ch))),
+        _ => LispObject::string(token),
+    }
+}
+
+fn key_events(key: &LispObject) -> Vec<LispObject> {
+    match key {
+        LispObject::String(s) => canonical_key_string(s)
+            .split_whitespace()
+            .map(key_token_event)
+            .collect(),
+        LispObject::Vector(items) => items.lock().iter().cloned().collect(),
+        LispObject::Cons(_) => {
+            let mut out = Vec::new();
+            let mut cur = key.clone();
+            while let Some((item, rest)) = cur.destructure_cons() {
+                out.push(item);
+                cur = rest;
+            }
+            if out.is_empty() {
+                vec![key.clone()]
+            } else {
+                out
+            }
+        }
+        _ => vec![key.clone()],
+    }
+}
+
+fn key_output_object(key: &LispObject) -> LispObject {
+    match key {
+        LispObject::String(_) => {
+            let events = key_events(key);
+            if events
+                .iter()
+                .all(|event| matches!(event, LispObject::Integer(_)))
+            {
+                vector(events)
+            } else {
+                canonical_key_object(key)
+            }
+        }
+        _ => key.clone(),
+    }
+}
+
 pub fn canonical_key_object(key: &LispObject) -> LispObject {
     match key {
         LispObject::String(s) => LispObject::string(&canonical_key_string(s)),
         LispObject::Vector(items) => {
             let normalized: Vec<LispObject> =
                 items.lock().iter().map(canonical_key_object).collect();
-            LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(
-                normalized,
-            )))
+            vector(normalized)
         }
         _ => key.clone(),
     }
@@ -125,6 +188,42 @@ fn keymap_parent(map: &LispObject) -> LispObject {
         cur = rest;
     }
     LispObject::nil()
+}
+
+fn list_from_objects(items: Vec<LispObject>) -> LispObject {
+    items
+        .into_iter()
+        .rev()
+        .fold(LispObject::nil(), |tail, item| LispObject::cons(item, tail))
+}
+
+fn menu_item_command(def: &LispObject) -> Option<LispObject> {
+    if def.car()?.as_symbol().as_deref() == Some("menu-item") {
+        return def.nth(2);
+    }
+    None
+}
+
+fn binding_command(def: &LispObject) -> LispObject {
+    menu_item_command(def).unwrap_or_else(|| def.clone())
+}
+
+fn binding_keymap(def: &LispObject) -> Option<LispObject> {
+    if is_keymap(def) {
+        return Some(def.clone());
+    }
+    def.destructure_cons()
+        .and_then(|(_, tail)| is_keymap(&tail).then_some(tail))
+}
+
+fn is_remap_key(key: &LispObject) -> bool {
+    match key {
+        LispObject::Vector(items) => items
+            .lock()
+            .first()
+            .is_some_and(|item| item.as_symbol().as_deref() == Some("remap")),
+        _ => false,
+    }
 }
 
 fn define_key_in_map(map: &LispObject, key: LispObject, def: LispObject) -> ElispResult<()> {
@@ -149,7 +248,7 @@ fn define_key_in_map(map: &LispObject, key: LispObject, def: LispObject) -> Elis
     Ok(())
 }
 
-fn lookup_in_map(map: &LispObject, key: &LispObject) -> LispObject {
+fn lookup_raw_direct_in_map(map: &LispObject, key: &LispObject) -> LispObject {
     if !is_keymap(map) {
         return LispObject::nil();
     }
@@ -169,12 +268,178 @@ fn lookup_in_map(map: &LispObject, key: &LispObject) -> LispObject {
         }
         cur = rest;
     }
+    LispObject::nil()
+}
+
+fn key_from_events(events: &[LispObject]) -> LispObject {
+    match events {
+        [single] => single.clone(),
+        _ => vector(events.to_vec()),
+    }
+}
+
+fn lookup_sequence_in_map(map: &LispObject, events: &[LispObject]) -> LispObject {
+    if events.is_empty() {
+        return LispObject::nil();
+    }
+
+    for len in (1..=events.len()).rev() {
+        let prefix = key_from_events(&events[..len]);
+        let raw = lookup_raw_direct_in_map(map, &prefix);
+        if raw.is_nil() {
+            continue;
+        }
+        if len == events.len() {
+            return binding_command(&raw);
+        }
+        if let Some(next_map) = binding_keymap(&raw) {
+            let found = lookup_sequence_in_map(&next_map, &events[len..]);
+            if !found.is_nil() {
+                return found;
+            }
+        }
+    }
+
+    LispObject::nil()
+}
+
+fn lookup_in_map(map: &LispObject, key: &LispObject) -> LispObject {
+    if !is_keymap(map) {
+        return LispObject::nil();
+    }
+
+    let raw = lookup_raw_direct_in_map(map, key);
+    if !raw.is_nil() {
+        return binding_command(&raw);
+    }
+
+    let events = key_events(key);
+    if events.len() > 1 {
+        let found = lookup_sequence_in_map(map, &events);
+        if !found.is_nil() {
+            return found;
+        }
+    }
 
     let parent = keymap_parent(map);
     if parent.is_nil() {
         LispObject::nil()
     } else {
         lookup_in_map(&parent, key)
+    }
+}
+
+pub(crate) fn lookup_in_keymaps(map_or_maps: &LispObject, key: &LispObject) -> LispObject {
+    if is_keymap(map_or_maps) {
+        return lookup_in_map(map_or_maps, key);
+    }
+
+    let mut cur = map_or_maps.clone();
+    while let Some((map, rest)) = cur.destructure_cons() {
+        let found = lookup_in_keymaps(&map, key);
+        if !found.is_nil() {
+            return found;
+        }
+        cur = rest;
+    }
+    LispObject::nil()
+}
+
+fn combine_key(prefix: Option<&LispObject>, key: &LispObject) -> LispObject {
+    let key = key_output_object(key);
+    let Some(prefix) = prefix else {
+        return key;
+    };
+
+    match (prefix, &key) {
+        (LispObject::String(a), LispObject::String(b)) => LispObject::string(&format!("{a} {b}")),
+        _ => {
+            let mut events = key_events(prefix);
+            events.extend(key_events(&key));
+            vector(events)
+        }
+    }
+}
+
+fn command_keys_in_map(
+    map: &LispObject,
+    command: &LispObject,
+    prefix: Option<&LispObject>,
+    out: &mut Vec<LispObject>,
+) {
+    if !is_keymap(map) {
+        return;
+    }
+
+    let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
+    while let Some((entry, rest)) = cur.destructure_cons() {
+        if is_keymap(&entry) {
+            command_keys_in_map(&entry, command, prefix, out);
+        } else if let Some((key, value)) = entry.destructure_cons() {
+            if key == parent_marker() {
+                command_keys_in_map(&value, command, prefix, out);
+            } else {
+                if let Some(submap) = binding_keymap(&value) {
+                    let next_prefix = combine_key(prefix, &key);
+                    command_keys_in_map(&submap, command, Some(&next_prefix), out);
+                }
+                if !is_remap_key(&key) && binding_command(&value) == *command {
+                    out.push(combine_key(prefix, &key));
+                }
+            }
+        }
+        cur = rest;
+    }
+}
+
+pub(crate) fn command_keys_in_keymaps(
+    map_or_maps: &LispObject,
+    command: &LispObject,
+) -> Vec<LispObject> {
+    let mut out = Vec::new();
+    if is_keymap(map_or_maps) {
+        command_keys_in_map(map_or_maps, command, None, &mut out);
+        return out;
+    }
+
+    let mut cur = map_or_maps.clone();
+    while let Some((map, rest)) = cur.destructure_cons() {
+        command_keys_in_map(&map, command, None, &mut out);
+        cur = rest;
+    }
+    out
+}
+
+pub(crate) fn remap_key(command: LispObject) -> LispObject {
+    vector(vec![LispObject::symbol("remap"), command])
+}
+
+pub(crate) fn command_remapping_in_keymaps(
+    map_or_maps: &LispObject,
+    command: &LispObject,
+) -> LispObject {
+    lookup_in_keymaps(map_or_maps, &remap_key(command.clone()))
+}
+
+fn substitute_definition_in_map(map: &LispObject, olddef: &LispObject, newdef: &LispObject) {
+    if !is_keymap(map) {
+        return;
+    }
+
+    let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
+    while let Some((entry, rest)) = cur.destructure_cons() {
+        if is_keymap(&entry) {
+            substitute_definition_in_map(&entry, olddef, newdef);
+        } else if let Some((key, value)) = entry.destructure_cons() {
+            if key == parent_marker() {
+                substitute_definition_in_map(&value, olddef, newdef);
+            } else if &binding_command(&value) == olddef {
+                entry.set_cdr(newdef.clone());
+            } else if let Some(submap) = binding_keymap(&value) {
+                substitute_definition_in_map(&submap, olddef, newdef);
+            }
+        }
+        cur = rest;
     }
 }
 
@@ -207,12 +472,25 @@ pub fn prim_keymapp(args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::from(is_keymap(&obj)))
 }
 
+pub fn prim_kbd(args: &LispObject) -> ElispResult<LispObject> {
+    let key = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    Ok(canonical_key_object(&key))
+}
+
 pub fn prim_define_key(args: &LispObject) -> ElispResult<LispObject> {
     let map = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let key = canonical_key_object(&args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?);
     let def = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
     define_key_in_map(&map, key, def.clone())?;
     Ok(def)
+}
+
+pub fn prim_substitute_key_definition(args: &LispObject) -> ElispResult<LispObject> {
+    let olddef = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let newdef = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let keymap = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
+    substitute_definition_in_map(&keymap, &olddef, &newdef);
+    Ok(LispObject::nil())
 }
 
 pub fn prim_define_keymap(args: &LispObject) -> ElispResult<LispObject> {
@@ -290,12 +568,29 @@ pub fn prim_keymap_parent(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_lookup_key(args: &LispObject) -> ElispResult<LispObject> {
     let map = args.first().unwrap_or_else(LispObject::nil);
     let key = canonical_key_object(&args.nth(1).unwrap_or_else(LispObject::nil));
-    Ok(lookup_in_map(&map, &key))
+    Ok(lookup_in_keymaps(&map, &key))
+}
+
+pub fn prim_where_is_internal(args: &LispObject) -> ElispResult<LispObject> {
+    let command = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let map = args.nth(1).unwrap_or_else(LispObject::nil);
+    let first_only = args.nth(2).is_some_and(|value| !value.is_nil());
+    let keys = command_keys_in_keymaps(&map, &command);
+    if first_only {
+        Ok(keys.first().cloned().unwrap_or_else(LispObject::nil))
+    } else {
+        Ok(list_from_objects(keys))
+    }
 }
 
 pub fn prim_copy_keymap(args: &LispObject) -> ElispResult<LispObject> {
     let map = args.first().unwrap_or_else(LispObject::nil);
     Ok(deep_copy(&map))
+}
+
+pub fn prim_unset_key(args: &LispObject) -> ElispResult<LispObject> {
+    let _ = args.first().unwrap_or_else(LispObject::nil);
+    Ok(LispObject::nil())
 }
 
 pub fn prim_set_current_map_key(name: &str, args: &LispObject) -> ElispResult<LispObject> {
@@ -432,6 +727,120 @@ mod tests {
         assert_eq!(
             prim_lookup_key(&args(vec![copy, key])).unwrap(),
             LispObject::symbol("new")
+        );
+    }
+
+    #[test]
+    fn lookup_traverses_prefix_maps_and_menu_items() {
+        let map = make_sparse_keymap();
+        let submap = make_sparse_keymap();
+        let command = LispObject::symbol("save-buffer");
+        prim_define_key(&args(vec![
+            map.clone(),
+            LispObject::string("C-x"),
+            submap.clone(),
+        ]))
+        .unwrap();
+        prim_define_key(&args(vec![
+            submap,
+            LispObject::string("C-s"),
+            command.clone(),
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            prim_lookup_key(&args(vec![map.clone(), LispObject::string("C-x C-s")])).unwrap(),
+            command
+        );
+
+        let menu = make_sparse_keymap();
+        let menu_command = LispObject::symbol("find-file");
+        let menu_item = args(vec![
+            LispObject::symbol("menu-item"),
+            LispObject::string("Visit New File..."),
+            menu_command.clone(),
+        ]);
+        prim_define_key(&args(vec![
+            menu.clone(),
+            vector(vec![LispObject::symbol("new-file")]),
+            menu_item,
+        ]))
+        .unwrap();
+        prim_define_key(&args(vec![
+            map.clone(),
+            vector(vec![
+                LispObject::symbol("menu-bar"),
+                LispObject::symbol("file"),
+            ]),
+            LispObject::cons(LispObject::string("File"), menu),
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            prim_lookup_key(&args(vec![
+                map,
+                vector(vec![
+                    LispObject::symbol("menu-bar"),
+                    LispObject::symbol("file"),
+                    LispObject::symbol("new-file"),
+                ]),
+            ]))
+            .unwrap(),
+            menu_command
+        );
+    }
+
+    #[test]
+    fn lookup_accepts_list_of_keymaps() {
+        let first = make_sparse_keymap();
+        let second = make_sparse_keymap();
+        prim_define_key(&args(vec![
+            first.clone(),
+            vector(vec![LispObject::integer(97)]),
+            LispObject::symbol("first-command"),
+        ]))
+        .unwrap();
+        prim_define_key(&args(vec![
+            second.clone(),
+            vector(vec![LispObject::integer(98)]),
+            LispObject::symbol("second-command"),
+        ]))
+        .unwrap();
+        let maps = args(vec![first, second]);
+
+        assert_eq!(
+            prim_lookup_key(&args(vec![maps, vector(vec![LispObject::integer(98)])])).unwrap(),
+            LispObject::symbol("second-command")
+        );
+    }
+
+    #[test]
+    fn where_is_internal_honors_explicit_map_and_first_only() {
+        let map = make_sparse_keymap();
+        let command = LispObject::symbol("keymap-test-command");
+        prim_define_key(&args(vec![
+            map.clone(),
+            LispObject::string("x"),
+            command.clone(),
+        ]))
+        .unwrap();
+        prim_define_key(&args(vec![
+            map.clone(),
+            LispObject::string("y"),
+            command.clone(),
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            prim_where_is_internal(&args(vec![command.clone(), map.clone()])).unwrap(),
+            args(vec![
+                vector(vec![LispObject::integer(121)]),
+                vector(vec![LispObject::integer(120)]),
+            ])
+        );
+        assert_eq!(
+            prim_where_is_internal(&args(vec![command, map, LispObject::t()])).unwrap(),
+            vector(vec![LispObject::integer(121)])
         );
     }
 }

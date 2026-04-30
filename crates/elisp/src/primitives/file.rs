@@ -46,6 +46,18 @@ fn strip_coding_eol_suffix(name: &str) -> &str {
     name
 }
 
+fn coding_eol_suffix(name: &str) -> Option<i64> {
+    if name.ends_with("-unix") {
+        Some(0)
+    } else if name.ends_with("-dos") {
+        Some(1)
+    } else if name.ends_with("-mac") {
+        Some(2)
+    } else {
+        None
+    }
+}
+
 fn coding_name(obj: &LispObject) -> Option<String> {
     obj.as_symbol()
         .or_else(|| obj.as_string().map(ToString::to_string))
@@ -71,6 +83,42 @@ fn coding_system_error(obj: LispObject) -> ElispError {
         symbol: LispObject::symbol("coding-system-error"),
         data: LispObject::cons(obj, LispObject::nil()),
     }))
+}
+
+pub fn prim_coding_system_eol_type(
+    args: &LispObject,
+    state: &crate::eval::InterpreterState,
+) -> ElispResult<LispObject> {
+    let coding = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    if coding.is_nil() {
+        return Ok(LispObject::integer(0));
+    }
+    let Some(name) = coding_name(&coding) else {
+        return Ok(LispObject::nil());
+    };
+    let resolved = state
+        .coding_aliases
+        .read()
+        .get(&name)
+        .cloned()
+        .unwrap_or(name);
+    if !coding_system_known(state, &LispObject::symbol(&resolved)) {
+        return Ok(LispObject::nil());
+    }
+    if matches!(resolved.as_str(), "no-conversion" | "binary") {
+        return Ok(LispObject::integer(0));
+    }
+    if let Some(eol) = coding_eol_suffix(&resolved) {
+        return Ok(LispObject::integer(eol));
+    }
+    let base = strip_coding_eol_suffix(&resolved);
+    let variants = ["unix", "dos", "mac"]
+        .into_iter()
+        .map(|suffix| LispObject::symbol(&format!("{base}-{suffix}")))
+        .collect();
+    Ok(LispObject::Vector(std::sync::Arc::new(
+        crate::eval::SyncRefCell::new(variants),
+    )))
 }
 
 fn validate_coding_variable(state: &crate::eval::InterpreterState, name: &str) -> ElispResult<()> {
@@ -1222,6 +1270,7 @@ pub fn call_file_primitive(
         "directory-file-name" => prim_directory_file_name(args),
         "file-name-as-directory" => prim_file_name_as_directory(args),
         "file-name-concat" => prim_file_name_concat(args),
+        "coding-system-eol-type" => prim_coding_system_eol_type(args, state),
         "file-relative-name" => prim_file_relative_name(args),
         "expand-file-name" => prim_expand_file_name(args),
         "file-truename" => prim_file_truename(args),
@@ -1244,7 +1293,7 @@ pub fn call_file_primitive(
         "directory-files-and-attributes" => prim_directory_files_and_attributes(args),
         "make-directory" => prim_make_directory(args),
         "delete-directory" => prim_delete_directory(args),
-        "delete-file" => prim_delete_file(args),
+        "delete-file" | "delete-file-internal" => prim_delete_file(args),
         "rename-file" => prim_rename_file(args),
         "copy-file" => prim_copy_file(args),
         "make-temp-file" => prim_make_temp_file(args),
@@ -1282,6 +1331,7 @@ pub const FILE_PRIMITIVE_NAMES: &[&str] = &[
     "directory-file-name",
     "file-name-as-directory",
     "file-name-concat",
+    "coding-system-eol-type",
     "file-relative-name",
     "expand-file-name",
     "file-truename",
@@ -1305,6 +1355,7 @@ pub const FILE_PRIMITIVE_NAMES: &[&str] = &[
     "make-directory",
     "delete-directory",
     "delete-file",
+    "delete-file-internal",
     "rename-file",
     "copy-file",
     "make-temp-file",

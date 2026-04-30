@@ -104,6 +104,14 @@ fn set_state_map(state: &InterpreterState, name: &str, map: LispObject) {
 }
 
 fn current_global_map(state: &InterpreterState) -> LispObject {
+    let slot = obarray::intern(CURRENT_GLOBAL_MAP_SYMBOL);
+    if let Some(map) = state.get_value_cell(slot) {
+        return map;
+    }
+    if let Some(map) = state.get_value_cell(obarray::intern("global-map")) {
+        state.set_value_cell(slot, map.clone());
+        return map;
+    }
     state_map(state, CURRENT_GLOBAL_MAP_SYMBOL, true)
 }
 
@@ -163,7 +171,11 @@ fn eval_set_current_map_key(
     {
         crate::primitives_window::record_global_keybinding(key_str.clone(), cmd_name);
     }
-    let target = state_map(state, slot_name, true);
+    let target = if slot_name == CURRENT_GLOBAL_MAP_SYMBOL {
+        current_global_map(state)
+    } else {
+        state_map(state, slot_name, true)
+    };
     let primitive_args = LispObject::cons(
         target,
         LispObject::cons(key, LispObject::cons(def.clone(), LispObject::nil())),
@@ -196,46 +208,26 @@ fn eval_key_binding(
     Ok(obj_to_value(lookup_in_map(current_global_map(state), key)?))
 }
 
-fn remap_key(command: LispObject) -> LispObject {
-    LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(vec![
-        LispObject::symbol("remap"),
-        command,
-    ])))
-}
-
-fn command_keys_in_map(map: &LispObject, command: &LispObject, out: &mut Vec<LispObject>) {
-    let Some((head, tail)) = map.destructure_cons() else {
-        return;
+fn command_keys_in_maps(map_or_maps: &LispObject, command: &LispObject) -> Vec<LispObject> {
+    let remapped =
+        crate::primitives::core::keymaps::command_remapping_in_keymaps(map_or_maps, command);
+    let effective = if remapped.is_nil() {
+        command.clone()
+    } else {
+        remapped
     };
-    if head.as_symbol().as_deref() != Some("keymap") {
-        return;
-    }
-    let mut cur = tail;
-    while let Some((entry, rest)) = cur.destructure_cons() {
-        if entry
-            .destructure_cons()
-            .is_some_and(|(head, _)| head.as_symbol().as_deref() == Some("keymap"))
-        {
-            command_keys_in_map(&entry, command, out);
-        } else if let Some((key, value)) = entry.destructure_cons() {
-            if key.as_symbol().as_deref() == Some(":parent") {
-                command_keys_in_map(&value, command, out);
-            } else if &value == command {
-                out.push(key);
-            }
-        }
-        cur = rest;
-    }
+    crate::primitives::core::keymaps::command_keys_in_keymaps(map_or_maps, &effective)
 }
 
 fn command_keys(state: &InterpreterState, command: LispObject) -> Vec<LispObject> {
-    let mut out = Vec::new();
-    let local = current_local_map(state);
-    if !local.is_nil() {
-        command_keys_in_map(&local, &command, &mut out);
-    }
-    command_keys_in_map(&current_global_map(state), &command, &mut out);
-    out
+    command_keys_in_maps(&current_active_maps(state), &command)
+}
+
+pub(super) fn command_keys_for_state(
+    state: &InterpreterState,
+    command: LispObject,
+) -> Vec<LispObject> {
+    command_keys(state, command)
 }
 
 fn eval_command_remapping(
@@ -247,15 +239,12 @@ fn eval_command_remapping(
 ) -> ElispResult<Value> {
     let command_form = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let command = eval_arg(command_form, env, editor, macros, state)?;
-    let key = remap_key(command);
-    let local = current_local_map(state);
-    if !local.is_nil() {
-        let found = lookup_in_map(local, key.clone())?;
-        if !found.is_nil() {
-            return Ok(obj_to_value(found));
-        }
-    }
-    Ok(obj_to_value(lookup_in_map(current_global_map(state), key)?))
+    Ok(obj_to_value(
+        crate::primitives::core::keymaps::command_remapping_in_keymaps(
+            &current_active_maps(state),
+            &command,
+        ),
+    ))
 }
 
 fn eval_where_is_internal(
@@ -267,7 +256,17 @@ fn eval_where_is_internal(
 ) -> ElispResult<Value> {
     let command_form = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let command = eval_arg(command_form, env, editor, macros, state)?;
-    Ok(state.list_from_objects(command_keys(state, command)))
+    let map = match args.nth(1) {
+        Some(map_form) => eval_arg(map_form, env, editor, macros, state)?,
+        None => LispObject::nil(),
+    };
+    let first_only = match args.nth(2) {
+        Some(first_form) => !eval_arg(first_form, env, editor, macros, state)?.is_nil(),
+        None => false,
+    };
+    Ok(obj_to_value(where_is_result(
+        state, command, map, first_only,
+    )))
 }
 
 pub(crate) fn call_stateful_keymap_primitive(
@@ -332,7 +331,11 @@ fn set_current_map_key_value(
     {
         crate::primitives_window::record_global_keybinding(key_str.clone(), cmd_name);
     }
-    let target = state_map(state, slot_name, true);
+    let target = if slot_name == CURRENT_GLOBAL_MAP_SYMBOL {
+        current_global_map(state)
+    } else {
+        state_map(state, slot_name, true)
+    };
     let primitive_args = LispObject::cons(
         target,
         LispObject::cons(key, LispObject::cons(def.clone(), LispObject::nil())),
@@ -365,22 +368,48 @@ fn key_binding_value(args: &LispObject, state: &InterpreterState) -> ElispResult
 
 fn command_remapping_value(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
     let command = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    let key = remap_key(command);
-    let local = current_local_map(state);
-    if !local.is_nil() {
-        let found = lookup_in_map(local, key.clone())?;
-        if !found.is_nil() {
-            return Ok(found);
-        }
-    }
-    lookup_in_map(current_global_map(state), key)
+    Ok(
+        crate::primitives::core::keymaps::command_remapping_in_keymaps(
+            &current_active_maps(state),
+            &command,
+        ),
+    )
 }
 
 fn where_is_internal_value(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
     let command = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
-    Ok(value_to_obj(
-        state.list_from_objects(command_keys(state, command)),
-    ))
+    let map = args.nth(1).unwrap_or_else(LispObject::nil);
+    let first_only = args.nth(2).is_some_and(|value| !value.is_nil());
+    Ok(where_is_result(state, command, map, first_only))
+}
+
+fn where_is_result(
+    state: &InterpreterState,
+    command: LispObject,
+    map: LispObject,
+    first_only: bool,
+) -> LispObject {
+    let maps = if map.is_nil() {
+        current_active_maps(state)
+    } else {
+        map
+    };
+    let keys = command_keys_in_maps(&maps, &command);
+    if first_only {
+        if let Some(advertised) = advertised_binding(state, &command)
+            && keys.iter().any(|key| key == &advertised)
+        {
+            return advertised;
+        }
+        return keys.first().cloned().unwrap_or_else(LispObject::nil);
+    }
+    value_to_obj(state.list_from_objects(keys))
+}
+
+fn advertised_binding(state: &InterpreterState, command: &LispObject) -> Option<LispObject> {
+    let id = command.as_symbol_id()?;
+    let binding = state.get_plist(id, obarray::intern(":advertised-binding"));
+    (!binding.is_nil()).then_some(binding)
 }
 
 fn eval_key_valid_p(

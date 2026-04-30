@@ -14,11 +14,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "gnutls-available-p"
         | "libxml-available-p"
         | "dbus-available-p"
-        | "native-comp-available-p"
-        | "display-graphic-p"
-        | "display-multi-frame-p"
-        | "display-color-p"
-        | "display-mouse-p" => Ok(LispObject::nil()),
+        | "native-comp-available-p" => Ok(LispObject::nil()),
 
         // Text-property stubs
         "get-char-property" | "get-pos-property" | "get-text-property" | "text-properties-at" => {
@@ -35,21 +31,9 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "remove-list-of-text-properties"
         | "put-text-property" => Ok(LispObject::nil()),
 
-        // Documentation stubs — return empty string for known callable
-        // arguments, nil otherwise. Emacs returns a string for any
-        // documented function/variable; tests only check `stringp`.
-        "documentation" | "documentation-property" => {
-            let arg = args.first().unwrap_or_else(LispObject::nil);
-            if arg.is_nil() {
-                Ok(LispObject::nil())
-            } else {
-                Ok(LispObject::string(""))
-            }
-        }
-
         // Buffer/editing stubs
         "backward-prefix-chars" | "undo-boundary" => Ok(LispObject::nil()),
-        "buffer-text-pixel-size" | "window-text-pixel-size" => Ok(LispObject::cons(
+        "buffer-text-pixel-size" => Ok(LispObject::cons(
             LispObject::integer(0),
             LispObject::integer(0),
         )),
@@ -61,7 +45,6 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "backtrace-frame--internal" => Ok(LispObject::nil()),
         "add-minor-mode" => Ok(LispObject::nil()),
 
-        "make-category-table" | "category-table" => Ok(LispObject::nil()),
         "make-network-process" => Err(ElispError::EvalError(
             "make-network-process: no network in test env".to_string(),
         )),
@@ -77,24 +60,14 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "process-status"
         | "process-attributes" => Ok(LispObject::nil()),
         "execute-kbd-macro" | "current-input-mode" => Ok(LispObject::nil()),
-        "make-indirect-buffer"
-        | "insert-buffer-substring"
-        | "insert-buffer-substring-no-properties" => Ok(LispObject::nil()),
-        "window-system" | "redisplay" | "force-mode-line-update" => Ok(LispObject::nil()),
+        "make-indirect-buffer" => Ok(LispObject::nil()),
         // `easy-menu-do-define` is now a stateful primitive that
         // populates the menu symbol's value cell — see
         // `crates/elisp/src/eval/functions/functions.rs`.
         "tool-bar-local-item" | "tool-bar-local-item-from-menu" => Ok(LispObject::nil()),
-        "frame-visible-p" | "frame-live-p" | "frame-parameters" => Ok(LispObject::nil()),
-        "window-live-p" | "minibufferp" | "minibuffer-window" | "minibuffer-depth"
-        | "recursion-depth" => Ok(LispObject::nil()),
+        "minibufferp" | "minibuffer-depth" | "recursion-depth" => Ok(LispObject::nil()),
         "current-message" | "input-pending-p" => Ok(LispObject::nil()),
         "this-command-keys" | "this-command-keys-vector" | "recent-keys" => Ok(LispObject::nil()),
-        "terminal-live-p" | "terminal-list" => Ok(LispObject::nil()),
-        "last-nonminibuffer-frame" | "tty-top-frame" | "accessible-keymaps" => {
-            Ok(LispObject::nil())
-        }
-
         // Marker stubs
         "mark-marker"
         | "mark"
@@ -103,19 +76,14 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "set-marker"
         | "copy-marker"
         | "make-marker" => Ok(LispObject::nil()),
-        "delete-and-extract-region" => Ok(LispObject::string("")),
 
         // Reading stubs
         "read-key-sequence" | "read-key-sequence-vector" | "read-key" => Ok(LispObject::nil()),
         "read-char" | "read-char-exclusive" | "read-event" => Ok(LispObject::nil()),
 
         // Font/charset stubs
-        "font-spec" | "font-family-list" | "font-info" | "font-face-attributes" => {
-            Ok(LispObject::nil())
-        }
-        "charset-priority-list" | "charset-list" | "charset-plist" => Ok(LispObject::nil()),
-        "describe-buffer-bindings" => Ok(LispObject::nil()),
-        "bidi-find-overridden-directionality" | "bidi-resolved-levels" => Ok(LispObject::nil()),
+        "font-family-list" | "font-info" | "font-face-attributes" => Ok(LispObject::nil()),
+        "bidi-resolved-levels" => Ok(LispObject::nil()),
         "network-lookup-address-info" => Ok(LispObject::nil()),
 
         // File/path pass-through stubs
@@ -148,14 +116,8 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "set-default-toplevel-value" => Ok(args.nth(1).unwrap_or(LispObject::nil())),
 
         // Coding system stubs
-        "detect-coding-string" => Ok(LispObject::cons(
-            LispObject::symbol("utf-8"),
-            LispObject::nil(),
-        )),
         "detect-coding-region" => Ok(LispObject::symbol("utf-8")),
-        "find-coding-systems-string"
-        | "find-coding-systems-region"
-        | "find-coding-systems-for-charsets" => Ok(LispObject::cons(
+        "find-coding-systems-string" | "find-coding-systems-region" => Ok(LispObject::cons(
             LispObject::symbol("utf-8"),
             LispObject::nil(),
         )),
@@ -178,7 +140,6 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "completing-read"
         | "read-from-minibuffer"
         | "read-no-blanks-input"
-        | "read-string"
         | "read-number"
         | "read-buffer"
         | "read-file-name" => Ok(args.nth(2).unwrap_or(LispObject::nil())),
@@ -187,10 +148,6 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 
         // Char/text utilities
         "char-displayable-p" => Ok(LispObject::t()),
-        "char-charset" => Ok(LispObject::symbol("unicode")),
-        "char-category-set" => Ok(LispObject::nil()),
-        "char-syntax" | "syntax-class-to-char" => Ok(LispObject::integer(b'.' as i64)),
-        "syntax-after" => Ok(LispObject::nil()),
         "composition-get-gstring" | "find-composition" | "find-composition-internal" => {
             Ok(LispObject::nil())
         }
@@ -237,152 +194,10 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "buffer-modified-p" | "set-buffer-modified-p" | "restore-buffer-modified-p" => {
             Ok(LispObject::nil())
         }
-        "get-buffer-window" => Ok(LispObject::nil()),
+        "set-face-underline" | "set-face-strike-through" => Ok(LispObject::nil()),
 
-        // Window stubs
-        "window-buffer"
-        | "window-parent"
-        | "window-parameter"
-        | "window-parameters"
-        | "window-frame"
-        | "window-dedicated-p"
-        | "window-normal-size"
-        | "window-left-child"
-        | "window-right-child"
-        | "window-top-child"
-        | "window-prev-sibling"
-        | "window-next-sibling"
-        | "window-prev-buffers"
-        | "window-next-buffers"
-        | "window-resizable"
-        | "window-resizable-p"
-        | "window-combination-limit"
-        | "window-new-total"
-        | "window-new-pixel"
-        | "window-new-normal"
-        | "window-old-point"
-        | "window-old-pixel-height" => Ok(LispObject::nil()),
-        "window-total-width"
-        | "window-total-height"
-        | "window-text-width"
-        | "window-text-height"
-        | "window-body-width"
-        | "window-body-height"
-        | "window-pixel-width"
-        | "window-pixel-height"
-        | "window-total-size"
-        | "window-body-size"
-        | "window-left-column"
-        | "window-top-line"
-        | "window-scroll-bar-height"
-        | "window-scroll-bar-width"
-        | "window-fringes"
-        | "window-margins"
-        | "window-hscroll"
-        | "window-vscroll"
-        | "window-line-height"
-        | "window-font-height"
-        | "window-font-width"
-        | "window-max-chars-per-line"
-        | "window-screen-lines" => Ok(LispObject::integer(80)),
-        "window-pixel-edges"
-        | "window-edges"
-        | "window-inside-edges"
-        | "window-inside-pixel-edges"
-        | "window-absolute-pixel-edges"
-        | "window-absolute-pixel-position"
-        | "window-point"
-        | "window-start"
-        | "window-end"
-        | "window-prompt" => Ok(LispObject::nil()),
-        "window-minibuffer-p" => Ok(LispObject::nil()),
-
-        // Frame stubs
-        "frame-pixel-width" | "frame-pixel-height" => Ok(LispObject::integer(800)),
-        "frame-width"
-        | "frame-height"
-        | "frame-total-lines"
-        | "frame-native-width"
-        | "frame-native-height" => Ok(LispObject::integer(80)),
-        "frame-char-width"
-        | "frame-char-height"
-        | "frame-text-cols"
-        | "frame-text-lines"
-        | "frame-scroll-bar-width"
-        | "frame-scroll-bar-height"
-        | "frame-fringe-width"
-        | "frame-font"
-        | "frame-position"
-        | "frame-root-window"
-        | "frame-selected-window"
-        | "frame-first-window"
-        | "frame-focus"
-        | "frame-edges"
-        | "frame-border-width"
-        | "frame-internal-border-height"
-        | "frame-internal-border"
-        | "frame-terminal"
-        | "frame-tool-bar-lines"
-        | "frame-menu-bar-lines"
-        | "frame-internal-border-width" => Ok(LispObject::nil()),
-        "redirect-frame-focus"
-        | "select-frame"
-        | "select-frame-set-input-focus"
-        | "select-window"
-        | "make-frame-visible"
-        | "make-frame-invisible"
-        | "iconify-frame"
-        | "delete-frame"
-        | "delete-window"
-        | "delete-other-windows"
-        | "delete-other-windows-vertically"
-        | "switch-to-buffer-other-window"
-        | "switch-to-buffer-other-frame"
-        | "set-frame-size"
-        | "set-frame-position"
-        | "set-frame-width"
-        | "set-frame-height"
-        | "set-frame-parameter"
-        | "modify-frame-parameters"
-        | "set-window-buffer"
-        | "set-window-parameter"
-        | "set-window-dedicated-p"
-        | "set-window-point"
-        | "set-window-start"
-        | "set-window-hscroll"
-        | "set-window-vscroll"
-        | "set-window-fringes"
-        | "set-window-margins"
-        | "set-window-scroll-bars"
-        | "set-window-display-table"
-        | "set-face-underline"
-        | "set-face-strike-through" => Ok(LispObject::nil()),
-        "frame-parameter" => Ok(LispObject::nil()),
-
-        // X display stubs
-        "x-display-pixel-width"
-        | "x-display-pixel-height"
-        | "x-display-mm-width"
-        | "x-display-mm-height"
-        | "x-display-color-cells"
-        | "x-display-planes"
-        | "x-display-visual-class"
-        | "x-display-screens"
-        | "x-display-save-under"
-        | "x-display-backing-store"
-        | "x-display-list"
-        | "x-display-name" => Ok(LispObject::integer(0)),
-
-        // unibyte-char-to-multibyte: identity for valid character codes.
-        "unibyte-char-to-multibyte" => Ok(args.first().unwrap_or(LispObject::nil())),
         // multibyte-char-to-unibyte: see helper.
         "multibyte-char-to-unibyte" => multibyte_char_to_unibyte_impl(args),
-        "string-as-unibyte"
-        | "string-as-multibyte"
-        | "string-to-multibyte"
-        | "string-to-unibyte"
-        | "string-make-unibyte"
-        | "string-make-multibyte" => Ok(args.first().unwrap_or(LispObject::nil())),
         "char-width" => {
             // Delegate to string-width
             super::string::prim_string_width(args)
@@ -455,29 +270,8 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "posn-object-width-height"
         | "frame-or-buffer-changed-p" => Ok(LispObject::nil()),
 
-        // Keymap stubs
-        "kbd" => Ok(args.first().unwrap_or(LispObject::nil())),
-        "global-set-key"
-        | "local-set-key"
-        | "global-unset-key"
-        | "local-unset-key"
-        | "define-key-after"
-        | "substitute-key-definition"
-        | "where-is-internal"
-        | "set-keymap-parent"
-        | "copy-keymap"
-        | "keymap-parent"
-        | "current-global-map"
-        | "current-active-maps"
-        | "use-global-map"
-        | "lookup-key"
-        | "map-keymap"
-        | "map-keymap-internal"
-        | "keyboard-translate"
-        | "keyboard-quit"
-        | "abort-minibuffers"
-        | "minibuffer-message"
-        | "set-quit-char" => Ok(LispObject::nil()),
+        // Keymap-adjacent headless stubs.
+        "keyboard-quit" | "abort-minibuffers" | "minibuffer-message" => Ok(LispObject::nil()),
 
         // Buffer-local stubs
         "kill-all-local-variables" | "buffer-local-variables" => Ok(LispObject::nil()),
@@ -500,14 +294,13 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "skip-chars-backward" => Ok(LispObject::integer(0)),
         "parse-partial-sexp" | "scan-sexps" | "scan-lists" | "backward-up-list"
         | "forward-sexp" | "backward-sexp" | "up-list" | "down-list" | "forward-list"
-        | "backward-list" | "string-to-syntax" => Ok(LispObject::nil()),
+        | "backward-list" => Ok(LispObject::nil()),
         "current-input-method" => Ok(LispObject::nil()),
         "activate-input-method"
         | "deactivate-input-method"
         | "set-input-method"
         | "toggle-input-method"
         | "describe-input-method" => Ok(LispObject::nil()),
-        "syntax-table-p" => Ok(LispObject::nil()),
         "recursive-edit"
         | "top-level"
         | "exit-recursive-edit"
@@ -703,10 +496,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 
         // File system stubs
         "file-name-all-completions" | "file-name-completion" => Ok(LispObject::nil()),
-        "delete-directory-internal"
-        | "delete-file-internal"
-        | "access-file"
-        | "add-name-to-file" => Ok(LispObject::nil()),
+        "access-file" | "add-name-to-file" => Ok(LispObject::nil()),
         "default-file-modes" => Ok(LispObject::integer(0o644)),
         "file-acl" | "file-selinux-context" | "set-file-acl" => Ok(LispObject::nil()),
         "substitute-in-file-name" => Ok(args.first().unwrap_or(LispObject::nil())),
@@ -721,19 +511,10 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         },
         // Buffer/editing stubs
         "downcase-word" | "upcase-word" | "scroll-up" => Ok(LispObject::nil()),
-        "insert-and-inherit" | "insert-byte" => Ok(LispObject::nil()),
-        "transpose-regions" | "upcase-initials-region" => Ok(LispObject::nil()),
         "set-marker-insertion-type" => Ok(LispObject::nil()),
         "internal--labeled-narrow-to-region" => Ok(LispObject::nil()),
-        "field-beginning" => Ok(LispObject::nil()),
-        "field-string-no-properties" => Ok(LispObject::string("")),
-        "minibuffer-prompt-end" => Ok(LispObject::integer(1)),
-        "gap-position" => Ok(LispObject::integer(1)),
-        "gap-size" => Ok(LispObject::integer(0)),
-        "position-bytes" => Ok(args.first().unwrap_or(LispObject::nil())),
         "total-line-spacing" => Ok(LispObject::integer(0)),
         "next-single-char-property-change" => Ok(LispObject::nil()),
-        "recent-auto-save-p" => Ok(LispObject::nil()),
         "decode-coding-region" | "encode-coding-region" => Ok(LispObject::nil()),
 
         // Bool-vector operations
@@ -765,14 +546,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         }
         "byte-to-string" => byte_to_string_impl(args),
         "char-resolve-modifiers" => char_resolve_modifiers_impl(args),
-        "charset-after" => Ok(LispObject::symbol("unicode")),
         "split-char" => Ok(LispObject::nil()),
-        "get-unused-iso-final-char" => Ok(LispObject::nil()),
-        "find-charset-string" | "find-charset-region" => Ok(LispObject::nil()),
-
-        // Table/syntax copies
-        "copy-syntax-table" | "copy-category-table" | "current-case-table" => Ok(LispObject::nil()),
-        "make-category-set" => Ok(LispObject::nil()),
         "copy-tramp-file-name" => Ok(args.first().unwrap_or(LispObject::nil())),
 
         // Time
@@ -799,8 +573,6 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         // Encoding / charset
         "unencodable-char-position" => Ok(LispObject::nil()),
         "check-coding-systems-region" => Ok(LispObject::nil()),
-        "clear-charset-maps" | "declare-equiv-charset" => Ok(LispObject::nil()),
-
         // Records / finalizers
         "make-record" => make_record_impl(args),
         "make-finalizer" => {
@@ -832,7 +604,6 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "num-processors" => Ok(LispObject::integer(1)),
         "network-interface-list" => Ok(LispObject::nil()),
         "group-name" => group_name_impl(args),
-        "get-display-property" => Ok(LispObject::nil()),
 
         // Display/formatting stubs
         "format-mode-line" => Ok(LispObject::string("")),
@@ -840,8 +611,6 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "format-seconds" => Ok(LispObject::string("")),
 
         // Misc C primitives
-        "set-charset-plist" => Ok(LispObject::nil()),
-        "iso-charset" => Ok(LispObject::nil()),
         "set-auto-mode--find-matching-alist-entry" => Ok(LispObject::nil()),
         "setopt" => Ok(LispObject::nil()),
 

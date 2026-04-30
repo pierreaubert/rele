@@ -126,6 +126,16 @@ pub struct RestrictionLayer {
 }
 
 #[derive(Debug, Clone)]
+pub struct TextPropertySpan {
+    /// Buffer positions use Emacs's 1-based half-open convention.
+    /// Propertized strings use the same half-open shape with 0-based
+    /// offsets.
+    pub start: usize,
+    pub end: usize,
+    pub plist: Vec<(crate::object::LispObject, crate::object::LispObject)>,
+}
+
+#[derive(Debug, Clone)]
 pub struct StubBuffer {
     pub id: BufferId,
     /// Buffer text. Operates on character offsets, not byte offsets,
@@ -155,6 +165,8 @@ pub struct StubBuffer {
     pub file_name: Option<String>,
     /// Per-buffer local-variable bindings. Keyed by symbol name.
     pub locals: HashMap<String, crate::object::LispObject>,
+    /// Minimal interval text-property model for editfns/field tests.
+    pub text_properties: Vec<TextPropertySpan>,
 }
 
 impl StubBuffer {
@@ -191,6 +203,7 @@ impl StubBuffer {
             restriction_layers: Vec::new(),
             file_name: None,
             locals,
+            text_properties: Vec::new(),
         }
     }
 
@@ -302,8 +315,20 @@ impl StubBuffer {
         if self.point > pos || (advance_point_at_pos && self.point == pos) {
             self.point += n;
         }
+        self.adjust_text_properties_after_insert(pos, n);
         self.adjust_restrictions_after_insert(pos, n);
         self.bump_modified();
+    }
+
+    fn adjust_text_properties_after_insert(&mut self, pos: usize, len: usize) {
+        for span in &mut self.text_properties {
+            if pos <= span.start {
+                span.start += len;
+                span.end += len;
+            } else if pos < span.end {
+                span.end += len;
+            }
+        }
     }
 
     fn adjust_range_after_insert(range: &mut (usize, usize), pos: usize, len: usize) {
@@ -422,6 +447,7 @@ impl StubBuffer {
         let a_byte = self.char_to_byte(a);
         let b_byte = self.char_to_byte(b);
         self.text.replace_range(a_byte..b_byte, "");
+        self.adjust_text_properties_after_delete(a, b);
         if self.point > a {
             self.point = if self.point > b {
                 self.point - (b - a)
@@ -440,12 +466,42 @@ impl StubBuffer {
         self.bump_modified();
     }
 
+    fn adjust_text_properties_after_delete(&mut self, start: usize, end: usize) {
+        let len = end.saturating_sub(start);
+        let mut adjusted = Vec::new();
+        for mut span in self.text_properties.drain(..) {
+            if span.end <= start {
+                adjusted.push(span);
+            } else if span.start >= end {
+                span.start = span.start.saturating_sub(len);
+                span.end = span.end.saturating_sub(len);
+                adjusted.push(span);
+            } else if span.start < start && span.end > end {
+                span.end = span.end.saturating_sub(len);
+                adjusted.push(span);
+            } else if span.start < start {
+                span.end = start;
+                if span.start < span.end {
+                    adjusted.push(span);
+                }
+            } else if span.end > end {
+                span.start = start;
+                span.end = span.end.saturating_sub(len);
+                if span.start < span.end {
+                    adjusted.push(span);
+                }
+            }
+        }
+        self.text_properties = adjusted;
+    }
+
     pub fn erase(&mut self) {
         self.text.clear();
         self.point = 1;
         self.restriction = None;
         self.manual_restriction = None;
         self.restriction_layers.clear();
+        self.text_properties.clear();
         self.bump_modified();
     }
 
@@ -470,6 +526,106 @@ impl StubBuffer {
         let a_byte = self.char_to_byte(a);
         let b_byte = self.char_to_byte(b);
         self.text[a_byte..b_byte].to_string()
+    }
+
+    pub fn text_properties_in_range(&self, start: usize, end: usize) -> Vec<TextPropertySpan> {
+        let (a, b) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        self.text_properties
+            .iter()
+            .filter_map(|span| {
+                let start = span.start.max(a);
+                let end = span.end.min(b);
+                (start < end).then(|| TextPropertySpan {
+                    start,
+                    end,
+                    plist: span.plist.clone(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn add_text_properties(
+        &mut self,
+        start: usize,
+        end: usize,
+        plist: Vec<(crate::object::LispObject, crate::object::LispObject)>,
+    ) {
+        let (a, b) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        let a = a.clamp(self.point_min(), self.point_max());
+        let b = b.clamp(self.point_min(), self.point_max());
+        if a < b && !plist.is_empty() {
+            self.text_properties.push(TextPropertySpan {
+                start: a,
+                end: b,
+                plist,
+            });
+        }
+    }
+
+    pub fn remove_text_properties(
+        &mut self,
+        start: usize,
+        end: usize,
+        keys: &[crate::object::LispObject],
+    ) {
+        let (a, b) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        for span in &mut self.text_properties {
+            if span.end <= a || span.start >= b {
+                continue;
+            }
+            span.plist.retain(|(key, _)| !keys.iter().any(|k| k == key));
+        }
+        self.text_properties
+            .retain(|span| span.start < span.end && !span.plist.is_empty());
+    }
+
+    pub fn properties_at(
+        &self,
+        pos: usize,
+    ) -> Vec<(crate::object::LispObject, crate::object::LispObject)> {
+        let mut props: Vec<(crate::object::LispObject, crate::object::LispObject)> = Vec::new();
+        for span in &self.text_properties {
+            if pos < span.start || pos >= span.end {
+                continue;
+            }
+            for (key, value) in &span.plist {
+                if let Some((_, existing)) = props.iter_mut().find(|(k, _)| k == key) {
+                    *existing = value.clone();
+                } else {
+                    props.push((key.clone(), value.clone()));
+                }
+            }
+        }
+        props
+    }
+
+    pub fn property_at(
+        &self,
+        pos: usize,
+        prop: &crate::object::LispObject,
+    ) -> Option<crate::object::LispObject> {
+        self.text_properties.iter().rev().find_map(|span| {
+            if pos >= span.start && pos < span.end {
+                span.plist
+                    .iter()
+                    .rev()
+                    .find_map(|(key, value)| (key == prop).then(|| value.clone()))
+            } else {
+                None
+            }
+        })
     }
 
     pub fn bump_modified(&mut self) {

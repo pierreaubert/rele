@@ -294,6 +294,9 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
     interp.define("erc-nicks-track-faces", LispObject::symbol("prepend"));
     interp.define("erc-d-u--library-directory", LispObject::nil());
     reinstall_runtime_compat(interp);
+    for &name in crate::primitives_window::WINDOW_PRIMITIVE_NAMES {
+        interp.define(name, LispObject::primitive(name));
+    }
     for name in [
         "mark",
         "set-mark",

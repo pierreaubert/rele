@@ -43,6 +43,14 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "string-bytes" => Some(prim_string_bytes(args)),
         "decode-char" => Some(prim_decode_char(args)),
         "encode-char" => Some(prim_encode_char(args)),
+        "detect-coding-string" => Some(prim_detect_coding_string(args)),
+        "unibyte-char-to-multibyte" => Some(prim_unibyte_char_to_multibyte(args)),
+        "string-as-unibyte" | "string-to-unibyte" | "string-make-unibyte" => {
+            Some(prim_string_mark_multibyte(args, false))
+        }
+        "string-as-multibyte" | "string-to-multibyte" | "string-make-multibyte" => {
+            Some(prim_string_mark_multibyte(args, true))
+        }
         _ => None,
     }
 }
@@ -812,6 +820,44 @@ pub fn prim_encode_char(args: &LispObject) -> ElispResult<LispObject> {
     match ch {
         LispObject::Integer(_) => Ok(ch),
         _ => Err(ElispError::WrongTypeArgument("integer".to_string())),
+    }
+}
+
+pub fn prim_detect_coding_string(args: &LispObject) -> ElispResult<LispObject> {
+    let s = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let s = match s {
+        LispObject::String(s) => s,
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    let codings: &[&str] = if s.contains('\0') {
+        &["no-conversion", "undecided"]
+    } else if s.contains('\x1b') {
+        &["iso-2022-7bit", "undecided"]
+    } else {
+        &["utf-8"]
+    };
+    Ok(codings.iter().rev().fold(LispObject::nil(), |tail, name| {
+        LispObject::cons(LispObject::symbol(name), tail)
+    }))
+}
+
+pub fn prim_unibyte_char_to_multibyte(args: &LispObject) -> ElispResult<LispObject> {
+    let ch = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    match ch {
+        LispObject::Integer(n) if (0..=0x10ffff).contains(&n) => Ok(LispObject::integer(n)),
+        LispObject::Integer(_) => Err(ElispError::WrongTypeArgument("character".to_string())),
+        _ => Err(ElispError::WrongTypeArgument("integer".to_string())),
+    }
+}
+
+pub fn prim_string_mark_multibyte(args: &LispObject, multibyte: bool) -> ElispResult<LispObject> {
+    let s = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    match s {
+        LispObject::String(s) => {
+            crate::object::mark_string_multibyte(&s, multibyte);
+            Ok(LispObject::string(&s))
+        }
+        _ => Err(ElispError::WrongTypeArgument("string".to_string())),
     }
 }
 

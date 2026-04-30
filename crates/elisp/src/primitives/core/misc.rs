@@ -14,7 +14,8 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
             name,
             prim_propertized_buffer_identification(args),
         )),
-        "substitute-command-keys" => Some(recorded_stub(name, prim_identity(args))),
+        "unicode-property-table-internal" => Some(prim_unicode_property_table_internal(args)),
+        "substitute-command-keys" => Some(prim_identity(args)),
         "format-message" => Some(super::string::prim_concat(args)),
         _ => None,
     }
@@ -37,6 +38,13 @@ pub fn prim_ignore(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_propertized_buffer_identification(args: &LispObject) -> ElispResult<LispObject> {
     let fmt = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::cons(fmt, LispObject::nil()))
+}
+
+fn prim_unicode_property_table_internal(args: &LispObject) -> ElispResult<LispObject> {
+    let _prop = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    // Emacs returns nil during early bootstrap when Unicode property
+    // tables are unavailable. Rele does not model the Unicode database yet.
+    Ok(LispObject::nil())
 }
 
 pub fn prim_rele_rx_translate(args: &LispObject) -> ElispResult<LispObject> {

@@ -609,7 +609,7 @@ impl LispObject {
     /// Print in human-readable form (like princ). Strings without quotes.
     pub fn princ_to_string(&self) -> String {
         match self {
-            LispObject::String(s) => s.clone(),
+            LispObject::String(s) => current_string_value(s),
             other => other.prin1_to_string(),
         }
     }

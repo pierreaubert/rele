@@ -11,6 +11,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "rename-file" => Some(prim_rename_file(args)),
         "copy-file" => Some(prim_copy_file(args)),
         "delete-directory" => Some(prim_delete_directory(args)),
+        "delete-directory-internal" => Some(prim_delete_directory_internal(args)),
         "file-modes" => Some(prim_file_modes(args)),
         "file-newer-than-file-p" => Some(prim_file_newer_than_file_p(args)),
         "file-symlink-p" => Some(prim_file_symlink_p(args)),
@@ -36,6 +37,7 @@ pub const FILE_OPS_PRIMITIVE_NAMES: &[&str] = &[
     "rename-file",
     "copy-file",
     "delete-directory",
+    "delete-directory-internal",
     "file-modes",
     "set-file-modes",
     "file-newer-than-file-p",
@@ -127,6 +129,13 @@ fn prim_delete_directory(args: &LispObject) -> ElispResult<LispObject> {
         std::fs::remove_dir(&dir)
     };
     result.map_err(|e| ElispError::EvalError(format!("delete-directory: {e}")))?;
+    Ok(LispObject::nil())
+}
+
+fn prim_delete_directory_internal(args: &LispObject) -> ElispResult<LispObject> {
+    let dir = str_arg(args, 0)?;
+    std::fs::remove_dir(&dir)
+        .map_err(|e| ElispError::EvalError(format!("delete-directory-internal: {e}")))?;
     Ok(LispObject::nil())
 }
 

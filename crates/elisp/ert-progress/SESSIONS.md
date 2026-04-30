@@ -3,6 +3,248 @@
 Append-only — newest entries at top. Each session: what changed, what
 landed, what to look at next.
 
+## 2026-04-30 - String/coding/window stub pass
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --lib -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --test other_runtime_primitives -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --test window_display_headless -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/xdisp-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/terminal-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/coding-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/buffer-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/undo-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/keymap-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target cargo fmt
+CARGO_TARGET_DIR=tmp/cargo-target cargo fmt --check
+python3 crates/elisp/ert-progress/stub_inventory.py -o crates/elisp/ert-progress/stub_inventory_baseline.tsv --quiet
+python3 crates/elisp/ert-progress/stub_inventory.py --check
+git diff --check
+git diff --cached --check
+```
+
+**Movement:**
+
+- Source-derived stub inventory moved from `800` records to `779`.
+  `window/display` moved from `88` records to `84`, `keymap/help`
+  from `27` to `26`, and `other` from `648` to `632`.
+- `xdisp-tests.el` moved from `8` pass, `2` fail, `0` err to `9`
+  pass, `1` fail, `0` err.
+- `terminal-tests.el` moved from `0` pass, `0` fail, `1` err to `1`
+  pass, `0` fail, `0` err.
+- Targeted `coding-tests.el` now reports `14` pass, `13` fail, `0`
+  err, `1` skip, with the `detect-coding-string` cases passing.
+
+**Code landed:**
+
+- Moved string coding conversion helpers into real primitives:
+  `detect-coding-string`, `unibyte-char-to-multibyte`, the unibyte
+  string aliases, and the multibyte string aliases.
+- Added real `delete-file-internal`, `recent-auto-save-p`, `read-string`,
+  `describe-buffer-bindings`, and `any` behavior.
+- Added a single live headless terminal object for `terminal-list`,
+  `terminal-live-p`, `terminal-name`, and `frame-initial-p`.
+- Removed the old source-level `frame-list` / `window-list` fallback in
+  the evaluator so full bootstrap reaches the window primitives.
+
+**Validation:**
+
+- `rele-elisp` library tests: `534` passed, `3` ignored.
+- `other_runtime_primitives`: `7` passed.
+- `window_display_headless`: `7` passed.
+- Stub inventory gate passed.
+- `cargo fmt --check`, `git diff --check`, and `git diff --cached --check`
+  passed.
+
+**Regressions / follow-up:**
+
+- Full tracked ERT was not rerun after this pass; the dashboard total still
+  reflects the previous full refresh.
+- `keymap-tests.el` currently stack-overflows the worker when run alone, so
+  it needs a non-stub investigation before `describe-buffer-bindings` can be
+  credited in the per-file dashboard.
+- Remaining `coding-tests.el` failures are now deeper coding-system region
+  and alias behavior rather than `detect-coding-string` stubs.
+
+## 2026-04-30 — Display/font stub follow-up
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --test window_display_headless -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/xdisp-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/minibuf-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/font-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --lib -- --test-threads=1
+python3 crates/elisp/ert-progress/stub_inventory.py -o crates/elisp/ert-progress/stub_inventory_baseline.tsv --quiet
+python3 crates/elisp/ert-progress/stub_inventory.py --check
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py
+```
+
+**Movement:**
+
+- Full tracked refresh moved from `880` pass / `130` fail / `25` err /
+  `128` skip (`75%`) to `887` pass / `123` fail / `25` err / `128`
+  skip (`76%`).
+- Source-derived stub inventory moved from `808` records to `800`.
+  `window/display` moved from `96` records to `88`.
+- `xdisp-tests.el` moved from `4` pass, `6` fail, `0` err to `8`
+  pass, `2` fail, `0` err.
+- `font-tests.el` moved from `0` pass, `2` fail to `2` pass, `0`
+  fail.
+- `minibuf-tests.el` moved from `61` pass, `5` fail to `62` pass,
+  `4` fail, with no runtime stub hits remaining.
+
+**Code landed:**
+
+- Added `bidi-find-overridden-directionality` over the current buffer,
+  with CRLF-aware logical positions for loaded upstream test sources.
+- Added headless `minibuffer-window` / `active-minibuffer-window`
+  primitives and removed their bootstrap `ignore` aliases.
+- Added `font-spec` / `font-get` parsing for the Fontconfig, GTK-style,
+  and XLFD shapes covered by `font-tests.el`.
+- Added `get-display-property` on top of the text-property interval
+  model.
+
+**Validation:**
+
+- `window_display_headless`: `7` passed.
+- `rele-elisp` library tests: `534` passed, `3` ignored.
+- Stub inventory gate passed.
+- Full ERT snapshot: `887` pass, `123` fail, `25` err, `128` skip
+  (`76%`).
+
+**Next leverage targets:**
+
+1. `describe-buffer-bindings` remains the top runtime-stub cluster with
+   two bad keymap tests.
+2. `detect-coding-string` is the next compact supportable `other`
+   primitive cluster.
+3. `read-string` blocks one xdisp minibuffer-resizing path, but needs
+   care because it is also interactive-input behavior.
+
+## 2026-04-30 — Parallel stub bucket pass
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=tmp/cargo-target cargo fmt
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --lib -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --test category_tables -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --test other_runtime_primitives -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --test window_display_headless -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target cargo fmt --check
+git diff --check
+python3 crates/elisp/ert-progress/stub_inventory.py -o crates/elisp/ert-progress/stub_inventory_baseline.tsv --quiet
+python3 crates/elisp/ert-progress/stub_inventory.py --check
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py
+```
+
+**Movement:**
+
+- Full tracked refresh moved from `844` pass / `159` fail / `31` err /
+  `129` skip (`72%`) to `880` pass / `130` fail / `25` err / `128`
+  skip (`75%`).
+- Source-derived stub inventory moved from `1094` records to `808`.
+  `category/case-tables` moved from `91` records to `0`,
+  `window/display` from `255` to `96`, `keymap/help` from `44` to
+  `27`, and `editing/regions` from `40` to `37`.
+- `keymap-tests.el` moved from `8` pass, `35` fail, `4` err to `21`
+  pass, `25` fail, `1` err.
+- `editfns-tests.el` moved from `27` pass, `25` fail, `5` err to `36`
+  pass, `18` fail, `3` err.
+- `category-tests.el` moved from `1` pass, `4` fail, `1` err to `4`
+  pass, `2` fail, `0` err.
+- `charset-tests.el` moved from `5` pass, `15` fail, `0` err, `1`
+  skip to `14` pass, `6` fail, `1` err, `0` skip.
+- `xdisp-tests.el` moved from `1` pass, `6` fail, `3` err to `4`
+  pass, `6` fail, `0` err.
+
+**Code landed:**
+
+- Added lightweight category/case/syntax/charset table primitives and
+  removed the category/case bucket from the source inventory.
+- Added deterministic headless window/frame geometry and display
+  primitives for the single virtual frame/window model.
+- Strengthened keymap/help traversal, bootstrap maps, lookup, where-is,
+  and documentation/substitution behavior.
+- Added text-property storage/editing support, field helpers, and
+  property-aware buffer substring/insertion paths.
+- Added bounded implementations for `delete-directory-internal`,
+  `find-file-name-handler`, `coding-system-eol-type`, and an explicit
+  nil `unicode-property-table-internal`.
+
+**Validation:**
+
+- `rele-elisp` library tests: `534` passed, `3` ignored.
+- New bucket integration tests: `category_tables` `4/4`,
+  `other_runtime_primitives` `3/3`, `window_display_headless` `4/4`.
+- Stub inventory gate passed.
+- Full ERT snapshot: `880` pass, `130` fail, `25` err, `128` skip
+  (`75%`).
+
+**Regressions / follow-up:**
+
+- `doc-tests.el` moved from `3/2/0` to `2/3/0`; follow up on the new
+  documentation behavior.
+- `undo-tests.el` moved from `17/0/0` to `16/0/1`; likely related to
+  text-property/edit history interactions.
+- Remaining top runtime clusters are now bidi/minibuffer/font display,
+  `describe-buffer-bindings`, and coding/thread/file primitives.
+
+## 2026-04-30 — Editing/regions stub implementation
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp primitives::buffer::tests:: -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --lib -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py
+python3 crates/elisp/ert-progress/stub_inventory.py -o crates/elisp/ert-progress/stub_inventory_baseline.tsv --quiet
+python3 crates/elisp/ert-progress/stub_inventory.py --check
+```
+
+**Movement:**
+
+- Full tracked refresh moved from `837` pass / `166` fail / `31` err /
+  `129` skip (`72%`) to `844` pass / `159` fail / `31` err / `129`
+  skip (`72%`).
+- `editfns-tests.el` moved from `20` pass, `32` fail, `5` err to `27`
+  pass, `25` fail, `5` err.
+- Source-derived stub inventory moved from `1117` records to `1094`.
+  The `editing/regions` bucket moved from `63` records to `40`.
+
+**Code landed:**
+
+- Moved `delete-and-extract-region`, `insert-buffer-substring`,
+  `insert-buffer-substring-no-properties`, byte-position conversion,
+  insert/inherit variants, `insert-byte`, `transpose-regions`, and
+  `upcase-initials-region` into buffer primitives.
+- Added minimal no-property field/minibuffer helpers for
+  `field-beginning`, `field-string-no-properties`, and
+  `minibuffer-prompt-end`.
+- Removed the corresponding `core/stubs.rs` runtime stubs and refreshed
+  the monotonic stub inventory baseline.
+
+**Validation:**
+
+- Buffer primitive tests: `21` passed.
+- `rele-elisp` library tests: `530` passed, `3` ignored.
+- Stub inventory gate passed.
+- Full ERT snapshot: `844` pass, `159` fail, `31` err, `129` skip
+  (`72%`).
+
+**Next leverage targets:**
+
+1. The remaining `editfns-tests.el` `transpose-regions` failures are now
+   semantic/argument-shape issues rather than runtime stub hits.
+2. The next runtime-stub clusters are `window/display` and
+   `category/case-tables`; both affect four bad tests at the top of the
+   telemetry table.
+3. Text property parity remains a larger blocker for edit/region fidelity.
+
 ## 2026-04-30 — Stub inventory and telemetry
 
 **Commands run:**

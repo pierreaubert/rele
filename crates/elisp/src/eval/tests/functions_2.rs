@@ -539,6 +539,30 @@ fn test_batched_defun_stubs_resolve() {
 }
 
 #[test]
+fn test_keymap_help_bootstrap_primitives() {
+    let interp = make_stdlib_interp();
+    interp
+        .eval_source("(defun rele-doc-target () \"Doc target.\" nil)")
+        .unwrap();
+    let cases: &[(&str, &str)] = &[
+        ("(keymapp help-mode-map)", "t"),
+        ("(documentation 'rele-doc-target)", "Doc target."),
+        ("(describe-function 'rele-doc-target)", "nil"),
+        ("(where-is-internal 'next-line nil t)", "C-n"),
+        (
+            "(substitute-command-keys \"\\[next-line] \\[emacs-version]\")",
+            "C-n M-x emacs-version",
+        ),
+    ];
+    for (src, expected) in cases {
+        let value = interp
+            .eval(read(src).unwrap_or_else(|err| panic!("reader({src}) failed: {err}")))
+            .unwrap_or_else(|err| panic!("eval({src}) failed: {err:?}"));
+        assert_eq!(value.princ_to_string(), *expected, "source {src}");
+    }
+}
+
+#[test]
 fn test_coding_system_contracts_signal_unknown_names() {
     let interp = make_stdlib_interp();
     let cases: &[(&str, &str)] = &[
@@ -705,7 +729,7 @@ fn test_batched_defun_stubs_resolve_round4() {
         ("(mapcar #'buffer-name (buffer-list))", "(\"*scratch*\")"),
         ("(buffer-modified-p)", "nil"),
         ("(window-buffer)", "*scratch*"),
-        ("(window-pixel-width)", "80"),
+        ("(window-pixel-width)", "800"),
         ("(frame-pixel-width)", "800"),
         ("(frame-width)", "80"),
         ("(unibyte-string 104 105)", "hi"),

@@ -11,6 +11,7 @@
 //! - window: window/frame operations
 
 pub mod buffer;
+pub mod category;
 pub mod cl;
 pub mod core;
 pub mod eieio;
@@ -26,6 +27,7 @@ pub use core::{make_ert_test_obj, set_current_ert_test};
 
 // Re-export submodules with legacy names for compatibility
 pub use buffer as primitives_buffer;
+pub use category as primitives_category;
 pub use cl as primitives_cl;
 pub use eieio as primitives_eieio;
 pub use file as primitives_file;

@@ -1537,6 +1537,28 @@ fn list_from_vec(items: Vec<LispObject>) -> LispObject {
         .fold(LispObject::nil(), |acc, item| LispObject::cons(item, acc))
 }
 
+fn eval_arg_list(
+    args: LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let mut evaluated = Vec::new();
+    let mut current = args;
+    while let Some((arg, rest)) = current.destructure_cons() {
+        evaluated.push(value_to_obj(eval(
+            obj_to_value(arg),
+            env,
+            editor,
+            macros,
+            state,
+        )?));
+        current = rest;
+    }
+    Ok(list_from_vec(evaluated))
+}
+
 fn collect_dot_symbols(obj: &LispObject, out: &mut HashSet<String>) {
     match obj {
         LispObject::Symbol(id) => {
@@ -2715,26 +2737,24 @@ pub(super) fn eval_inner(
                     Ok(Value::nil())
                 }
                 "buffer-substring" | "buffer-substring-no-properties" => {
-                    let start = value_to_obj(eval(
-                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?)
-                    .as_integer()
-                    .unwrap_or(1) as usize;
-                    let end = value_to_obj(eval(
-                        obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?)
-                    .as_integer()
-                    .unwrap_or(1) as usize;
-                    let s = crate::buffer::with_current(|b| b.substring(start, end));
-                    Ok(obj_to_value(LispObject::string(&s)))
+                    let evaluated = eval_arg_list(cdr.clone(), env, editor, macros, state)?;
+                    if let Some(result) =
+                        crate::primitives_buffer::call_buffer_primitive(sym_name, &evaluated)
+                    {
+                        Ok(obj_to_value(result?))
+                    } else {
+                        Ok(Value::nil())
+                    }
+                }
+                "constrain-to-field" => {
+                    let evaluated = eval_arg_list(cdr.clone(), env, editor, macros, state)?;
+                    if let Some(result) =
+                        crate::primitives_buffer::call_buffer_primitive(sym_name, &evaluated)
+                    {
+                        Ok(obj_to_value(result?))
+                    } else {
+                        Ok(Value::nil())
+                    }
                 }
                 "delete-region" => {
                     let start = value_to_obj(eval(
@@ -3036,9 +3056,11 @@ pub(super) fn eval_inner(
                 }
                 "insert" | "insert-before-markers" | "insert-before-markers-and-inherit" => {
                     let before_markers = sym_name != "insert";
+                    let inherit = sym_name == "insert-before-markers-and-inherit";
                     eval_insert(
                         obj_to_value(cdr),
                         before_markers,
+                        inherit,
                         env,
                         editor,
                         macros,
@@ -5475,13 +5497,12 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?);
-                    let pred = value_to_obj(eval(
-                        obj_to_value(cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?);
+                    let pred = match cdr.nth(1) {
+                        Some(expr) => {
+                            value_to_obj(eval(obj_to_value(expr), env, editor, macros, state)?)
+                        }
+                        None => LispObject::symbol("<"),
+                    };
                     let mut items = Vec::new();
                     let mut cur = list;
                     while let Some((car_val, cdr_val)) = cur.destructure_cons() {
@@ -6636,14 +6657,26 @@ pub(super) fn eval_inner(
                     Ok(Value::nil())
                 }
                 "char-syntax" => {
-                    let _ = eval(
-                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?;
-                    Ok(obj_to_value(LispObject::integer(32)))
+                    let mut evaluated = Vec::new();
+                    let mut cur = cdr.clone();
+                    while let Some((arg, rest)) = cur.destructure_cons() {
+                        evaluated.push(value_to_obj(eval(
+                            obj_to_value(arg),
+                            env,
+                            editor,
+                            macros,
+                            state,
+                        )?));
+                        cur = rest;
+                    }
+                    Ok(obj_to_value(
+                        crate::primitives_category::call_category_primitive(
+                            "char-syntax",
+                            &list_from_vec(evaluated),
+                            Some(state),
+                        )
+                        .ok_or_else(|| ElispError::VoidFunction("char-syntax".to_string()))??,
+                    ))
                 }
                 "oclosure-define" => eval_oclosure_define(obj_to_value(cdr), state),
                 "with-memoization" => {
@@ -6821,34 +6854,31 @@ pub(super) fn eval_inner(
                     )?;
                     Ok(Value::nil())
                 }
-                "define-charset-internal" => {
-                    if cdr.is_nil() {
+                "define-charset-internal" | "put-charset-property" | "charset-plist" => {
+                    let name = car.as_symbol().unwrap_or_default();
+                    let mut cur = cdr.clone();
+                    let mut evaluated = Vec::new();
+                    while let Some((arg, rest)) = cur.destructure_cons() {
+                        evaluated.push(value_to_obj(eval(
+                            obj_to_value(arg),
+                            env,
+                            editor,
+                            macros,
+                            state,
+                        )?));
+                        cur = rest;
+                    }
+                    if name == "define-charset-internal" && evaluated.is_empty() {
                         return Err(ElispError::WrongNumberOfArguments);
                     }
-                    let mut cur = cdr.clone();
-                    while let Some((arg, rest)) = cur.destructure_cons() {
-                        let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
-                        cur = rest;
-                    }
-                    Ok(Value::nil())
-                }
-                "put-charset-property" => {
-                    let mut cur = cdr.clone();
-                    while let Some((arg, rest)) = cur.destructure_cons() {
-                        let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
-                        cur = rest;
-                    }
-                    Ok(Value::nil())
-                }
-                "charset-plist" => {
-                    let _ = eval(
-                        obj_to_value(cdr.first().ok_or(ElispError::WrongNumberOfArguments)?),
-                        env,
-                        editor,
-                        macros,
-                        state,
-                    )?;
-                    Ok(Value::nil())
+                    Ok(obj_to_value(
+                        crate::primitives_category::call_category_primitive(
+                            &name,
+                            &list_from_vec(evaluated),
+                            Some(state),
+                        )
+                        .ok_or_else(|| ElispError::VoidFunction(name.clone()))??,
+                    ))
                 }
                 "locate-library" => {
                     let name_val = value_to_obj(eval(
@@ -6891,41 +6921,42 @@ pub(super) fn eval_inner(
                     Ok(Value::nil())
                 }
                 "propertize" => {
-                    let s = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let mut property_count = 0usize;
-                    let mut cur = cdr.rest().unwrap_or_else(LispObject::nil);
-                    while let Some((arg, rest)) = cur.destructure_cons() {
-                        let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
-                        property_count += 1;
-                        cur = rest;
+                    let evaluated = eval_arg_list(cdr.clone(), env, editor, macros, state)?;
+                    match crate::primitives_buffer::call_buffer_primitive("propertize", &evaluated)
+                    {
+                        Some(result) => Ok(obj_to_value(result?)),
+                        None => Ok(evaluated
+                            .first()
+                            .map(obj_to_value)
+                            .unwrap_or_else(Value::nil)),
                     }
-                    if !property_count.is_multiple_of(2) {
-                        return Err(ElispError::WrongNumberOfArguments);
-                    }
-                    eval(obj_to_value(s), env, editor, macros, state)
                 }
                 "put-text-property"
                 | "set-text-properties"
                 | "add-text-properties"
                 | "remove-text-properties" => {
-                    let mut cur = cdr.clone();
-                    while let Some((arg, rest)) = cur.destructure_cons() {
-                        let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
-                        cur = rest;
+                    let evaluated = eval_arg_list(cdr.clone(), env, editor, macros, state)?;
+                    if let Some(result) =
+                        crate::primitives_buffer::call_buffer_primitive(sym_name, &evaluated)
+                    {
+                        Ok(obj_to_value(result?))
+                    } else {
+                        Ok(Value::nil())
                     }
-                    Ok(Value::nil())
                 }
                 "get-text-property"
                 | "text-properties-at"
                 | "next-single-property-change"
                 | "previous-single-property-change"
                 | "text-property-any" => {
-                    let mut cur = cdr.clone();
-                    while let Some((arg, rest)) = cur.destructure_cons() {
-                        let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
-                        cur = rest;
+                    let evaluated = eval_arg_list(cdr.clone(), env, editor, macros, state)?;
+                    if let Some(result) =
+                        crate::primitives_buffer::call_buffer_primitive(sym_name, &evaluated)
+                    {
+                        Ok(obj_to_value(result?))
+                    } else {
+                        Ok(Value::nil())
                     }
-                    Ok(Value::nil())
                 }
                 "make-face" => {
                     let face = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
@@ -6985,8 +7016,12 @@ pub(super) fn eval_inner(
                 "make-local-variable" => {
                     eval_make_local_variable(obj_to_value(cdr), env, editor, macros, state)
                 }
-                "frame-list" | "window-list" => Ok(Value::nil()),
-                "selected-frame" | "selected-window" => Ok(Value::nil()),
+                "frame-list" | "window-list" | "selected-frame" | "selected-window" => {
+                    let evaluated = eval_arg_list(cdr.clone(), env, editor, macros, state)?;
+                    Ok(obj_to_value(crate::primitives::call_primitive(
+                        sym_name, &evaluated,
+                    )?))
+                }
                 "frame-parameter" => {
                     let mut cur = cdr.clone();
                     while let Some((arg, rest)) = cur.destructure_cons() {

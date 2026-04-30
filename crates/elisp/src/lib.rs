@@ -21,6 +21,7 @@ pub use reader::{detect_lexical_binding, read, read_all};
 
 // Re-export primitives submodules at crate root for compatibility
 pub use primitives::primitives_buffer;
+pub use primitives::primitives_category;
 pub use primitives::primitives_cl;
 pub use primitives::primitives_eieio;
 pub use primitives::primitives_file;

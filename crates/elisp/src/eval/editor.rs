@@ -112,6 +112,7 @@ pub(super) fn eval_buffer_size(
 pub(super) fn eval_insert(
     args: Value,
     before_markers: bool,
+    inherit: bool,
     env: &Arc<RwLock<Environment>>,
     editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
     macros: &MacroTable,
@@ -120,21 +121,22 @@ pub(super) fn eval_insert(
     // (insert &rest ARGS) — Emacs accepts multiple args, each a string
     // or a character (integer).
     let mut current = value_to_obj(args);
-    let mut chunks: Vec<String> = Vec::new();
+    let mut chunks: Vec<(String, Option<String>)> = Vec::new();
     while let Some((arg, rest)) = current.destructure_cons() {
         let v = value_to_obj(eval(obj_to_value(arg), env, editor, macros, state)?);
-        let s = match &v {
-            LispObject::String(s) => s.clone(),
+        let (s, raw_string) = match &v {
+            LispObject::String(s) => (crate::object::current_string_value(s), Some(s.clone())),
             LispObject::Integer(i) => char::from_u32(*i as u32)
                 .map(|c| c.to_string())
-                .unwrap_or_default(),
-            LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
-            _ => format!("{:?}", v),
+                .map(|s| (s, None))
+                .unwrap_or_else(|| (String::new(), None)),
+            LispObject::Symbol(id) => (crate::obarray::symbol_name(*id), None),
+            _ => (format!("{:?}", v), None),
         };
-        chunks.push(s);
+        chunks.push((s, raw_string));
         current = rest;
     }
-    let text_str: String = chunks.concat();
+    let text_str: String = chunks.iter().map(|(text, _)| text.as_str()).collect();
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {
         let current_name = cb.current_buffer_name();
@@ -146,7 +148,30 @@ pub(super) fn eval_insert(
         }
     } else {
         drop(e);
-        super::insert_with_overlay_hooks(&text_str, before_markers, env, editor, macros, state)?;
+        for (text, raw_string) in chunks {
+            let start = crate::buffer::with_current(|buffer| buffer.point);
+            let inherited = if inherit {
+                crate::buffer::with_current(|buffer| {
+                    if start > buffer.point_min() {
+                        buffer.properties_at(start - 1)
+                    } else {
+                        buffer.properties_at(start)
+                    }
+                })
+            } else {
+                Vec::new()
+            };
+            let len = text.chars().count();
+            super::insert_with_overlay_hooks(&text, before_markers, env, editor, macros, state)?;
+            if inherit && len > 0 && !inherited.is_empty() {
+                crate::buffer::with_current_mut(|buffer| {
+                    buffer.add_text_properties(start, start + len, inherited);
+                });
+            }
+            if let Some(raw) = raw_string {
+                crate::primitives_buffer::copy_string_properties_to_current_buffer(&raw, start);
+            }
+        }
     }
     Ok(Value::nil())
 }

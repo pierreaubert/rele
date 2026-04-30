@@ -107,10 +107,14 @@ pub(crate) fn call_stateful_primitive(
         "read-char"
         | "read-char-exclusive"
         | "read-event"
+        | "read-string"
         | "read-from-minibuffer"
         | "read-no-blanks-input"
         | "yes-or-no-p"
-        | "y-or-n-p" => Some(stateful_interaction_read(name, args, env, state)),
+        | "y-or-n-p" => Some(stateful_interaction_read(
+            name, args, env, editor, macros, state,
+        )),
+        "find-file-name-handler" => Some(stateful_find_file_name_handler(args, env, state)),
         "make-process" => Some(stateful_make_process(args, env, editor, macros, state)),
         "make-pipe-process" => Some(stateful_make_pipe_process(args)),
         "start-process" => Some(stateful_start_process(args)),
@@ -156,6 +160,14 @@ pub(crate) fn call_stateful_primitive(
         "load-history-filename-element" => {
             Some(stateful_load_history_filename_element(args, state))
         }
+        "documentation" => Some(stateful_documentation(args, state)),
+        "documentation-property" => Some(stateful_documentation_property(args, state)),
+        "describe-function" => Some(stateful_describe_function(args, state)),
+        "describe-buffer-bindings" => Some(stateful_describe_buffer_bindings(
+            args, env, editor, macros, state,
+        )),
+        "any" => Some(stateful_any(args, env, editor, macros, state)),
+        "substitute-command-keys" => Some(stateful_substitute_command_keys(args, state)),
         _ => {
             if let Some(r) =
                 super::super::keymap_forms::call_stateful_keymap_primitive(name, args, state)
@@ -163,6 +175,11 @@ pub(crate) fn call_stateful_primitive(
                 return Some(r);
             }
             if let Some(r) = super::super::metadata::call_metadata_primitive(name, args, state) {
+                return Some(r);
+            }
+            if let Some(r) =
+                crate::primitives_category::call_category_primitive(name, args, Some(state))
+            {
                 return Some(r);
             }
             if let Some(r) = crate::primitives_buffer::call_buffer_primitive(name, args) {
@@ -203,6 +220,182 @@ fn signal_error(message: &str) -> ElispError {
         "error",
         LispObject::cons(LispObject::string(message), LispObject::nil()),
     )
+}
+
+fn docstring_from_body(body: LispObject) -> Option<String> {
+    body.first().and_then(|doc| doc.as_string().cloned())
+}
+
+fn docstring_from_function(def: &LispObject) -> Option<String> {
+    match def {
+        LispObject::BytecodeFn(bytecode) => bytecode.docstring.clone(),
+        LispObject::Primitive(_) => Some(String::new()),
+        LispObject::Cons(_) => {
+            let head = def.car()?.as_symbol()?;
+            match head.as_str() {
+                "lambda" => docstring_from_body(def.rest()?.rest().unwrap_or_else(LispObject::nil)),
+                "closure" => {
+                    let rest = def.rest()?;
+                    docstring_from_body(rest.rest()?.rest().unwrap_or_else(LispObject::nil))
+                }
+                "macro" => def
+                    .nth(1)
+                    .and_then(|lambda| docstring_from_function(&lambda)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn stateful_documentation(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
+    let target = args.first().unwrap_or_else(LispObject::nil);
+    if target.is_nil() {
+        return Ok(LispObject::nil());
+    }
+
+    if let Some(id) = target.as_symbol_id() {
+        let prop_doc = state.get_plist(id, crate::obarray::intern("function-documentation"));
+        if let Some(doc) = prop_doc.as_string() {
+            return Ok(LispObject::string(doc));
+        }
+        if let Some(def) = state.get_function_cell(id)
+            && let Some(doc) = docstring_from_function(&def)
+        {
+            return Ok(LispObject::string(&doc));
+        }
+        return Ok(LispObject::nil());
+    }
+
+    Ok(docstring_from_function(&target)
+        .map(|doc| LispObject::string(&doc))
+        .unwrap_or_else(LispObject::nil))
+}
+
+fn stateful_documentation_property(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let Some(sym) = args.first().and_then(|value| value.as_symbol_id()) else {
+        return Ok(LispObject::nil());
+    };
+    let Some(prop) = args.nth(1).and_then(|value| value.as_symbol_id()) else {
+        return Ok(LispObject::nil());
+    };
+    let value = state.get_plist(sym, prop);
+    if value.is_nil() && crate::obarray::symbol_name(prop) == "function-documentation" {
+        let doc_args = LispObject::cons(LispObject::Symbol(sym), LispObject::nil());
+        return stateful_documentation(&doc_args, state);
+    }
+    Ok(value)
+}
+
+fn stateful_describe_function(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let target = args.first().unwrap_or_else(LispObject::nil);
+    if let Some(id) = target.as_symbol_id()
+        && state.get_function_cell(id).is_none()
+    {
+        return Ok(LispObject::nil());
+    }
+    Ok(LispObject::nil())
+}
+
+fn key_event_description(event: &LispObject) -> String {
+    match event {
+        LispObject::Integer(n) => {
+            let mut code = *n;
+            let meta = (code & 0x0800_0000) != 0;
+            if meta {
+                code &= !0x0800_0000;
+            }
+            let base = match code {
+                1..=26 => format!("C-{}", char::from_u32((code as u32) + 96).unwrap_or('?')),
+                32 => "SPC".to_string(),
+                127 => "DEL".to_string(),
+                _ => char::from_u32(code as u32)
+                    .filter(|ch| !ch.is_control())
+                    .map(|ch| ch.to_string())
+                    .unwrap_or_else(|| code.to_string()),
+            };
+            if meta { format!("M-{base}") } else { base }
+        }
+        LispObject::String(s) => s.clone(),
+        LispObject::Symbol(id) => {
+            let name = crate::obarray::symbol_name(*id);
+            if name.len() == 1 || name.contains('-') {
+                name
+            } else {
+                format!("<{name}>")
+            }
+        }
+        _ => event.princ_to_string(),
+    }
+}
+
+fn key_description(key: &LispObject) -> String {
+    match key {
+        LispObject::Vector(items) => items
+            .lock()
+            .iter()
+            .map(key_event_description)
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => key_event_description(key),
+    }
+}
+
+fn command_key_description(command: &str, state: &InterpreterState) -> String {
+    let command_obj = LispObject::symbol(command);
+    let keys = super::super::keymap_forms::command_keys_for_state(state, command_obj);
+    keys.first()
+        .map(key_description)
+        .unwrap_or_else(|| format!("M-x {command}"))
+}
+
+fn substitute_command_keys_text(input: &str, state: &InterpreterState) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    let mut literal_next = false;
+    while i < input.len() {
+        let rest = &input[i..];
+        if let Some(after) = rest.strip_prefix("\\=") {
+            literal_next = true;
+            i = input.len() - after.len();
+        } else if rest.starts_with("\\[")
+            && let Some(end) = rest.find(']')
+        {
+            let original = &rest[..=end];
+            if literal_next {
+                out.push_str(original);
+                literal_next = false;
+            } else {
+                let command = &rest[2..end];
+                out.push_str(&command_key_description(command, state));
+            }
+            i += end + 1;
+        } else if let Some(ch) = rest.chars().next() {
+            out.push(ch);
+            literal_next = false;
+            i += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+fn stateful_substitute_command_keys(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let input = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    Ok(input
+        .as_string()
+        .map(|text| LispObject::string(&substitute_command_keys_text(text, state)))
+        .unwrap_or(input))
 }
 
 fn variable_value(
@@ -250,17 +443,273 @@ fn stateful_interaction_read(
     name: &str,
     args: &LispObject,
     env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
     state: &InterpreterState,
 ) -> ElispResult<LispObject> {
     if !variable_value("inhibit-interaction", env, state).is_nil() {
         return Err(signal_with_data("inhibited-interaction", LispObject::nil()));
     }
+    run_hook_by_name("minibuffer-setup-hook", env, editor, macros, state)?;
     match name {
-        "read-from-minibuffer" | "read-no-blanks-input" => {
-            Ok(args.nth(2).unwrap_or_else(LispObject::nil))
-        }
+        "read-string" => Ok(read_string_result(args)),
+        "read-from-minibuffer" => Ok(read_from_minibuffer_result(args)),
+        "read-no-blanks-input" => Ok(read_no_blanks_input_result(args)),
         _ => Ok(LispObject::nil()),
     }
+}
+
+fn read_initial_string(value: LispObject) -> LispObject {
+    match value {
+        LispObject::String(_) => value,
+        LispObject::Cons(_) => value.car().unwrap_or_else(LispObject::nil),
+        _ => LispObject::nil(),
+    }
+}
+
+fn run_hook_by_name(
+    hook_name: &str,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<()> {
+    let mut funcs = variable_value(hook_name, env, state);
+    while let Some((func, rest)) = funcs.destructure_cons() {
+        let callable = resolve_hook_function(&func, env, state).unwrap_or(func);
+        call_function(
+            obj_to_value(callable),
+            obj_to_value(LispObject::nil()),
+            env,
+            editor,
+            macros,
+            state,
+        )?;
+        funcs = rest;
+    }
+    Ok(())
+}
+
+fn resolve_hook_function(
+    func: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> Option<LispObject> {
+    let symbol_id = func.as_symbol_id()?;
+    state.get_function_cell(symbol_id).or_else(|| {
+        let name = crate::obarray::symbol_name(symbol_id);
+        env.read().get_function(&name)
+    })
+}
+
+fn read_string_default(default: LispObject) -> Option<LispObject> {
+    if default.is_nil() {
+        None
+    } else if let Some(first) = default.car() {
+        Some(first)
+    } else {
+        Some(default)
+    }
+}
+
+fn read_string_result(args: &LispObject) -> LispObject {
+    read_string_default(args.nth(3).unwrap_or_else(LispObject::nil))
+        .or_else(|| {
+            let initial = read_initial_string(args.nth(1).unwrap_or_else(LispObject::nil));
+            (!initial.is_nil()).then_some(initial)
+        })
+        .unwrap_or_else(|| LispObject::string(""))
+}
+
+fn read_from_minibuffer_result(args: &LispObject) -> LispObject {
+    read_string_default(args.nth(5).unwrap_or_else(LispObject::nil))
+        .or_else(|| {
+            let initial = read_initial_string(args.nth(1).unwrap_or_else(LispObject::nil));
+            (!initial.is_nil()).then_some(initial)
+        })
+        .unwrap_or_else(|| LispObject::string(""))
+}
+
+fn read_no_blanks_input_result(args: &LispObject) -> LispObject {
+    let initial = read_initial_string(args.nth(1).unwrap_or_else(LispObject::nil));
+    if initial.is_nil() {
+        LispObject::string("")
+    } else {
+        initial
+    }
+}
+
+struct EvalContext<'a> {
+    env: &'a Arc<RwLock<Environment>>,
+    editor: &'a Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &'a MacroTable,
+    state: &'a InterpreterState,
+}
+
+fn stateful_describe_buffer_bindings(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let _buffer = args.first().unwrap_or_else(LispObject::nil);
+    let ctx = EvalContext {
+        env,
+        editor,
+        macros,
+        state,
+    };
+    let mut lines = vec![String::from("key             binding\n")];
+    let global_map = state
+        .get_value_cell(crate::obarray::intern("global-map"))
+        .or_else(|| env.read().get("global-map"))
+        .unwrap_or_else(LispObject::nil);
+    collect_described_key_bindings(&global_map, None, &mut lines, &ctx)?;
+    crate::buffer::with_current_mut(|buffer| buffer.insert(&lines.concat()));
+    Ok(LispObject::nil())
+}
+
+fn is_described_keymap(obj: &LispObject) -> bool {
+    obj.car().and_then(|head| head.as_symbol()).as_deref() == Some("keymap")
+}
+
+fn described_key_text(key: &LispObject) -> String {
+    match key {
+        LispObject::String(s) => s.clone(),
+        LispObject::Integer(n) => char::from_u32(*n as u32)
+            .map(|ch| ch.to_string())
+            .unwrap_or_else(|| n.to_string()),
+        _ => key.prin1_to_string(),
+    }
+}
+
+fn combine_described_key(prefix: Option<&str>, key: &LispObject) -> String {
+    let key = described_key_text(key);
+    match prefix {
+        Some(prefix) if !prefix.is_empty() && !key.is_empty() => format!("{prefix} {key}"),
+        _ => key,
+    }
+}
+
+fn menu_item_filter(def: &LispObject) -> Option<LispObject> {
+    let mut cur = def.rest()?.rest()?.rest()?;
+    while let Some((key, rest)) = cur.destructure_cons() {
+        let Some((value, next)) = rest.destructure_cons() else {
+            return None;
+        };
+        if key.as_symbol().as_deref() == Some(":filter") {
+            return Some(value);
+        }
+        cur = next;
+    }
+    None
+}
+
+fn described_binding_command(
+    def: &LispObject,
+    ctx: &EvalContext<'_>,
+) -> ElispResult<Option<LispObject>> {
+    if def.car().and_then(|head| head.as_symbol()).as_deref() != Some("menu-item") {
+        return Ok((!def.is_nil()).then(|| def.clone()));
+    }
+    let command = def.nth(2).unwrap_or_else(LispObject::nil);
+    if command.is_nil() {
+        return Ok(None);
+    }
+    if let Some(filter) = menu_item_filter(def) {
+        let result = value_to_obj(call_function(
+            obj_to_value(filter),
+            obj_to_value(LispObject::cons(command, LispObject::nil())),
+            ctx.env,
+            ctx.editor,
+            ctx.macros,
+            ctx.state,
+        )?);
+        if result.is_nil() {
+            return Ok(None);
+        }
+        return Ok(Some(result));
+    }
+    Ok(Some(command))
+}
+
+fn collect_described_key_bindings(
+    map: &LispObject,
+    prefix: Option<&str>,
+    lines: &mut Vec<String>,
+    ctx: &EvalContext<'_>,
+) -> ElispResult<()> {
+    if !is_described_keymap(map) {
+        return Ok(());
+    }
+    let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
+    while let Some((entry, rest)) = cur.destructure_cons() {
+        if is_described_keymap(&entry) {
+            collect_described_key_bindings(&entry, prefix, lines, ctx)?;
+        } else if let Some((key, value)) = entry.destructure_cons() {
+            if key.as_symbol().as_deref() == Some(":parent") {
+                collect_described_key_bindings(&value, prefix, lines, ctx)?;
+            } else {
+                let key_text = combine_described_key(prefix, &key);
+                if is_described_keymap(&value) {
+                    collect_described_key_bindings(&value, Some(&key_text), lines, ctx)?;
+                } else if let Some(command) = described_binding_command(&value, ctx)? {
+                    lines.push(format!("{key_text:<15} {}\n", command.princ_to_string()));
+                }
+            }
+        }
+        cur = rest;
+    }
+    Ok(())
+}
+
+fn stateful_any(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let predicate = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let sequence = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let mut items = Vec::new();
+    match sequence {
+        LispObject::Cons(_) => {
+            let mut cur = sequence;
+            while let Some((item, rest)) = cur.destructure_cons() {
+                items.push(item);
+                cur = rest;
+            }
+        }
+        LispObject::Vector(values) => items.extend(values.lock().iter().cloned()),
+        LispObject::String(s) => {
+            items.extend(
+                s.chars()
+                    .map(|ch| LispObject::integer(i64::from(u32::from(ch)))),
+            );
+        }
+        LispObject::Nil => {}
+        other => {
+            return Err(ElispError::WrongTypeArgument(format!(
+                "sequence: {other:?}"
+            )));
+        }
+    }
+    for item in items {
+        let result = value_to_obj(call_function(
+            obj_to_value(predicate.clone()),
+            obj_to_value(LispObject::cons(item, LispObject::nil())),
+            env,
+            editor,
+            macros,
+            state,
+        )?);
+        if !result.is_nil() {
+            return Ok(result);
+        }
+    }
+    Ok(LispObject::nil())
 }
 
 fn stateful_case_region(
@@ -360,6 +809,52 @@ fn first_file_handler(
     let (entry, _) = handlers.destructure_cons()?;
     let (_, handler) = entry.destructure_cons()?;
     Some(handler)
+}
+
+fn object_memq(list: &LispObject, needle: &LispObject) -> bool {
+    let mut current = list.clone();
+    while let Some((item, rest)) = current.destructure_cons() {
+        if item == *needle {
+            return true;
+        }
+        current = rest;
+    }
+    false
+}
+
+fn file_handler_pattern_matches(pattern: &str, file: &str) -> bool {
+    let rust_pattern = super::super::builtins::emacs_regex_to_rust(pattern);
+    regex::Regex::new(&rust_pattern).is_ok_and(|re| re.is_match(file))
+}
+
+fn stateful_find_file_name_handler(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let file = args
+        .first()
+        .and_then(|value| value.as_string().cloned())
+        .ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    let operation = args.nth(1).unwrap_or_else(LispObject::nil);
+    let inhibit_operation = variable_value("inhibit-file-name-operation", env, state);
+    let inhibited_handlers = variable_value("inhibit-file-name-handlers", env, state);
+
+    let mut handlers = variable_value("file-name-handler-alist", env, state);
+    while let Some((entry, rest)) = handlers.destructure_cons() {
+        if let Some((pattern, handler)) = entry.destructure_cons()
+            && let Some(pattern) = pattern.as_string()
+            && file_handler_pattern_matches(pattern, &file)
+        {
+            let inhibited =
+                operation == inhibit_operation && object_memq(&inhibited_handlers, &handler);
+            if !inhibited {
+                return Ok(handler);
+            }
+        }
+        handlers = rest;
+    }
+    Ok(LispObject::nil())
 }
 
 fn make_process_object(
