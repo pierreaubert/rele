@@ -11,6 +11,7 @@ pub struct ErtTestResult {
     /// Free-form detail (error message, signal symbol, etc.). Empty for passes.
     pub detail: String,
     pub duration_ms: u128,
+    pub stub_hits: Vec<crate::primitives::core::stub_telemetry::StubHit>,
 }
 impl ErtTestResult {
     /// Encode as one JSON object (single line). We hand-roll to avoid
@@ -35,12 +36,15 @@ impl ErtTestResult {
             out
         }
         format!(
-            r#"{{"file":"{}","test":"{}","result":"{}","ms":{},"detail":"{}"}}"#,
+            r#"{{"file":"{}","test":"{}","result":"{}","ms":{},"detail":"{}","stubs":"{}"}}"#,
             esc(file),
             esc(&self.name),
             self.result,
             self.duration_ms,
             esc(&self.detail),
+            esc(&crate::primitives::core::stub_telemetry::encode_stub_hits(
+                &self.stub_hits,
+            )),
         )
     }
 }

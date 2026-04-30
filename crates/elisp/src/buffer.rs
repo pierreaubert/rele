@@ -33,6 +33,20 @@ static NEXT_BUFFER_ID: AtomicUsize = AtomicUsize::new(1);
 static NEXT_MARKER_ID: AtomicUsize = AtomicUsize::new(1);
 static NEXT_OVERLAY_ID: AtomicUsize = AtomicUsize::new(1);
 
+fn cons(
+    car: crate::object::LispObject,
+    cdr: crate::object::LispObject,
+) -> crate::object::LispObject {
+    crate::object::LispObject::cons(car, cdr)
+}
+
+fn marker_object(id: usize) -> crate::object::LispObject {
+    cons(
+        crate::object::LispObject::symbol("marker"),
+        crate::object::LispObject::integer(id as i64),
+    )
+}
+
 /// In-memory overlay. Owned by the [`Registry`] and keyed by
 /// [`OverlayId`]. Elisp-side, an overlay is represented as
 /// `(overlay . <OverlayId>)` — mirroring the marker representation.
@@ -100,6 +114,9 @@ pub struct Marker {
     /// 1-based char offset. `None` means this marker points nowhere
     /// (e.g. after kill-buffer).
     pub position: Option<usize>,
+    /// If true, insertion exactly at the marker advances it past the
+    /// inserted text.
+    pub insertion_type: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -151,6 +168,10 @@ impl StubBuffer {
         locals.insert(
             "buffer-auto-save-file-name".to_string(),
             crate::object::LispObject::nil(),
+        );
+        locals.insert(
+            "enable-multibyte-characters".to_string(),
+            crate::object::LispObject::t(),
         );
         Self {
             id,
@@ -309,6 +330,73 @@ impl StubBuffer {
             .iter()
             .map(|byte| char::from_u32(0xE000 + u32::from(*byte)).unwrap())
             .collect()
+    }
+
+    fn push_undo_entry(&mut self, entry: crate::object::LispObject) {
+        let Some(list) = self.locals.get_mut("buffer-undo-list") else {
+            return;
+        };
+        if list.is_t() {
+            return;
+        }
+        *list = cons(entry, list.clone());
+    }
+
+    fn record_insert_undo(&mut self, start: usize, len: usize) {
+        let end = start + len;
+        if !self.modified {
+            self.push_undo_entry(cons(
+                crate::object::LispObject::t(),
+                crate::object::LispObject::nil(),
+            ));
+        }
+        self.push_undo_entry(cons(
+            crate::object::LispObject::integer(start as i64),
+            crate::object::LispObject::integer(end as i64),
+        ));
+    }
+
+    fn record_delete_undo(
+        &mut self,
+        text: &str,
+        start: usize,
+        marker_adjustments: &[(usize, i64)],
+    ) {
+        if text.is_empty() {
+            return;
+        }
+        if !self.modified {
+            self.push_undo_entry(cons(
+                crate::object::LispObject::t(),
+                crate::object::LispObject::nil(),
+            ));
+        }
+        for (marker_id, offset) in marker_adjustments.iter().rev() {
+            self.push_undo_entry(cons(
+                marker_object(*marker_id),
+                crate::object::LispObject::integer(*offset),
+            ));
+        }
+        self.push_undo_entry(cons(
+            crate::object::LispObject::string(text),
+            crate::object::LispObject::integer(start as i64),
+        ));
+    }
+
+    pub fn push_undo_boundary(&mut self) {
+        let Some(list) = self.locals.get_mut("buffer-undo-list") else {
+            return;
+        };
+        if list.is_t() || list.is_nil() {
+            return;
+        }
+        if list
+            .destructure_cons()
+            .is_some_and(|(head, _)| head.is_nil())
+        {
+            return;
+        }
+        *list = cons(crate::object::LispObject::nil(), list.clone());
     }
 
     pub fn goto_char(&mut self, pos: usize) {
@@ -593,17 +681,22 @@ impl Registry {
     }
 
     pub fn kill(&mut self, id: BufferId) -> bool {
-        // Can't kill the last-remaining buffer on the stack — Emacs
-        // always requires *some* current buffer.
-        if self.stack.len() == 1 && self.stack[0] == id {
-            return false;
-        }
         let name = match self.buffers.remove(&id) {
             Some(b) => b.name,
             None => return false,
         };
         self.by_name.remove(&name);
         self.stack.retain(|&b| b != id);
+        if self.stack.is_empty() {
+            let replacement = self.buffers.keys().next().copied().unwrap_or_else(|| {
+                let scratch = StubBuffer::new("*scratch*".to_string());
+                let scratch_id = scratch.id;
+                self.by_name.insert("*scratch*".to_string(), scratch_id);
+                self.buffers.insert(scratch_id, scratch);
+                scratch_id
+            });
+            self.stack.push(replacement);
+        }
         // Invalidate markers in the killed buffer.
         for m in self.markers.values_mut() {
             if m.buffer == id {
@@ -663,6 +756,7 @@ impl Registry {
                 id,
                 buffer,
                 position: None,
+                insertion_type: false,
             },
         );
         id
@@ -679,7 +773,20 @@ impl Registry {
                 id,
                 buffer,
                 position: pos,
+                insertion_type: false,
             });
+    }
+
+    pub fn marker_insertion_type(&self, id: usize) -> bool {
+        self.markers
+            .get(&id)
+            .is_some_and(|marker| marker.insertion_type)
+    }
+
+    pub fn set_marker_insertion_type(&mut self, id: usize, insertion_type: bool) {
+        if let Some(marker) = self.markers.get_mut(&id) {
+            marker.insertion_type = insertion_type;
+        }
     }
 
     /// Create a fresh overlay in `buffer` spanning `[start, end)`.
@@ -731,6 +838,9 @@ impl Registry {
         if len == 0 {
             return;
         }
+        if let Some(buf) = self.get_mut(buffer) {
+            buf.record_insert_undo(pos, len);
+        }
         for id in self.text_family_ids(buffer) {
             if let Some(buf) = self.get_mut(id) {
                 if id == buffer {
@@ -740,6 +850,7 @@ impl Registry {
                 }
             }
         }
+        self.relocate_markers_after_insert(buffer, pos, len, before_markers);
         self.relocate_overlays_after_insert(buffer, pos, len, before_markers);
     }
 
@@ -760,6 +871,14 @@ impl Registry {
         if a == b {
             return;
         }
+        let deleted = self
+            .get(buffer)
+            .map(|buf| buf.substring(a, b))
+            .unwrap_or_default();
+        let marker_adjustments = self.marker_adjustments_for_delete(buffer, a, b);
+        if let Some(buf) = self.get_mut(buffer) {
+            buf.record_delete_undo(&deleted, a, &marker_adjustments);
+        }
         for id in self.text_family_ids(buffer) {
             if let Some(buf) = self.get_mut(id) {
                 if id == buffer {
@@ -769,7 +888,32 @@ impl Registry {
                 }
             }
         }
+        self.relocate_markers_after_delete(buffer, a, b);
         self.relocate_overlays_after_delete(buffer, a, b);
+    }
+
+    pub fn erase_current(&mut self) {
+        let buffer = self.current_id();
+        let Some((start, end, deleted)) = self.get(buffer).map(|buf| {
+            let start = buf.point_min();
+            let end = buf.point_max();
+            (start, end, buf.substring(start, end))
+        }) else {
+            return;
+        };
+        if start == end {
+            return;
+        }
+        let marker_adjustments = self.marker_adjustments_for_delete(buffer, start, end);
+        if let Some(buf) = self.get_mut(buffer) {
+            buf.record_delete_undo(&deleted, start, &marker_adjustments);
+        }
+        for id in self.text_family_ids(buffer) {
+            if let Some(buf) = self.get_mut(id) {
+                buf.erase();
+            }
+        }
+        self.relocate_markers_after_delete(buffer, start, end);
     }
 
     pub fn set_current_multibyte(&mut self, enabled: bool) {
@@ -804,6 +948,10 @@ impl Registry {
             if let Some(buf) = self.get_mut(buffer) {
                 buf.text = decoded;
                 buf.multibyte = true;
+                buf.locals.insert(
+                    "enable-multibyte-characters".to_string(),
+                    crate::object::LispObject::t(),
+                );
             }
             Box::new(move |pos: usize| -> usize {
                 let offset = pos.saturating_sub(1);
@@ -825,6 +973,10 @@ impl Registry {
             if let Some(buf) = self.get_mut(buffer) {
                 buf.text = encoded;
                 buf.multibyte = false;
+                buf.locals.insert(
+                    "enable-multibyte-characters".to_string(),
+                    crate::object::LispObject::nil(),
+                );
             }
             Box::new(move |pos: usize| -> usize {
                 offsets
@@ -903,6 +1055,72 @@ impl Registry {
                 ov.rear_advance,
                 before_markers,
             ));
+        }
+    }
+
+    fn relocate_markers_after_insert(
+        &mut self,
+        buffer: BufferId,
+        pos: usize,
+        len: usize,
+        before_markers: bool,
+    ) {
+        let family = self.text_family_ids(buffer);
+        for marker in self.markers.values_mut() {
+            if !family.contains(&marker.buffer) {
+                continue;
+            }
+            let Some(position) = marker.position else {
+                continue;
+            };
+            if position > pos || (position == pos && (before_markers || marker.insertion_type)) {
+                marker.position = Some(position + len);
+            }
+        }
+    }
+
+    fn marker_adjustments_for_delete(
+        &self,
+        buffer: BufferId,
+        start: usize,
+        end: usize,
+    ) -> Vec<(usize, i64)> {
+        let family = self.text_family_ids(buffer);
+        let len = end.saturating_sub(start) as i64;
+        self.markers
+            .values()
+            .filter(|marker| family.contains(&marker.buffer))
+            .filter_map(|marker| {
+                let position = marker.position?;
+                let offset = if position == start && marker.insertion_type {
+                    len
+                } else if position > start && position <= end {
+                    start as i64 - position as i64
+                } else {
+                    0
+                };
+                (offset != 0).then_some((marker.id, offset))
+            })
+            .collect()
+    }
+
+    fn relocate_markers_after_delete(&mut self, buffer: BufferId, start: usize, end: usize) {
+        let family = self.text_family_ids(buffer);
+        let len = end.saturating_sub(start);
+        for marker in self.markers.values_mut() {
+            if !family.contains(&marker.buffer) {
+                continue;
+            }
+            let Some(position) = marker.position else {
+                continue;
+            };
+            marker.position = Some(if position > end {
+                position - len
+            } else if position > start {
+                start
+            } else {
+                position
+            });
         }
     }
 

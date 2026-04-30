@@ -109,6 +109,17 @@ def main(argv: list[str]) -> int:
                 out.write("\n")
         out.write("all-done\n")
 
+    subprocess.run(
+        [
+            "python3",
+            str(script_dir / "stub_inventory.py"),
+            "--output",
+            str(root / "tmp" / "elisp-stub-inventory.tsv"),
+            "--quiet",
+        ],
+        check=False,
+    )
+
     return subprocess.run(
         ["python3", str(script_dir / "summarize.py"), str(baseline)],
         check=False,

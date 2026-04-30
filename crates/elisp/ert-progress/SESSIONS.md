@@ -3,6 +3,329 @@
 Append-only — newest entries at top. Each session: what changed, what
 landed, what to look at next.
 
+## 2026-04-30 — Stub inventory and telemetry
+
+**Commands run:**
+
+```bash
+python3 crates/elisp/ert-progress/stub_inventory.py
+python3 crates/elisp/ert-progress/stub_inventory.py -o crates/elisp/ert-progress/stub_inventory_baseline.tsv --quiet
+python3 crates/elisp/ert-progress/stub_inventory.py --check
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp test_ert_records_runtime_stub_hits -- --test-threads=1
+python3 -m py_compile crates/elisp/ert-progress/stub_inventory.py crates/elisp/ert-progress/summarize.py crates/elisp/ert-progress/refresh.py
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --lib -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=1000 PER_FILE_TIMEOUT=20 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/alloc-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py
+```
+
+**Movement:**
+
+- No semantic ERT count movement intended; full tracked refresh remains
+  `837` pass / `166` fail / `31` err / `129` skip (`72%`).
+- Added a generated source inventory at `tmp/elisp-stub-inventory.tsv`:
+  `1117` records total, including `304` runtime-missing aliases, `806`
+  needs-classification stub-module entries, and `7` identity shims.
+  Bucket counts: `editing/regions=63`, `category/case-tables=91`,
+  `window/display=255`, `keymap/help=44`, `other=664`.
+- The refresh summary now reports runtime stub hits ranked by failing or
+  erroring tests affected.
+
+**Code landed:**
+
+- Added per-test stub telemetry for `stubs::call` primitives, explicit
+  compatibility shims in `core/misc.rs`, and named aliases that dispatch
+  through `ignore` or `identity`.
+- Extended ERT JSONL rows with a `stubs` field and updated
+  `summarize.py` to print the top runtime stub-hit table with bucket
+  labels.
+- Added `ert-progress/stub_inventory.py`, wired it into `refresh.py`,
+  and added a focused regression test for JSONL stub-hit output.
+- Added `ert-progress/stub_inventory_baseline.tsv` plus
+  `stub_inventory.py --check`, and wired that gate into
+  `scripts/pre-jit-baseline.sh`.
+
+**Next leverage targets:**
+
+1. Classify the top runtime stub hits into real implementations vs
+   allowed load-only/headless no-ops.
+2. Start with the highest bad-test cluster: `transpose-regions`, then
+   category/case-table stubs, then window/display geometry shims.
+3. Add a monotonic gate for new `primitive("ignore")` aliases once the
+   current inventory has explicit owners.
+
+## 2026-04-30 — Editfns primitive pass
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp string_to_char_returns_zero_for_empty_string
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --test undo_selection_bootstrap -- --test-threads=1
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/editfns-tests.el
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh
+```
+
+**Movement:**
+
+- Full tracked refresh moved from `829` pass / `170` fail / `35` err /
+  `129` skip (`71%`) to `837` pass / `166` fail / `31` err / `129`
+  skip (`72%`).
+- `editfns-tests.el` moved from `12` pass, `36` fail, `9` err to `20`
+  pass, `32` fail, `5` err.
+- The `VOID_FN: replace-region-contents` bucket is gone, and the old
+  four-test `WRONG_N_ARGS` top bucket dropped to the remaining
+  transpose-regions cases.
+
+**Code landed:**
+
+- `string-to-char` now returns `0` for an empty string.
+- `replace-region-contents` handles source buffers, source vectors, and
+  strings for the supportable ERT paths, preserving surrounding marker
+  positions and point.
+- `goto-char` returns the resulting stub-buffer point in no-editor ERT
+  execution.
+- `char-equal` now respects dynamic `case-fold-search`.
+- `gap-position` / `gap-size`, `compare-buffer-substrings`, and
+  `subst-char-in-region` are wired through buffer primitives instead of
+  no-op stubs.
+
+**Validation:**
+
+- `undo_selection_bootstrap`: `18` passed.
+- `rele-elisp` library tests: `526` passed, `3` ignored.
+- Targeted `editfns-tests.el`: `20` pass, `32` fail, `5` err.
+- Full ERT snapshot: `837` pass, `166` fail, `31` err, `129` skip
+  (`72%`).
+
+**Next leverage targets:**
+
+1. Continue `editfns-tests.el` with `transpose-regions`; it is now the
+   remaining `WRONG_N_ARGS` source in that file.
+2. The next broad buckets are `WRONG_TYPE_STRING` in casefiddle/lread,
+   bignum numeric edge cases, and `help-mode-map`.
+3. If staying in editfns, the remaining hard work is format/text-property
+   parity and byte/field primitives.
+
+## 2026-04-30 — Undo marker and region completion
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --test undo_selection_bootstrap -- --test-threads=1
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/undo-tests.el
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh
+```
+
+**Movement:**
+
+- Full tracked refresh moved from `821` pass / `176` fail / `37` err /
+  `129` skip (`70%`) to `829` pass / `170` fail / `35` err / `129`
+  skip (`71%`).
+- `undo-tests.el` moved from `10` pass, `5` fail, `2` err to `17`
+  pass, `0` fail, `0` err in the summary. The raw worker stream still
+  records timeout results for the two intentionally heavy cases,
+  `undo-test1` and `undo-test4`.
+- `editfns-tests.el` picked up one extra pass from the no-editor
+  `forward-char` fix.
+
+**Code landed:**
+
+- Markers now track insertion type and relocate on buffer insert/delete
+  alongside the existing overlay relocation path.
+- Delete undo entries now record marker-adjustment entries, and
+  `primitive-undo` consumes the adjustment entries attached to a
+  `(TEXT . POS)` record before replaying them.
+- `set-marker-insertion-type` is wired through the buffer primitive
+  dispatch, and `marker-insertion-type` reflects stored marker state.
+- `funcall-interactively` now dispatches like `funcall` in the
+  stateful primitive path, so Lisp commands such as
+  `delete-forward-char` actually run under ERT.
+- The no-editor `forward-char` special path now delegates to the
+  buffer primitive instead of doing nothing.
+
+**Validation:**
+
+- `undo_selection_bootstrap`: `12` passed.
+- Targeted `undo-tests.el`: `17` pass, `0` fail, `0` err.
+- `rele-elisp` library tests: `525` passed, `3` ignored.
+- Full ERT snapshot: `829` pass, `170` fail, `35` err, `129` skip
+  (`71%`).
+
+**Next leverage targets:**
+
+1. Clear the current global top bucket, `WRONG_N_ARGS` in
+   `editfns-tests.el`.
+2. Tackle compact bootstrap buckets: `help-mode-map` or
+   `replace-region-contents`.
+3. Improve marker/window compatibility in `marker-tests.el`; the undo
+   marker path is now stronger but the marker file still has buffer/window
+   assertions outstanding.
+
+## 2026-04-30 — Undo closures, file visits, and coalesced edits
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --test undo_selection_bootstrap -- --test-threads=1
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/undo-tests.el
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh
+```
+
+**Movement:**
+
+- Full tracked refresh moved from `815` pass / `176` fail / `44` err /
+  `129` skip (`70%`) to `821` pass / `176` fail / `37` err / `129`
+  skip (`70%`).
+- `undo-tests.el` moved from `4` pass, `8` fail, `6` err to `10`
+  pass, `5` fail, `2` err.
+- The undo `VOID_VAR: funs`, `enable-multibyte-characters`, primitive
+  type-error, file-modified, and `combine-change-calls` buckets are gone.
+
+**Code landed:**
+
+- Lambda application now binds uninterned lambda-list symbols by
+  `SymbolId`, preserving generated-symbol identity in macro-expanded hook
+  wrappers.
+- `enable-multibyte-characters` is now a buffer-local special variable
+  backed by the buffer multibyte flag.
+- `primitive-undo` now reports Emacs-shaped type-error data for bad
+  arguments.
+- Added `find-buffer` support for buffer-local value lookup and restored
+  primitive-backed `find-file` / `find-file-noselect` after bootstrap.
+- `replace-match` now edits through the registry path, so
+  `combine-change-calls` records undo history.
+- Killing the current last buffer now installs a fallback buffer, and
+  no-editor `save-buffer` writes visited file contents before marking the
+  buffer unmodified.
+
+**Validation:**
+
+- `undo_selection_bootstrap`: `8` passed.
+- `rele-elisp` library tests: `525` passed, `3` ignored.
+- Full ERT snapshot: `821` pass, `176` fail, `37` err, `129` skip
+  (`70%`).
+
+**Next leverage targets:**
+
+1. Continue `undo-tests.el`: remaining failures cluster around selective
+   region undo, marker adjustment, and two timeouts.
+2. Clear the current global top bucket, `WRONG_N_ARGS` in
+   `editfns-tests.el`.
+3. Consider `help-mode-map` or `replace-region-contents` next if staying
+   on compact bootstrap/editing buckets.
+
+## 2026-04-30 — Minimal undo history and primitive undo
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --test undo_selection_bootstrap -- --test-threads=1
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/undo-tests.el
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh
+```
+
+**Movement:**
+
+- Full tracked refresh moved from `811` pass / `172` fail / `52` err /
+  `129` skip (`69%`) to `815` pass / `176` fail / `44` err / `129`
+  skip (`70%`).
+- `undo-tests.el` moved from `0` pass, `4` fail, `14` err to `4`
+  pass, `8` fail, `6` err.
+- The broad `SIGNAL: user-error` "No further undo information" bucket is
+  gone. The remaining undo-top buckets are now `VOID_VAR: funs` (`3`)
+  and `combine-change-calls` undo-list length assertions (`2`).
+
+**Code landed:**
+
+- Buffer edits now record minimal Emacs-shaped undo entries in
+  `buffer-undo-list`: insertions as `(BEG . END)`, deletions as
+  `(TEXT . POS)`, boundaries as `nil`, and unmodified-state markers as
+  `(t . nil)`.
+- Added buffer-backed `undo-boundary`, `buffer-enable-undo`,
+  `buffer-disable-undo`, and argument-aware `primitive-undo` support for
+  the no-editor ERT path.
+- `erase-buffer` now records a delete entry instead of silently clearing
+  text, so undo can restore erased contents.
+- Added undo bootstrap regressions covering grouped undo progression and
+  modified-flag restoration.
+
+**Validation:**
+
+- `undo_selection_bootstrap`: `5` passed.
+- `rele-elisp` library tests: `522` passed, `3` ignored.
+- Full ERT snapshot: `815` pass, `176` fail, `44` err, `129` skip
+  (`70%`).
+
+**Next leverage targets:**
+
+1. Investigate `VOID_VAR: funs` in `undo-tests.el`; it appears to come
+   from stdlib hook wrapper / generated-symbol binding behavior.
+2. Implement real `combine-change-calls` coalescing so undo-list shape
+   tests stop depending on raw edit-entry count.
+3. Clear the current global top bucket, `WRONG_N_ARGS` in
+   `editfns-tests.el`, if switching away from undo.
+
+## 2026-04-30 — Parallel syntax/callint/undo bucket pass
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --test undo_selection_bootstrap -- --test-threads=1
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/syntax-tests.el /Volumes/home_ext1/Src/emacs/test/src/callint-tests.el /Volumes/home_ext1/Src/emacs/test/src/undo-tests.el
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh
+```
+
+**Movement:**
+
+- Full tracked refresh moved from `795` pass / `185` fail / `55` err /
+  `129` skip (`68%`) to `811` pass / `172` fail / `52` err / `129`
+  skip (`69%`).
+- `syntax-tests.el` moved from `86` pass, `13` fail, `1` err to `98`
+  pass, `2` fail, `0` err. The old comment/list
+  `parse-partial-sexp` and `scan-lists` buckets are gone.
+- `callint-tests.el` moved from `1` pass, `1` fail, `2` err to `4`
+  pass, `0` fail, `0` err.
+- `undo-tests.el` still reports `0` pass, `4` fail, `14` err, but the
+  `VOID_VAR: select-active-regions` bucket and follow-on `VOID_FN: nil`
+  mark primitive bucket are gone.
+
+**Code landed:**
+
+- Added a buffer-backed `parse-partial-sexp` primitive for comment-stop
+  and shallow list parsing, plus C/Lisp/Pascal-style comment boundary
+  handling needed by `syntax-tests.el`.
+- Extended backward `scan-lists` over the C continued-line comment case
+  where a close delimiter is inside a comment span.
+- Implemented `call-interactively` argument decoding for interactive
+  specs, function-cell resolution, evaluated interactive forms, basic
+  event/key decoding, and command-history recording with
+  `interactive-args` metadata.
+- Bootstrapped Emacs mark/selection policy variables and restored
+  Rust-backed mark/region primitives after full stdlib bootstrap.
+- Added focused regressions for `parse-partial-sexp`, commented-close
+  `scan-lists`, `call-interactively`, and undo selection bootstrap.
+
+**Refresh snapshot:**
+
+- Total: `811` pass, `172` fail, `52` err, `129` skip (`69%`).
+- Top patterns now: undo `user-error` no-further-undo (`6`),
+  editfns `WRONG_N_ARGS` (`4`), and several `3`-test buckets:
+  `WRONG_TYPE_STRING`, `enable-multibyte-characters`, bignum integer
+  edge cases, `help-mode-map`, undo `funs`, region undo `user-error`,
+  and xdisp division-by-zero geometry.
+
+**Next leverage targets:**
+
+1. Continue undo machinery: no-further-undo and region undo history
+   semantics are now the largest buckets.
+2. Clear the remaining `WRONG_N_ARGS` cases in `editfns-tests.el`.
+3. Model buffer multibyte state (`enable-multibyte-characters`) or
+   `help-mode-map`, both of which are compact 3-test buckets.
+
 ## 2026-04-29
 
 **Net change:** +20 tests passing on the tractable ERT baseline. The

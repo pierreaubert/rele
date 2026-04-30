@@ -3,7 +3,7 @@
 
 // Re-export from parent eval module so sub-files can use `super::X`
 pub(super) use super::builtins;
-pub(super) use super::dynamic::{bind_param_dynamic, unwind_specpdl};
+pub(super) use super::dynamic::{bind_param_dynamic_id, unwind_specpdl};
 pub(super) use super::environment::Environment;
 pub(super) use super::eval;
 pub(super) use super::macro_table::{Macro, MacroTable};

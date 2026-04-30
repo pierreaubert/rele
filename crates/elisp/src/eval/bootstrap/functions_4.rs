@@ -50,6 +50,7 @@ pub(super) fn run_rele_ert_tests_detailed_inner(
         );
         interp.reset_eval_ops();
         interp.state.clear_closure_mutations();
+        crate::primitives::core::stub_telemetry::clear_stub_hits();
         interp.set_eval_ops_limit(50_000_000);
         if per_test_ms > 0 {
             interp.set_deadline(
@@ -62,6 +63,7 @@ pub(super) fn run_rele_ert_tests_detailed_inner(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| interp.eval(call.clone())));
         let elapsed_ms = start.elapsed().as_millis();
         crate::primitives::set_current_ert_test(LispObject::nil());
+        let stub_hits = crate::primitives::core::stub_telemetry::take_stub_hits();
         interp.clear_deadline();
         let was_timed_out = per_test_ms > 0 && elapsed_ms >= (per_test_ms as u128);
         let (result, detail) = match outcome {
@@ -133,6 +135,7 @@ pub(super) fn run_rele_ert_tests_detailed_inner(
             result,
             detail,
             duration_ms: elapsed_ms,
+            stub_hits,
         });
     }
     interp.set_eval_ops_limit(0);

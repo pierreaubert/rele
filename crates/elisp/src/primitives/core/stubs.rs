@@ -729,6 +729,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "field-string-no-properties" => Ok(LispObject::string("")),
         "minibuffer-prompt-end" => Ok(LispObject::integer(1)),
         "gap-position" => Ok(LispObject::integer(1)),
+        "gap-size" => Ok(LispObject::integer(0)),
         "position-bytes" => Ok(args.first().unwrap_or(LispObject::nil())),
         "total-line-spacing" => Ok(LispObject::integer(0)),
         "next-single-char-property-change" => Ok(LispObject::nil()),
@@ -846,6 +847,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 
         _ => return None,
     };
+    super::stub_telemetry::record_stub_hit(name);
     Some(r)
 }
 

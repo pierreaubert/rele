@@ -1,7 +1,7 @@
 // Dynamic binding and special variable handling: unwind-specpdl, bind_param_dynamic.
 
 use super::SyncRefCell as RwLock;
-use crate::obarray;
+use crate::obarray::SymbolId;
 use crate::object::LispObject;
 use std::sync::Arc;
 
@@ -19,13 +19,12 @@ pub(super) fn unwind_specpdl(state: &InterpreterState, depth: usize) {
         }
     }
 }
-pub(super) fn bind_param_dynamic(
-    name: &str,
+pub(super) fn bind_param_dynamic_id(
+    id: SymbolId,
     value: LispObject,
     new_env: &Arc<RwLock<Environment>>,
     state: &InterpreterState,
 ) {
-    let id = obarray::intern(name);
     if state.special_vars.read().contains(&id) {
         let global = &state.global_env;
         let old = global.read().get_id(id);

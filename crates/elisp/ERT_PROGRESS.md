@@ -11,8 +11,9 @@ locking) and are listed under [Skip rationale](#skip-rationale) below.
 1. Read this file to see current state and next leverage targets.
 2. Run `./ert-progress/refresh.sh` to regenerate the baseline. It builds the
    worker, runs every file in `tractable.list`, and prints a per-file table
-   plus a "top failure patterns" list. Raw results land in
-   `tmp/ert-baseline.jsonl`.
+   plus "top failure patterns" and "top runtime stub hits" lists. Raw results
+   land in `tmp/ert-baseline.jsonl`; the source-derived stub inventory lands
+   in `tmp/elisp-stub-inventory.tsv`.
 3. Pick the highest-leverage pattern (one fix that unblocks many tests).
 4. Implement the fix; run `cargo test -p rele-elisp` to check for
    regressions in the internal unit suite.
@@ -29,13 +30,14 @@ that a single fix will close.
 ## Per-file snapshot
 
 Last refreshed: **2026-04-30**, target: `ert-progress/tractable.list`.
+Current total: **837 pass / 166 fail / 31 err / 129 skip** (`72%`).
 
 | File                       | Pass | Fail | Err | Skip | Pct  | Notes |
 |----------------------------|-----:|-----:|----:|-----:|-----:|-------|
 | alloc-tests.el             |    4 |    0 |   0 |    0 | 100% | |
 | buffer-tests.el            |  408 |    1 |   0 |    1 | 100% | |
-| callint-tests.el           |    1 |    1 |   2 |    0 |  25% | call-interactively edge cases |
-| casefiddle-tests.el        |    1 |    4 |   5 |    1 |   9% | case tables |
+| callint-tests.el           |    4 |    0 |   0 |    0 | 100% | call-interactively complete |
+| casefiddle-tests.el        |    1 |    7 |   2 |    1 |   9% | case tables |
 | category-tests.el          |    1 |    4 |   1 |    0 |  17% | category tables |
 | character-tests.el         |    3 |    0 |   0 |    0 | 100% | |
 | charset-tests.el           |    5 |   15 |   0 |    1 |  24% | charset infrastructure |
@@ -45,7 +47,7 @@ Last refreshed: **2026-04-30**, target: `ert-progress/tractable.list`.
 | data-tests.el              |   74 |    3 |   0 |    2 |  94% | format edge cases |
 | decompress-tests.el        |    0 |    0 |   0 |    1 |   0% | needs zlib |
 | doc-tests.el               |    3 |    2 |   0 |    0 |  60% | autoloadp recognition |
-| editfns-tests.el           |   10 |   38 |   9 |    0 |  18% | format spec, missing fns |
+| editfns-tests.el           |   20 |   32 |   5 |    0 |  35% | edit primitives improved; transpose/format remain |
 | eval-tests.el              |    ? |    ? |   ? |    ? |    ? | no results emitted in last sweep |
 | floatfns-tests.el          |   28 |    2 |   3 |    0 |  85% | bignum edge cases |
 | font-tests.el              |    0 |    2 |   0 |    0 |   0% | |
@@ -63,12 +65,12 @@ Last refreshed: **2026-04-30**, target: `ert-progress/tractable.list`.
 | profiler-tests.el          |    0 |    0 |   1 |    1 |   0% | |
 | search-tests.el            |    0 |    1 |   0 |    0 |   0% | |
 | sqlite-tests.el            |    0 |    0 |   0 |   12 |   0% | needs sqlite |
-| syntax-tests.el            |   86 |   13 |   1 |    0 |  86% | parse-partial-sexp |
+| syntax-tests.el            |   98 |    2 |   0 |    0 |  98% | char-syntax edge cases |
 | terminal-tests.el          |    0 |    0 |   1 |    0 |   0% | |
 | textprop-tests.el          |    1 |    1 |   0 |    0 |  50% | |
 | thread-tests.el            |    0 |    0 |   1 |   36 |   0% | needs threads |
 | treesit-tests.el           |    1 |    2 |   0 |   35 |   3% | needs tree-sitter |
-| undo-tests.el              |    0 |    4 |  14 |    0 |   0% | undo machinery |
+| undo-tests.el              |   17 |    0 |   0 |    0 | 100% | supportable cases pass; raw run still records two timeout entries |
 | xdisp-tests.el             |    1 |    6 |   3 |    0 |  10% | display engine |
 | xfaces-tests.el            |    2 |    1 |   0 |    0 |  67% | faces |
 | xml-tests.el               |    0 |    1 |   0 |    0 |   0% | needs libxml |
@@ -81,16 +83,35 @@ current by running `./ert-progress/refresh.sh` before tackling.
 
 | Tests | Pattern | Likely cause |
 |------:|---------|--------------|
-|  8 | `ASSERT: ((eq (point) open-pos))` in syntax-tests.el | `syntax-ppss` comment open-position tracking |
-|  6 | `WRONG_N_ARGS` in callint/editfns/lread tests | argument decoding and arity edge cases |
-|  5 | `VOID_VAR: select-active-regions` in undo-tests.el | mark/selection policy variables not modeled |
-|  4 | `SIGNAL: user-error` in undo-tests.el | undo boundary/history semantics |
 |  3 | `WRONG_TYPE_STRING` in casefiddle/lread tests | string-vs-char validation |
-|  3 | `VOID_VAR: enable-multibyte-characters` | buffer multibyte state missing |
+|  3 | `WRONG_N_ARGS` in editfns-tests.el | transpose-regions arity/dispatch edge cases |
 |  3 | `WRONG_TYPE_INTEGER` in floatfns-tests.el | bignum numeric edge cases |
 |  3 | `VOID_VAR: help-mode-map` in keymap-tests.el | help-mode keymap bootstrap |
-|  3 | `VOID_VAR: funs` in undo-tests.el | undo helper lexical/closure binding |
 |  3 | `ASSERT: division by zero` in xdisp-tests.el | display geometry stubs |
+|  2 | `ASSERT: ascii charset membership` in charset-tests.el | charset equivalence/declaration model |
+|  2 | `ASSERT: keymap lookup/where-is` in keymap-tests.el | menu-vector and keymap traversal semantics |
+|  2 | `ASSERT: marker buffer/window semantics` in marker-tests.el | marker/window-buffer compatibility |
+
+## Runtime stub hits (2026-04-30)
+
+`refresh.sh` now records stub/no-op primitive calls per ERT test and ranks
+them by failing/erroring tests affected. Use this before chasing individual
+assertions. The inventory currently classifies `1117` records:
+`editing/regions=63`, `category/case-tables=91`, `window/display=255`,
+`keymap/help=44`, `other=664`.
+
+| Bad tests | Hits | Bucket | Stub | Example |
+|----------:|-----:|--------|------|---------|
+| 5 | 9 | editing/regions | `transpose-regions` | `editfns-tests.el::transpose-ascii-regions-test` |
+| 4 | 62 | window/display | `force-mode-line-update->ignore` | `casefiddle-tests.el::casefiddle-tests-casing` |
+| 4 | 5 | category/case-tables | `make-category-table` | `category-tests.el::category-tests-category-table` |
+| 4 | 4 | window/display | `window-prev-buffers` | `editfns-tests.el::replace-buffer-contents-bug31837` |
+| 4 | 4 | window/display | `window-dedicated-p->ignore` | `editfns-tests.el::replace-buffer-contents-bug31837` |
+| 4 | 4 | window/display | `select-window` | `editfns-tests.el::replace-buffer-contents-bug31837` |
+| 3 | 17 | editing/regions | `upcase-initials-region` | `casefiddle-tests.el::casefiddle-tests-casing` |
+| 3 | 4 | keymap/help | `describe-function->ignore` | `marker-tests.el::marker-set-window-start-from-other-buffer` |
+| 3 | 3 | window/display | `window-text-pixel-size` | `xdisp-tests.el::xdisp-tests--window-text-pixel-size` |
+| 3 | 3 | window/display | `frame-char-width` | `xdisp-tests.el::xdisp-tests--window-text-pixel-size` |
 
 ## Skip rationale
 
@@ -120,5 +141,7 @@ to `tractable.list`.
 - `ert-progress/tractable.list` — file list refresh.sh consumes.
 - `ert-progress/refresh.sh` — refresh the baseline + print summary.
 - `ert-progress/summarize.py` — JSONL → summary table.
+- `ert-progress/stub_inventory.py` — source-derived stub/backlog report.
 - `ert-progress/SESSIONS.md` — append-only session log (newest first).
 - `tmp/ert-baseline.jsonl` — latest worker output (regenerated).
+- `tmp/elisp-stub-inventory.tsv` — latest stub inventory (regenerated).

@@ -216,6 +216,11 @@ fn record_defun_declarations(
             {
                 state.put_plist(id, crate::obarray::intern("gv-setter"), setter);
             }
+            if let Some((decl_name, decl_args)) = decl.destructure_cons()
+                && decl_name.as_symbol().as_deref() == Some("interactive-args")
+            {
+                state.put_plist(id, crate::obarray::intern("interactive-args"), decl_args);
+            }
             decls = next;
         }
         cur = rest;

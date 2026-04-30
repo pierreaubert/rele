@@ -48,17 +48,67 @@ fn signal_error_data(items: impl IntoIterator<Item = LispObject>) -> ElispError 
     }))
 }
 
-fn interactive_spec_form(func: &LispObject) -> Option<LispObject> {
+fn list_from_objects(items: Vec<LispObject>) -> LispObject {
+    items
+        .into_iter()
+        .rev()
+        .fold(LispObject::nil(), |tail, item| LispObject::cons(item, tail))
+}
+
+fn list_to_objects(list: &LispObject) -> Vec<LispObject> {
+    let mut out = Vec::new();
+    let mut cur = list.clone();
+    while let Some((item, rest)) = cur.destructure_cons() {
+        out.push(item);
+        cur = rest;
+    }
+    out
+}
+
+fn resolved_interactive_function(func: &LispObject, env: &Arc<RwLock<Environment>>) -> LispObject {
+    if let Some(id) = func.as_symbol_id() {
+        let name = obarray::symbol_name(id);
+        return env
+            .read()
+            .get_function(&name)
+            .unwrap_or_else(|| func.clone());
+    }
+    func.clone()
+}
+
+fn function_params_and_body(func: &LispObject) -> Option<(LispObject, LispObject)> {
     let (head, rest) = func.destructure_cons()?;
     match head.as_symbol().as_deref()? {
-        "lambda" => rest.rest()?.first(),
+        "lambda" => Some((rest.first()?, rest.rest().unwrap_or_else(LispObject::nil))),
         "closure" => {
             let after_env = rest.rest()?;
-            let after_params = after_env.rest()?;
-            after_params.first()
+            Some((
+                after_env.first()?,
+                after_env.rest().unwrap_or_else(LispObject::nil),
+            ))
         }
         _ => None,
     }
+}
+
+fn interactive_spec_form(func: &LispObject) -> Option<LispObject> {
+    if let LispObject::BytecodeFn(bytecode) = func {
+        return bytecode.interactive.as_deref().cloned();
+    }
+
+    let (_, body) = function_params_and_body(func)?;
+    let mut cur = body;
+    while let Some((form, rest)) = cur.destructure_cons() {
+        if form.as_string().is_some() {
+            cur = rest;
+            continue;
+        }
+        if form.first().and_then(|head| head.as_symbol()).as_deref() == Some("interactive") {
+            return Some(form);
+        }
+        cur = rest;
+    }
+    None
 }
 
 fn interactive_spec_string(func: &LispObject) -> Option<String> {
@@ -99,6 +149,291 @@ fn validate_interactive_spec(func: &LispObject) -> ElispResult<()> {
         }
     }
     Ok(())
+}
+
+fn variable_value(
+    name: &str,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> Option<LispObject> {
+    env.read()
+        .get(name)
+        .or_else(|| state.get_value_cell(obarray::intern(name)))
+}
+
+fn set_variable_value(
+    name: &str,
+    value: LispObject,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) {
+    let id = obarray::intern(name);
+    if env.read().get_id_local(id).is_some() {
+        env.write().set_id(id, value.clone());
+    }
+    if env.read().get_id_local(id).is_none()
+        || state.specpdl.read().iter().any(|(sym, _)| *sym == id)
+    {
+        state.global_env.write().set_id(id, value.clone());
+        state.set_value_cell(id, value);
+    }
+}
+
+fn pop_unread_command_event(
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> LispObject {
+    let events =
+        variable_value("unread-command-events", env, state).unwrap_or_else(LispObject::nil);
+    let Some((event, rest)) = events.destructure_cons() else {
+        return LispObject::nil();
+    };
+    set_variable_value("unread-command-events", rest, env, state);
+    event
+}
+
+fn event_to_key_string(event: LispObject) -> LispObject {
+    if let Some(code) = event.as_integer() {
+        if let Ok(code) = u32::try_from(code)
+            && let Some(ch) = char::from_u32(code)
+        {
+            return LispObject::string(&ch.to_string());
+        }
+        return LispObject::string("");
+    }
+    if let Some(text) = event.as_string() {
+        return LispObject::string(text);
+    }
+    LispObject::string(&event.princ_to_string())
+}
+
+fn event_to_character(event: LispObject) -> LispObject {
+    if let Some(code) = event.as_integer() {
+        return LispObject::integer(code);
+    }
+    if let Some(text) = event.as_string()
+        && let Some(ch) = text.chars().next()
+    {
+        return LispObject::integer(i64::from(u32::from(ch)));
+    }
+    LispObject::nil()
+}
+
+fn numeric_prefix_arg(env: &Arc<RwLock<Environment>>, state: &InterpreterState) -> LispObject {
+    let raw = variable_value("current-prefix-arg", env, state).unwrap_or_else(LispObject::nil);
+    if raw.is_nil() {
+        return LispObject::integer(1);
+    }
+    if raw.as_integer().is_some() {
+        return raw;
+    }
+    if let Some(value) = raw.first()
+        && value.as_integer().is_some()
+    {
+        return value;
+    }
+    LispObject::integer(1)
+}
+
+fn raw_prefix_arg(env: &Arc<RwLock<Environment>>, state: &InterpreterState) -> LispObject {
+    variable_value("current-prefix-arg", env, state).unwrap_or_else(LispObject::nil)
+}
+
+fn push_interactive_code_arg(
+    code: char,
+    args: &mut Vec<LispObject>,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) {
+    match code {
+        '*' | '@' | '^' | 'i' => {}
+        'k' | 'K' => args.push(event_to_key_string(pop_unread_command_event(env, state))),
+        'c' => args.push(event_to_character(pop_unread_command_event(env, state))),
+        'e' => args.push(pop_unread_command_event(env, state)),
+        'r' => {
+            args.push(LispObject::integer(1));
+            args.push(LispObject::integer(1));
+        }
+        'd' | 'm' => args.push(LispObject::integer(1)),
+        'n' | 'N' => args.push(LispObject::integer(0)),
+        'p' => args.push(numeric_prefix_arg(env, state)),
+        'P' => args.push(raw_prefix_arg(env, state)),
+        'a' | 'C' => args.push(LispObject::symbol("ignore")),
+        'S' | 'v' => args.push(LispObject::nil()),
+        'x' | 'X' => args.push(LispObject::nil()),
+        'b' | 'B' | 'D' | 'f' | 'F' | 'G' | 'M' | 's' => args.push(LispObject::string("")),
+        _ => args.push(LispObject::nil()),
+    }
+}
+
+fn decode_interactive_string_args(
+    spec: &str,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> LispObject {
+    let mut args = Vec::new();
+    for line in spec.split('\n') {
+        let Some(code) = line.chars().next() else {
+            continue;
+        };
+        push_interactive_code_arg(code, &mut args, env, state);
+    }
+    list_from_objects(args)
+}
+
+fn interactive_call_args(
+    func: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let Some(form) = interactive_spec_form(func) else {
+        return Ok(LispObject::nil());
+    };
+    let Some(args) = form.rest() else {
+        return Ok(LispObject::nil());
+    };
+    let Some(spec) = args.first() else {
+        return Ok(LispObject::nil());
+    };
+    if let Some(spec) = spec.as_string() {
+        return Ok(decode_interactive_string_args(spec, env, state));
+    }
+    let value = value_to_obj(eval(obj_to_value(spec), env, editor, macros, state)?);
+    if value.is_nil() || value.destructure_cons().is_some() {
+        Ok(value)
+    } else {
+        Err(ElispError::WrongTypeArgument("list".to_string()))
+    }
+}
+
+fn lambda_param_names(params: &LispObject) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut cur = params.clone();
+    let mut rest = false;
+    while let Some((param, next)) = cur.destructure_cons() {
+        if let Some(name) = param.as_symbol() {
+            match name.as_str() {
+                "&optional" | "&key" => {
+                    cur = next;
+                    continue;
+                }
+                "&rest" | "&body" => {
+                    rest = true;
+                    cur = next;
+                    continue;
+                }
+                "&aux" => break,
+                "&allow-other-keys" => {
+                    cur = next;
+                    continue;
+                }
+                _ => names.push(name),
+            }
+        } else if let Some(name) = param.first().and_then(|obj| obj.as_symbol()) {
+            names.push(name);
+        }
+        cur = next;
+        if rest {
+            break;
+        }
+    }
+    names
+}
+
+fn interactive_args_declaration(
+    command: &LispObject,
+    func: &LispObject,
+    state: &InterpreterState,
+) -> Option<LispObject> {
+    if let Some(id) = command.as_symbol_id() {
+        let declared = state.get_plist(id, obarray::intern("interactive-args"));
+        if !declared.is_nil() {
+            return Some(declared);
+        }
+    }
+
+    let (_, body) = function_params_and_body(func)?;
+    let mut cur = body;
+    if let Some((first, rest)) = cur.destructure_cons()
+        && first.as_string().is_some()
+    {
+        cur = rest;
+    }
+    while let Some((form, rest)) = cur.destructure_cons() {
+        let Some((head, declarations)) = form.destructure_cons() else {
+            break;
+        };
+        if head.as_symbol().as_deref() != Some("declare") {
+            break;
+        }
+        let mut decls = declarations;
+        while let Some((decl, next_decl)) = decls.destructure_cons() {
+            if let Some((name, args)) = decl.destructure_cons()
+                && name.as_symbol().as_deref() == Some("interactive-args")
+            {
+                return Some(args);
+            }
+            decls = next_decl;
+        }
+        cur = rest;
+    }
+    None
+}
+
+fn command_history_args(
+    command: &LispObject,
+    func: &LispObject,
+    args: &LispObject,
+    state: &InterpreterState,
+) -> LispObject {
+    let mut values = list_to_objects(args);
+    let Some(declared) = interactive_args_declaration(command, func, state) else {
+        return list_from_objects(values);
+    };
+    let Some((params, _)) = function_params_and_body(func) else {
+        return list_from_objects(values);
+    };
+    let names = lambda_param_names(&params);
+    let mut cur = declared;
+    while let Some((entry, rest)) = cur.destructure_cons() {
+        if let Some((name_obj, value_rest)) = entry.destructure_cons()
+            && let Some(name) = name_obj.as_symbol()
+            && let Some(index) = names.iter().position(|param| param == &name)
+            && let Some(value) = value_rest.first()
+            && index < values.len()
+        {
+            values[index] = value;
+        }
+        cur = rest;
+    }
+    list_from_objects(values)
+}
+
+fn record_command_history(
+    command: &LispObject,
+    func: &LispObject,
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) {
+    let Some(command_name) = command.as_symbol_id() else {
+        return;
+    };
+    let history_args = command_history_args(command, func, args, state);
+    let entry = LispObject::cons(LispObject::Symbol(command_name), history_args);
+    let current = variable_value("command-history", env, state).unwrap_or_else(LispObject::nil);
+    let mut entries = vec![entry];
+    entries.extend(list_to_objects(&current));
+
+    let limit = variable_value("history-length", env, state)
+        .and_then(|value| value.as_integer())
+        .and_then(|value| usize::try_from(value.max(0)).ok());
+    if let Some(limit) = limit {
+        entries.truncate(limit);
+    }
+    set_variable_value("command-history", list_from_objects(entries), env, state);
 }
 
 fn face_inherit_prop() -> SymbolId {
@@ -1979,7 +2314,31 @@ pub(super) fn eval_inner(
                 "move-end-of-line" => eval_move_end_of_line(editor),
                 "beginning-of-buffer" => eval_beginning_of_buffer(editor),
                 "end-of-buffer" => eval_end_of_buffer(editor),
-                "primitive-undo" => eval_undo_primitive(editor),
+                "primitive-undo" => {
+                    if cdr.is_nil() {
+                        eval_undo_primitive(editor)
+                    } else {
+                        let mut evaled = Vec::new();
+                        let mut cur = cdr.clone();
+                        while let Some((arg, rest)) = cur.destructure_cons() {
+                            evaled.push(value_to_obj(eval(
+                                obj_to_value(arg),
+                                env,
+                                editor,
+                                macros,
+                                state,
+                            )?));
+                            cur = rest;
+                        }
+                        let args = list_from_vec(evaled);
+                        let result = crate::primitives_buffer::call_buffer_primitive(
+                            "primitive-undo",
+                            &args,
+                        )
+                        .ok_or_else(|| ElispError::VoidFunction(sym_name.to_string()))??;
+                        Ok(obj_to_value(result))
+                    }
+                }
                 "primitive-redo" => eval_redo_primitive(editor),
                 "editor--kill-line" => eval_kill_line(editor),
                 "editor--kill-word" => {
@@ -2352,7 +2711,7 @@ pub(super) fn eval_inner(
                         return Ok(Value::nil());
                     }
                     drop(e);
-                    crate::buffer::with_current_mut(|b| b.erase());
+                    crate::buffer::with_registry_mut(|registry| registry.erase_current());
                     Ok(Value::nil())
                 }
                 "buffer-substring" | "buffer-substring-no-properties" => {
@@ -3446,15 +3805,34 @@ pub(super) fn eval_inner(
                         state,
                     )?;
                     let func_obj = value_to_obj(func);
-                    validate_interactive_spec(&func_obj)?;
-                    functions::call_function(
+                    let command_obj = func_obj.clone();
+                    let record_flag = if let Some(record_expr) = cdr.nth(1) {
+                        !eval(obj_to_value(record_expr), env, editor, macros, state)?.is_nil()
+                    } else {
+                        false
+                    };
+                    let interactive_func = resolved_interactive_function(&func_obj, env);
+                    validate_interactive_spec(&interactive_func)?;
+                    let call_args =
+                        interactive_call_args(&interactive_func, env, editor, macros, state)?;
+                    let result = functions::call_function(
                         obj_to_value(func_obj),
-                        obj_to_value(LispObject::nil()),
+                        obj_to_value(call_args.clone()),
                         env,
                         editor,
                         macros,
                         state,
-                    )
+                    );
+                    if record_flag && result.is_ok() {
+                        record_command_history(
+                            &command_obj,
+                            &interactive_func,
+                            &call_args,
+                            env,
+                            state,
+                        );
+                    }
+                    result
                 }
                 "handler-bind" | "handler-bind-1" => {
                     let body = cdr.rest().unwrap_or(LispObject::nil());

@@ -154,13 +154,31 @@ pub fn make_stdlib_interp() -> Interpreter {
         "buffer-display-table",
         "redisplay-highlight-region-function",
         "redisplay-unhighlight-region-function",
-        "region-extract-function",
         "region-insert-function",
         "yank-handled-properties",
         "yank-excluded-properties",
     ] {
         interp.define(name, LispObject::nil());
     }
+    {
+        let mut special_vars = interp.state.special_vars.write();
+        special_vars.insert(crate::obarray::intern("region-extract-function"));
+        special_vars.insert(crate::obarray::intern("region-insert-function"));
+    }
+    interp
+        .eval_source(
+            r#"(setq region-extract-function
+      (lambda (method)
+        (let ((beg (region-beginning)))
+          (cond
+           ((eq method 'bounds)
+            (list (cons beg (region-end))))
+           ((eq method 'delete-only)
+            (delete-region beg (region-end)))
+           (t
+            (filter-buffer-substring beg (region-end) method))))))"#,
+        )
+        .expect("region-extract-function bootstrap should succeed");
     interp.define("unicode-category-table", LispObject::nil());
     interp.define("case-replace", LispObject::t());
     interp
@@ -434,10 +452,42 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("point-before-scroll", LispObject::nil());
     interp.define("window-point-insertion-type", LispObject::nil());
     interp.define("mark-active", LispObject::nil());
+    interp.define("deactivate-mark", LispObject::nil());
     interp.define("cursor-type", LispObject::t());
     interp.define("line-spacing", LispObject::nil());
     interp.define("cursor-in-non-selected-windows", LispObject::t());
     interp.define("transient-mark-mode", LispObject::t());
+    interp.define("mark-even-if-inactive", LispObject::t());
+    interp.define("select-active-regions", LispObject::t());
+    interp.define("saved-region-selection", LispObject::nil());
+    interp.define(
+        "selection-inhibit-update-commands",
+        LispObject::cons(
+            LispObject::symbol("handle-switch-frame"),
+            LispObject::cons(
+                LispObject::symbol("handle-select-window"),
+                LispObject::nil(),
+            ),
+        ),
+    );
+    interp.define("post-select-region-hook", LispObject::nil());
+    interp.define("tty-select-active-regions", LispObject::nil());
+    {
+        let mut special_vars = interp.state.special_vars.write();
+        for name in [
+            "mark-active",
+            "deactivate-mark",
+            "transient-mark-mode",
+            "mark-even-if-inactive",
+            "select-active-regions",
+            "saved-region-selection",
+            "selection-inhibit-update-commands",
+            "post-select-region-hook",
+            "tty-select-active-regions",
+        ] {
+            special_vars.insert(crate::obarray::intern(name));
+        }
+    }
     interp.define("auto-fill-function", LispObject::nil());
     interp.define("scroll-bar-mode", LispObject::nil());
     interp.define("display-line-numbers", LispObject::nil());
@@ -448,12 +498,16 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("local-abbrev-table", LispObject::nil());
     interp.define("abbrev-mode", LispObject::nil());
     interp.define("overwrite-mode", LispObject::nil());
+    interp.define("enable-multibyte-characters", LispObject::t());
     for name in [
         "left-margin",
         "line-spacing",
         "scroll-up-aggressively",
         "vertical-scroll-bar",
         "overwrite-mode",
+        "enable-multibyte-characters",
+        "mark-active",
+        "deactivate-mark",
     ] {
         let _ = interp.eval_source(&format!("(put '{name} 'variable-buffer-local t)"));
         interp
@@ -618,8 +672,14 @@ pub fn make_stdlib_interp() -> Interpreter {
     );
     interp.define("next-property-change", LispObject::primitive("ignore"));
     interp.define("text-property-any", LispObject::primitive("ignore"));
-    interp.define("compare-buffer-substrings", LispObject::primitive("ignore"));
-    interp.define("subst-char-in-region", LispObject::primitive("ignore"));
+    interp.define(
+        "compare-buffer-substrings",
+        LispObject::primitive("compare-buffer-substrings"),
+    );
+    interp.define(
+        "subst-char-in-region",
+        LispObject::primitive("subst-char-in-region"),
+    );
     interp.define("bolp", LispObject::primitive("bolp"));
     interp.define("eolp", LispObject::primitive("eolp"));
     interp.define("bobp", LispObject::primitive("bobp"));

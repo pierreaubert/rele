@@ -144,6 +144,23 @@ fn make_symbol_is_not_interned() {
 }
 
 #[test]
+fn uninterned_lambda_params_bind_by_identity() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let result = interp
+        .eval(
+            read(
+                r#"(let* ((param (make-symbol "funs"))
+                          (fn (list 'lambda (list param) param)))
+                     (funcall fn 42))"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(result, LispObject::integer(42));
+}
+
+#[test]
 fn buffer_local_dynamic_binding_preserves_toplevel_slot() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);

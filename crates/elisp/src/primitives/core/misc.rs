@@ -6,15 +6,23 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "identity" => Some(prim_identity(args)),
         "ignore" => Some(prim_ignore(args)),
         "rele--rx-translate" => Some(prim_rele_rx_translate(args)),
-        "autoload-compute-prefixes" => Some(Ok(LispObject::nil())),
-        "connection-local-value" => Some(prim_identity(args)),
-        "connection-local-p" => Some(Ok(LispObject::nil())),
-        "file-system-info" => Some(Ok(LispObject::nil())),
-        "propertized-buffer-identification" => Some(prim_propertized_buffer_identification(args)),
-        "substitute-command-keys" => Some(prim_identity(args)),
+        "autoload-compute-prefixes" => Some(recorded_stub(name, Ok(LispObject::nil()))),
+        "connection-local-value" => Some(recorded_stub(name, prim_identity(args))),
+        "connection-local-p" => Some(recorded_stub(name, Ok(LispObject::nil()))),
+        "file-system-info" => Some(recorded_stub(name, Ok(LispObject::nil()))),
+        "propertized-buffer-identification" => Some(recorded_stub(
+            name,
+            prim_propertized_buffer_identification(args),
+        )),
+        "substitute-command-keys" => Some(recorded_stub(name, prim_identity(args))),
         "format-message" => Some(super::string::prim_concat(args)),
         _ => None,
     }
+}
+
+fn recorded_stub(name: &str, result: ElispResult<LispObject>) -> ElispResult<LispObject> {
+    super::stub_telemetry::record_stub_hit(name);
+    result
 }
 
 pub fn prim_identity(args: &LispObject) -> ElispResult<LispObject> {

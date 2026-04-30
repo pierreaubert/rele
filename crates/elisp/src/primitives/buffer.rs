@@ -128,6 +128,32 @@ pub fn prim_get_buffer(args: &LispObject) -> ElispResult<LispObject> {
     }
 }
 
+pub fn prim_find_buffer(args: &LispObject) -> ElispResult<LispObject> {
+    let variable = args
+        .first()
+        .and_then(|arg| arg.as_symbol_id())
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".into()))?;
+    let value = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let name = crate::obarray::symbol_name(variable);
+    let found = buffer::with_registry(|registry| {
+        registry.list().into_iter().find(|id| {
+            registry.get(*id).is_some_and(|buffer| {
+                let local = match name.as_str() {
+                    "buffer-file-name" => buffer
+                        .file_name
+                        .as_ref()
+                        .map(|path| LispObject::string(path)),
+                    _ => buffer.locals.get(&name).cloned(),
+                };
+                local.as_ref() == Some(&value)
+            })
+        })
+    });
+    Ok(found
+        .map(make_buffer_object)
+        .unwrap_or_else(LispObject::nil))
+}
+
 pub fn prim_get_buffer_create(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let name = match &a {
@@ -305,17 +331,166 @@ pub fn prim_buffer_size(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_buffer_enable_undo(_args: &LispObject) -> ElispResult<LispObject> {
     buffer::with_current_mut(|b| {
         b.locals
-            .entry("buffer-undo-list".to_string())
-            .or_insert_with(LispObject::nil);
+            .insert("buffer-undo-list".to_string(), LispObject::nil());
     });
     Ok(LispObject::nil())
 }
 
 pub fn prim_buffer_disable_undo(_args: &LispObject) -> ElispResult<LispObject> {
     buffer::with_current_mut(|b| {
-        b.locals.remove("buffer-undo-list");
+        b.locals
+            .insert("buffer-undo-list".to_string(), LispObject::t());
     });
     Ok(LispObject::nil())
+}
+
+pub fn prim_undo_boundary(_args: &LispObject) -> ElispResult<LispObject> {
+    buffer::with_current_mut(buffer::StubBuffer::push_undo_boundary);
+    Ok(LispObject::nil())
+}
+
+fn error_signal(message: String) -> ElispError {
+    ElispError::Signal(Box::new(crate::error::SignalData {
+        symbol: LispObject::symbol("error"),
+        data: LispObject::cons(LispObject::string(&message), LispObject::nil()),
+    }))
+}
+
+fn wrong_type_signal(predicate: &str, value: LispObject) -> ElispError {
+    ElispError::Signal(Box::new(crate::error::SignalData {
+        symbol: LispObject::symbol("wrong-type-argument"),
+        data: LispObject::cons(
+            LispObject::symbol(predicate),
+            LispObject::cons(value, LispObject::nil()),
+        ),
+    }))
+}
+
+fn unrecognized_undo_entry(entry: &LispObject) -> ElispError {
+    error_signal(format!(
+        "Unrecognized entry in undo list {}",
+        entry.prin1_to_string()
+    ))
+}
+
+fn checked_marker_adjustment(entry: &LispObject) -> Option<(usize, i64)> {
+    let (car, cdr) = entry.destructure_cons()?;
+    let marker = marker_id(&car)?;
+    let offset = cdr.as_integer()?;
+    Some((marker, offset))
+}
+
+fn adjust_marker_position(position: usize, offset: i64) -> usize {
+    (position as i64 - offset).max(1) as usize
+}
+
+fn apply_undo_entry(entry: LispObject, list: &mut LispObject) -> ElispResult<()> {
+    if let Some(pos) = entry.as_integer() {
+        buffer::with_current_mut(|b| b.goto_char(pos.max(1) as usize));
+        return Ok(());
+    }
+
+    let Some((car, cdr)) = entry.destructure_cons() else {
+        return Err(unrecognized_undo_entry(&entry));
+    };
+
+    if let (Some(beg), Some(end)) = (car.as_integer(), cdr.as_integer()) {
+        let beg = beg.max(1) as usize;
+        let end = end.max(1) as usize;
+        buffer::with_registry_mut(|r| r.delete_current_region(beg, end));
+        return Ok(());
+    }
+
+    if car.is_t() {
+        buffer::with_current_mut(|b| {
+            b.modified = false;
+            b.modified_status = None;
+        });
+        return Ok(());
+    }
+
+    if let (Some(text), Some(pos)) = (car.as_string(), cdr.as_integer()) {
+        let abs_pos = pos.unsigned_abs() as usize;
+        let mut valid_marker_adjustments = Vec::new();
+        while let Some((next, rest)) = list.destructure_cons() {
+            let Some((marker, offset)) = checked_marker_adjustment(&next) else {
+                break;
+            };
+            *list = rest;
+            let valid = buffer::with_registry(|r| {
+                r.markers
+                    .get(&marker)
+                    .is_some_and(|m| m.buffer == r.current_id() && m.position == Some(abs_pos))
+            });
+            if valid {
+                valid_marker_adjustments.push((marker, offset));
+            }
+        }
+        buffer::with_registry_mut(|r| {
+            if let Some(buf) = r.get_mut(r.current_id()) {
+                buf.goto_char(abs_pos);
+            }
+            r.insert_current(text, false);
+            if pos >= 0
+                && let Some(buf) = r.get_mut(r.current_id())
+            {
+                buf.goto_char(abs_pos);
+            }
+            for (marker, offset) in valid_marker_adjustments {
+                if let Some((buffer, position)) =
+                    r.markers.get(&marker).map(|m| (m.buffer, m.position))
+                    && let Some(position) = position
+                {
+                    r.marker_set(
+                        marker,
+                        buffer,
+                        Some(adjust_marker_position(position, offset)),
+                    );
+                }
+            }
+        });
+        return Ok(());
+    }
+
+    if let (Some(marker), Some(offset)) = (marker_id(&car), cdr.as_integer()) {
+        buffer::with_registry_mut(|r| {
+            if let Some((buffer, position)) = r.markers.get(&marker).map(|m| (m.buffer, m.position))
+                && let Some(position) = position
+            {
+                let adjusted = adjust_marker_position(position, offset);
+                r.marker_set(marker, buffer, Some(adjusted));
+            }
+        });
+        return Ok(());
+    }
+
+    Err(unrecognized_undo_entry(&LispObject::cons(car, cdr)))
+}
+
+pub fn prim_primitive_undo(args: &LispObject) -> ElispResult<LispObject> {
+    let count = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let mut remaining = integer_or_marker_value(&count)
+        .ok_or_else(|| wrong_type_signal("number-or-marker-p", count.clone()))?;
+    let mut list = args.nth(1).unwrap_or_else(LispObject::nil);
+    if remaining < 0 {
+        return Err(wrong_type_signal("natnump", count));
+    }
+
+    while remaining > 0 {
+        loop {
+            let Some((entry, rest)) = list.destructure_cons() else {
+                list = LispObject::nil();
+                break;
+            };
+            list = rest;
+            if entry.is_nil() {
+                break;
+            }
+            apply_undo_entry(entry, &mut list)?;
+        }
+        remaining -= 1;
+    }
+    Ok(list)
 }
 
 pub fn prim_buffer_local_variables(_args: &LispObject) -> ElispResult<LispObject> {
@@ -348,6 +523,214 @@ pub fn prim_filter_buffer_substring(args: &LispObject) -> ElispResult<LispObject
         buffer::with_registry_mut(|r| r.delete_current_region(start, end));
     }
     Ok(LispObject::string(&s))
+}
+
+fn replacement_source_text(source: &LispObject) -> ElispResult<String> {
+    if let Some(text) = source.as_string() {
+        return Ok(text.clone());
+    }
+    if let Some(buffer_id) = resolve_buffer(source) {
+        return buffer::with_registry(|r| {
+            r.get(buffer_id)
+                .map(buffer::StubBuffer::buffer_string)
+                .ok_or_else(|| ElispError::WrongTypeArgument("buffer".into()))
+        });
+    }
+    if let LispObject::Vector(vector) = source {
+        let items = vector.lock().clone();
+        let Some(buffer_obj) = items.first() else {
+            return Err(ElispError::WrongTypeArgument("buffer".into()));
+        };
+        let buffer_id = resolve_buffer(buffer_obj)
+            .ok_or_else(|| ElispError::WrongTypeArgument("buffer".into()))?;
+        let start = items
+            .get(1)
+            .and_then(integer_or_marker_value)
+            .unwrap_or(1)
+            .max(1) as usize;
+        return buffer::with_registry(|r| {
+            let Some(buffer) = r.get(buffer_id) else {
+                return Err(ElispError::WrongTypeArgument("buffer".into()));
+            };
+            let end = items
+                .get(2)
+                .and_then(integer_or_marker_value)
+                .unwrap_or(buffer.point_max() as i64)
+                .max(1) as usize;
+            Ok(buffer.substring(start, end))
+        });
+    }
+    Err(ElispError::WrongTypeArgument("buffer-or-string".into()))
+}
+
+pub fn prim_replace_region_contents(args: &LispObject) -> ElispResult<LispObject> {
+    let start = args
+        .first()
+        .and_then(|arg| integer_or_marker_value(&arg))
+        .ok_or(ElispError::WrongNumberOfArguments)?
+        .max(1) as usize;
+    let end = args
+        .nth(1)
+        .and_then(|arg| integer_or_marker_value(&arg))
+        .ok_or(ElispError::WrongNumberOfArguments)?
+        .max(1) as usize;
+    let source = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
+    let replacement = replacement_source_text(&source)?;
+    let replacement_len = replacement.chars().count();
+    let (a, b) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
+
+    buffer::with_registry_mut(|registry| {
+        let current = registry.current_id();
+        let old_point = registry.get(current).map_or(1, |buffer| buffer.point);
+        let markers = registry
+            .markers
+            .values()
+            .filter(|marker| marker.buffer == current)
+            .filter_map(|marker| {
+                marker
+                    .position
+                    .map(|pos| (marker.id, pos, marker.insertion_type))
+            })
+            .collect::<Vec<_>>();
+        let old_len = b.saturating_sub(a);
+        let point_after = if old_point < a {
+            old_point
+        } else if old_point > b {
+            old_point + replacement_len.saturating_sub(old_len)
+        } else {
+            a + replacement_len
+        };
+
+        registry.delete_current_region(a, b);
+        if let Some(buffer) = registry.get_mut(current) {
+            buffer.goto_char(a);
+        }
+        registry.insert_current(&replacement, false);
+
+        let delta = replacement_len as i64 - old_len as i64;
+        for (marker_id, pos, insertion_type) in markers {
+            let new_pos = if pos <= a {
+                pos
+            } else if pos >= b {
+                (pos as i64 + delta).max(1) as usize
+            } else if insertion_type {
+                a + replacement_len
+            } else {
+                a
+            };
+            registry.marker_set(marker_id, current, Some(new_pos));
+        }
+        if let Some(buffer) = registry.get_mut(current) {
+            buffer.goto_char(point_after);
+        }
+    });
+    Ok(LispObject::nil())
+}
+
+pub fn prim_compare_buffer_substrings(args: &LispObject) -> ElispResult<LispObject> {
+    let buffer1 = args
+        .first()
+        .and_then(|arg| resolve_buffer(&arg))
+        .ok_or_else(|| ElispError::WrongTypeArgument("buffer".into()))?;
+    let start1 = args
+        .nth(1)
+        .and_then(|arg| integer_or_marker_value(&arg))
+        .ok_or(ElispError::WrongNumberOfArguments)?
+        .max(1) as usize;
+    let end1 = args
+        .nth(2)
+        .and_then(|arg| integer_or_marker_value(&arg))
+        .ok_or(ElispError::WrongNumberOfArguments)?
+        .max(1) as usize;
+    let buffer2 = args
+        .nth(3)
+        .and_then(|arg| resolve_buffer(&arg))
+        .ok_or_else(|| ElispError::WrongTypeArgument("buffer".into()))?;
+    let start2 = args
+        .nth(4)
+        .and_then(|arg| integer_or_marker_value(&arg))
+        .ok_or(ElispError::WrongNumberOfArguments)?
+        .max(1) as usize;
+    let end2 = args
+        .nth(5)
+        .and_then(|arg| integer_or_marker_value(&arg))
+        .ok_or(ElispError::WrongNumberOfArguments)?
+        .max(1) as usize;
+
+    let (s1, s2) = buffer::with_registry(|r| {
+        let s1 = r
+            .get(buffer1)
+            .map(|buffer| buffer.substring(start1, end1))
+            .unwrap_or_default();
+        let s2 = r
+            .get(buffer2)
+            .map(|buffer| buffer.substring(start2, end2))
+            .unwrap_or_default();
+        (s1, s2)
+    });
+    for (idx, (a, b)) in s1.chars().zip(s2.chars()).enumerate() {
+        if a != b {
+            let pos = idx as i64 + 1;
+            return Ok(LispObject::integer(if a < b { -pos } else { pos }));
+        }
+    }
+    let len1 = s1.chars().count();
+    let len2 = s2.chars().count();
+    if len1 == len2 {
+        Ok(LispObject::integer(0))
+    } else {
+        let pos = len1.min(len2) as i64 + 1;
+        Ok(LispObject::integer(if len1 < len2 { -pos } else { pos }))
+    }
+}
+
+pub fn prim_subst_char_in_region(args: &LispObject) -> ElispResult<LispObject> {
+    let start = args
+        .first()
+        .and_then(|arg| integer_or_marker_value(&arg))
+        .ok_or(ElispError::WrongNumberOfArguments)?
+        .max(1) as usize;
+    let end = args
+        .nth(1)
+        .and_then(|arg| integer_or_marker_value(&arg))
+        .ok_or(ElispError::WrongNumberOfArguments)?
+        .max(1) as usize;
+    let from = args
+        .nth(2)
+        .and_then(|arg| arg.as_integer())
+        .and_then(|code| char::from_u32(code as u32))
+        .ok_or_else(|| ElispError::WrongTypeArgument("character".into()))?;
+    let to = args
+        .nth(3)
+        .and_then(|arg| arg.as_integer())
+        .and_then(|code| char::from_u32(code as u32))
+        .ok_or_else(|| ElispError::WrongTypeArgument("character".into()))?;
+
+    buffer::with_current_mut(|buffer| {
+        let (a, b) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        let a = a.clamp(buffer.point_min(), buffer.point_max());
+        let b = b.clamp(buffer.point_min(), buffer.point_max());
+        let a_byte = buffer.char_to_byte(a);
+        let b_byte = buffer.char_to_byte(b);
+        let original = buffer.text[a_byte..b_byte].to_string();
+        let replaced = original
+            .chars()
+            .map(|ch| if ch == from { to } else { ch })
+            .collect::<String>();
+        if replaced != original {
+            buffer.text.replace_range(a_byte..b_byte, &replaced);
+            buffer.bump_modified();
+        }
+    });
+    Ok(LispObject::nil())
 }
 
 pub fn prim_buffer_file_name(args: &LispObject) -> ElispResult<LispObject> {
@@ -386,6 +769,14 @@ pub fn prim_point_max(_args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::integer(
         buffer::with_current(|b| b.point_max()) as i64
     ))
+}
+
+pub fn prim_gap_position(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::integer(buffer::with_current(|b| b.point) as i64))
+}
+
+pub fn prim_gap_size(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::integer(0))
 }
 
 pub fn prim_mark(args: &LispObject) -> ElispResult<LispObject> {
@@ -1720,10 +2111,12 @@ pub fn prim_replace_match(args: &LispObject) -> ElispResult<LispObject> {
     let repl = string_arg(args, 0).ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
     let g0 = buffer::with_registry(|r| r.match_data.groups.first().copied().flatten());
     if let Some((a, b)) = g0 {
-        buffer::with_current_mut(|buf| {
-            buf.delete_region(a, b);
-            buf.goto_char(a);
-            buf.insert(&repl);
+        buffer::with_registry_mut(|registry| {
+            registry.delete_current_region(a, b);
+            if let Some(buf) = registry.get_mut(registry.current_id()) {
+                buf.goto_char(a);
+            }
+            registry.insert_current(&repl, false);
         });
         Ok(LispObject::t())
     } else {
@@ -1824,7 +2217,17 @@ pub fn prim_get_char_property(args: &LispObject, include_empty: bool) -> ElispRe
 }
 
 pub fn prim_marker_insertion_type(args: &LispObject) -> ElispResult<LispObject> {
-    let _marker = args.first().unwrap_or(LispObject::nil());
+    let marker = args.first().and_then(|arg| marker_id(&arg));
+    let insertion_type =
+        marker.is_some_and(|id| buffer::with_registry(|r| r.marker_insertion_type(id)));
+    Ok(LispObject::from(insertion_type))
+}
+
+pub fn prim_set_marker_insertion_type(args: &LispObject) -> ElispResult<LispObject> {
+    let marker = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let id = marker_id(&marker).ok_or_else(|| ElispError::WrongTypeArgument("marker".into()))?;
+    let insertion_type = args.nth(1).is_some_and(|value| !value.is_nil());
+    buffer::with_registry_mut(|r| r.set_marker_insertion_type(id, insertion_type));
     Ok(LispObject::nil())
 }
 
@@ -2566,6 +2969,27 @@ fn scan_lisp_block_comment(buf: &buffer::StubBuffer, start: usize) -> CommentSca
     }
 }
 
+fn scan_brace_dash_comment(buf: &buffer::StubBuffer, start: usize) -> CommentScan {
+    let mut pos = start + 2;
+    while pos + 1 < buf.point_max() {
+        if buffer_starts_with(buf, pos, "-}") {
+            return CommentScan {
+                start,
+                end: pos + 2,
+                complete: true,
+                kind: CommentKind::Block,
+            };
+        }
+        pos += 1;
+    }
+    CommentScan {
+        start,
+        end: unclosed_comment_stop(buf),
+        complete: false,
+        kind: CommentKind::Block,
+    }
+}
+
 fn scan_comment_at(buf: &buffer::StubBuffer, start: usize) -> Option<CommentScan> {
     if buffer_starts_with(buf, start, "#|") {
         Some(scan_lisp_block_comment(buf, start))
@@ -2575,6 +2999,22 @@ fn scan_comment_at(buf: &buffer::StubBuffer, start: usize) -> Option<CommentScan
         Some(scan_c_line_comment(buf, start))
     } else if buf.char_at(start) == Some('{') {
         Some(scan_pascal_comment(buf, start))
+    } else if buf.char_at(start) == Some(';') {
+        Some(scan_semicolon_comment(buf, start))
+    } else {
+        None
+    }
+}
+
+fn scan_parse_comment_at(buf: &buffer::StubBuffer, start: usize) -> Option<CommentScan> {
+    if buffer_starts_with(buf, start, "#|") {
+        Some(scan_lisp_block_comment(buf, start))
+    } else if buffer_starts_with(buf, start, "/*") {
+        Some(scan_c_block_comment(buf, start))
+    } else if buffer_starts_with(buf, start, "//") {
+        Some(scan_c_line_comment(buf, start))
+    } else if buffer_starts_with(buf, start, "{-") {
+        Some(scan_brace_dash_comment(buf, start))
     } else if buf.char_at(start) == Some(';') {
         Some(scan_semicolon_comment(buf, start))
     } else {
@@ -2810,11 +3250,182 @@ fn scan_list_backward(
     None
 }
 
+fn scan_list_nearest_open_before(
+    buf: &buffer::StubBuffer,
+    before: usize,
+    open: char,
+    close: char,
+) -> Option<usize> {
+    let tokens = scan_list_tokens_to(buf, before, open, close);
+    let mut depth = 0usize;
+    for (pos, ch) in tokens.into_iter().rev() {
+        if ch == close {
+            depth += 1;
+        } else if ch == open {
+            if depth == 0 {
+                return Some(pos);
+            }
+            depth -= 1;
+        }
+    }
+    None
+}
+
+fn scan_list_backward_including_commented_close(
+    buf: &buffer::StubBuffer,
+    close_pos: usize,
+    open: char,
+    close: char,
+) -> Option<usize> {
+    let mut pos = buf.point_min();
+    while pos < close_pos && pos < buf.point_max() {
+        if let Some(span) = scan_comment_at_for_list(buf, pos, open) {
+            if span.start < close_pos && close_pos < span.end {
+                return scan_list_nearest_open_before(buf, span.start, open, close);
+            }
+            pos = span.end.max(pos + 1);
+            continue;
+        }
+        pos += 1;
+    }
+    None
+}
+
 fn scan_error() -> ElispError {
     ElispError::Signal(Box::new(crate::error::SignalData {
         symbol: LispObject::symbol("scan-error"),
         data: LispObject::nil(),
     }))
+}
+
+fn comment_opener_end(buf: &buffer::StubBuffer, span: CommentScan) -> usize {
+    if buffer_starts_with(buf, span.start, "#|")
+        || buffer_starts_with(buf, span.start, "/*")
+        || buffer_starts_with(buf, span.start, "//")
+        || buffer_starts_with(buf, span.start, "{-")
+    {
+        span.start + 2
+    } else {
+        span.start + 1
+    }
+}
+
+fn comment_stop_position(buf: &buffer::StubBuffer, span: CommentScan, from: usize) -> usize {
+    if span.kind == CommentKind::Line {
+        if buffer_starts_with(buf, span.start, "//") {
+            return span.end;
+        }
+        let mut pos = from.max(span.start);
+        while pos < span.end && pos < buf.point_max() {
+            if buf.char_at(pos) == Some('\n') {
+                return pos + 1;
+            }
+            pos += 1;
+        }
+    }
+    span.end
+}
+
+fn find_parse_comment_containing(buf: &buffer::StubBuffer, pos: usize) -> Option<CommentScan> {
+    let mut cursor = buf.point_min();
+    while cursor < pos && cursor < buf.point_max() {
+        if let Some(span) = scan_parse_comment_at(buf, cursor) {
+            if span.start < pos && pos < span.end {
+                return Some(span);
+            }
+            cursor = span.end.max(cursor + 1);
+        } else {
+            cursor += 1;
+        }
+    }
+    None
+}
+
+fn find_parse_comment_stop(buf: &buffer::StubBuffer, from: usize, to: usize) -> Option<usize> {
+    if let Some(span) = find_parse_comment_containing(buf, from) {
+        return Some(comment_stop_position(buf, span, from));
+    }
+    let mut cursor = from;
+    while cursor < to && cursor < buf.point_max() {
+        if let Some(span) = scan_parse_comment_at(buf, cursor) {
+            return Some(comment_opener_end(buf, span));
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn matching_delimiters_for_open(ch: char) -> Option<char> {
+    matching_delimiters_forward(ch).map(|(_, close)| close)
+}
+
+fn matching_delimiters_for_close(ch: char) -> Option<char> {
+    matching_delimiters_backward(ch).map(|(open, _)| open)
+}
+
+fn push_parse_delimiter(stack: &mut Vec<(usize, char)>, pos: usize, ch: char) {
+    if matching_delimiters_for_open(ch).is_some() {
+        stack.push((pos, ch));
+    } else if let Some(open) = matching_delimiters_for_close(ch) {
+        if stack.last().is_some_and(|(_, top)| *top == open) {
+            stack.pop();
+        }
+    }
+}
+
+fn parse_delimiter_stack_to(buf: &buffer::StubBuffer, end: usize) -> Vec<(usize, char)> {
+    let mut stack = Vec::new();
+    let mut pos = buf.point_min();
+    while pos < end && pos < buf.point_max() {
+        if let Some(span) = scan_parse_comment_at(buf, pos) {
+            pos = span.end.max(pos + 1);
+            continue;
+        }
+        if let Some(ch) = buf.char_at(pos) {
+            push_parse_delimiter(&mut stack, pos, ch);
+        }
+        pos += 1;
+    }
+    stack
+}
+
+fn find_parse_depth_zero_stop(buf: &buffer::StubBuffer, from: usize, to: usize) -> Option<usize> {
+    let (open_pos, open) = parse_delimiter_stack_to(buf, from).pop()?;
+    let close = matching_delimiters_for_open(open)?;
+    let stop = scan_list_forward(buf, open_pos, open, close)?;
+    (stop <= to).then_some(stop)
+}
+
+fn parse_depth_zero_fallback(buf: &buffer::StubBuffer, from: usize, to: usize) -> usize {
+    if parse_delimiter_stack_to(buf, from).last().is_some() {
+        let stop = unclosed_comment_stop(buf);
+        if (from..=to).contains(&stop) {
+            return stop;
+        }
+    }
+    to
+}
+
+fn parse_comment_state_value(buf: &buffer::StubBuffer, span: CommentScan) -> LispObject {
+    if buffer_starts_with(buf, span.start, "{-") {
+        LispObject::integer(1)
+    } else {
+        LispObject::t()
+    }
+}
+
+fn parse_partial_sexp_state(buf: &buffer::StubBuffer, pos: usize) -> LispObject {
+    let mut slots = vec![LispObject::nil(); 10];
+    slots[0] = LispObject::integer(parse_delimiter_stack_to(buf, pos).len() as i64);
+    if let Some(span) = find_parse_comment_containing(buf, pos) {
+        slots[4] = parse_comment_state_value(buf, span);
+        slots[8] = LispObject::integer(span.start as i64);
+    }
+    let mut result = LispObject::nil();
+    for slot in slots.into_iter().rev() {
+        result = LispObject::cons(slot, result);
+    }
+    result
 }
 
 pub fn prim_scan_lists(args: &LispObject) -> ElispResult<LispObject> {
@@ -2856,10 +3467,44 @@ pub fn prim_scan_lists(args: &LispObject) -> ElispResult<LispObject> {
                 .char_at(close_pos)
                 .and_then(matching_delimiters_backward)
                 .ok_or_else(scan_error)?;
-            scan_list_backward(b, start, open, close).ok_or_else(scan_error)
+            scan_list_backward(b, start, open, close)
+                .or_else(|| scan_list_backward_including_commented_close(b, close_pos, open, close))
+                .ok_or_else(scan_error)
         }
     })?;
     Ok(LispObject::integer(result as i64))
+}
+
+pub fn prim_parse_partial_sexp(args: &LispObject) -> ElispResult<LispObject> {
+    let from = args
+        .first()
+        .and_then(|arg| arg.as_integer())
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer".into()))?;
+    let to = args
+        .nth(1)
+        .and_then(|arg| arg.as_integer())
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer".into()))?;
+    if from > to {
+        return Err(scan_error());
+    }
+    let target_depth = args.nth(2).and_then(|arg| arg.as_integer());
+    let comment_stop = args.nth(5).is_some_and(|arg| !arg.is_nil());
+
+    let state = buffer::with_current_mut(|b| {
+        let from = (from.max(1) as usize).clamp(b.point_min(), b.point_max());
+        let to = (to.max(1) as usize).clamp(b.point_min(), b.point_max());
+        let stop = if comment_stop {
+            find_parse_comment_stop(b, from, to).unwrap_or(to)
+        } else if target_depth == Some(0) {
+            find_parse_depth_zero_stop(b, from, to)
+                .unwrap_or_else(|| parse_depth_zero_fallback(b, from, to))
+        } else {
+            to
+        };
+        b.point = stop;
+        parse_partial_sexp_state(b, stop)
+    });
+    Ok(state)
 }
 
 pub fn prim_syntax_ppss(args: &LispObject) -> ElispResult<LispObject> {
@@ -2933,6 +3578,7 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "current-buffer" => prim_current_buffer(args),
         "buffer-list" => prim_buffer_list(args),
         "get-buffer" => prim_get_buffer(args),
+        "find-buffer" => prim_find_buffer(args),
         "get-buffer-create" => prim_get_buffer_create(args),
         "generate-new-buffer" => prim_generate_new_buffer(args),
         "generate-new-buffer-name" => prim_generate_new_buffer_name(args),
@@ -2948,13 +3594,20 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "buffer-string" => prim_buffer_string(args),
         "buffer-substring" | "buffer-substring-no-properties" => prim_buffer_substring(args),
         "filter-buffer-substring" => prim_filter_buffer_substring(args),
+        "replace-region-contents" => prim_replace_region_contents(args),
+        "compare-buffer-substrings" => prim_compare_buffer_substrings(args),
+        "subst-char-in-region" => prim_subst_char_in_region(args),
         "buffer-file-name" => prim_buffer_file_name(args),
         "buffer-enable-undo" => prim_buffer_enable_undo(args),
         "buffer-disable-undo" => prim_buffer_disable_undo(args),
+        "undo-boundary" => prim_undo_boundary(args),
+        "primitive-undo" => prim_primitive_undo(args),
         "buffer-local-variables" => prim_buffer_local_variables(args),
         "point" => prim_point(args),
         "point-min" => prim_point_min(args),
         "point-max" => prim_point_max(args),
+        "gap-position" => prim_gap_position(args),
+        "gap-size" => prim_gap_size(args),
         "mark" => prim_mark(args),
         "mark-marker" => prim_mark_marker(args),
         "set-mark" => prim_set_mark(args),
@@ -3004,6 +3657,7 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "marker-position" => prim_marker_position(args),
         "marker-buffer" => prim_marker_buffer(args),
         "set-marker" => prim_set_marker(args),
+        "set-marker-insertion-type" => prim_set_marker_insertion_type(args),
         "match-data" => prim_match_data(args),
         "set-match-data" | "store-match-data" => prim_set_match_data(args),
         "match-beginning" => prim_match_beginning(args),
@@ -3049,6 +3703,7 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "forward-word" => prim_forward_word(args),
         "backward-word" => prim_backward_word(args),
         "forward-comment" => prim_forward_comment(args),
+        "parse-partial-sexp" => prim_parse_partial_sexp(args),
         "scan-lists" => prim_scan_lists(args),
         "syntax-ppss" => prim_syntax_ppss(args),
         "current-indentation" => prim_current_indentation(args),
@@ -3066,6 +3721,7 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "current-buffer",
     "buffer-list",
     "get-buffer",
+    "find-buffer",
     "get-buffer-create",
     "generate-new-buffer",
     "generate-new-buffer-name",
@@ -3083,6 +3739,9 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "buffer-substring",
     "buffer-substring-no-properties",
     "filter-buffer-substring",
+    "replace-region-contents",
+    "compare-buffer-substrings",
+    "subst-char-in-region",
     "buffer-file-name",
     "buffer-last-name",
     "buffer-base-buffer",
@@ -3090,10 +3749,14 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "set-visited-file-name",
     "buffer-enable-undo",
     "buffer-disable-undo",
+    "undo-boundary",
+    "primitive-undo",
     "buffer-local-variables",
     "point",
     "point-min",
     "point-max",
+    "gap-position",
+    "gap-size",
     "mark",
     "mark-marker",
     "set-mark",
@@ -3145,6 +3808,7 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "marker-position",
     "marker-buffer",
     "set-marker",
+    "set-marker-insertion-type",
     "match-data",
     "set-match-data",
     "store-match-data",
@@ -3169,6 +3833,7 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "forward-word",
     "backward-word",
     "forward-comment",
+    "parse-partial-sexp",
     "scan-lists",
     "syntax-ppss",
     "current-indentation",
@@ -3196,6 +3861,13 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
 mod tests {
     use super::*;
     use crate::buffer;
+
+    fn list(items: Vec<LispObject>) -> LispObject {
+        items
+            .into_iter()
+            .rev()
+            .fold(LispObject::nil(), |tail, item| LispObject::cons(item, tail))
+    }
 
     /// Regression: R4. `(copy-marker -1)` used to `n as usize` on a
     /// negative integer, wrapping to `usize::MAX - 0`. That violated
@@ -3239,6 +3911,51 @@ mod tests {
         let out = prim_filter_buffer_substring(&args).expect("filter-buffer-substring ok");
         assert_eq!(out.as_string().map(String::as_str), Some("bc"));
         assert_eq!(buffer::with_current(|b| b.buffer_string()), "ade");
+    }
+
+    #[test]
+    fn parse_partial_sexp_stops_at_comment_boundaries() {
+        buffer::reset();
+        let text = "(; comment\n)";
+        let close = text.chars().position(|ch| ch == '\n').unwrap() + 2;
+        buffer::with_current_mut(|b| b.insert(text));
+        let point_max = buffer::with_current(|b| b.point_max());
+
+        let state = prim_parse_partial_sexp(&list(vec![
+            LispObject::integer(1),
+            LispObject::integer(point_max as i64),
+            LispObject::integer(0),
+            LispObject::nil(),
+            LispObject::nil(),
+            LispObject::symbol("syntax-table"),
+        ]))
+        .expect("parse-partial-sexp opens comment");
+        assert_eq!(buffer::with_current(|b| b.point), 3);
+
+        prim_parse_partial_sexp(&list(vec![
+            LispObject::integer(3),
+            LispObject::integer(point_max as i64),
+            LispObject::integer(0),
+            LispObject::nil(),
+            state,
+            LispObject::symbol("syntax-table"),
+        ]))
+        .expect("parse-partial-sexp closes comment");
+        assert_eq!(buffer::with_current(|b| b.point), close);
+    }
+
+    #[test]
+    fn scan_lists_backward_allows_commented_close_delimiter() {
+        buffer::reset();
+        buffer::with_current_mut(|b| b.insert("{ // \\\n}\n"));
+
+        let result = prim_scan_lists(&list(vec![
+            LispObject::integer(9),
+            LispObject::integer(-1),
+            LispObject::integer(0),
+        ]))
+        .expect("scan-lists should find the opening brace");
+        assert_eq!(result.as_integer(), Some(1));
     }
 
     #[test]

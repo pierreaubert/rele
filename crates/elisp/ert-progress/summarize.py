@@ -15,6 +15,7 @@ Usage:
 import json
 import sys
 from collections import Counter, defaultdict
+from pathlib import Path
 
 
 def categorise(detail: str) -> str:
@@ -47,15 +48,58 @@ def categorise(detail: str) -> str:
     return f'ASSERT: {detail[:80]}'
 
 
+def parse_stub_hits(field: str) -> list[tuple[str, int]]:
+    hits = []
+    for item in field.split(';'):
+        if not item:
+            continue
+        name, sep, count_s = item.rpartition('=')
+        if not sep:
+            continue
+        try:
+            count = int(count_s)
+        except ValueError:
+            continue
+        hits.append((name, count))
+    return hits
+
+
+def load_stub_buckets() -> dict[str, str]:
+    script_dir = Path(__file__).resolve().parent
+    root = script_dir.parent.parent.parent
+    inventory = root / "tmp" / "elisp-stub-inventory.tsv"
+    buckets: dict[str, str] = {}
+    if not inventory.exists():
+        return buckets
+    with inventory.open(encoding="utf-8") as f:
+        header = f.readline().rstrip('\n').split('\t')
+        try:
+            bucket_i = header.index('bucket')
+            name_i = header.index('name')
+        except ValueError:
+            return buckets
+        for line in f:
+            parts = line.rstrip('\n').split('\t')
+            if len(parts) <= max(bucket_i, name_i):
+                continue
+            buckets.setdefault(parts[name_i], parts[bucket_i])
+    return buckets
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__)
         return 2
     path = sys.argv[1]
+    stub_buckets = load_stub_buckets()
 
     by_file = defaultdict(Counter)
     patterns = Counter()
     pattern_examples = {}
+    stub_hits = Counter()
+    stub_tests = defaultdict(set)
+    stub_bad_tests = defaultdict(set)
+    stub_examples = {}
     total = Counter()
 
     with open(path) as f:
@@ -78,6 +122,13 @@ def main() -> int:
                     bucket,
                     f"{fname}::{r.get('test', '')}",
                 )
+            test_key = f"{fname}::{r.get('test', '')}"
+            for stub, count in parse_stub_hits(r.get('stubs', '')):
+                stub_hits[stub] += count
+                stub_tests[stub].add(test_key)
+                stub_examples.setdefault(stub, test_key)
+                if res in ('fail', 'error', 'panic', 'timeout'):
+                    stub_bad_tests[stub].add(test_key)
 
     print("=" * 72)
     print("PER-FILE RESULTS")
@@ -111,6 +162,32 @@ def main() -> int:
         example = pattern_examples.get(bucket, '')
         print(f"  {count:>4}  {bucket}")
         print(f"        e.g. {example}")
+
+    print()
+    print("=" * 72)
+    print("TOP RUNTIME STUB HITS (ranked by failing/erroring tests)")
+    print("=" * 72)
+    ranked_stubs = sorted(
+        stub_hits,
+        key=lambda stub: (
+            len(stub_bad_tests[stub]),
+            len(stub_tests[stub]),
+            stub_hits[stub],
+            stub,
+        ),
+        reverse=True,
+    )
+    if not ranked_stubs:
+        print("  none recorded")
+    for stub in ranked_stubs[:20]:
+        bucket_name = stub.split('->', 1)[0]
+        bucket = stub_buckets.get(bucket_name, 'unknown')
+        print(
+            f"  {stub_hits[stub]:>4} hits  "
+            f"{len(stub_bad_tests[stub]):>3} bad-tests  "
+            f"{len(stub_tests[stub]):>3} tests  [{bucket}] {stub}"
+        )
+        print(f"        e.g. {stub_examples.get(stub, '')}")
 
     return 0
 

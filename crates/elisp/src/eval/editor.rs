@@ -188,13 +188,16 @@ pub(super) fn eval_goto_char(
             set_shadow_current_buffer_by_name(&name);
             crate::buffer::with_current_mut(|b| b.goto_char(pos_i.max(1) as usize));
         }
+        Ok(obj_to_value(LispObject::integer(pos_i)))
     } else {
         drop(e);
         // StubBuffer path: clamp to point-min (1) since char offsets
         // can't be 0 in real Emacs.
         crate::buffer::with_current_mut(|b| b.goto_char(pos_i.max(1) as usize));
+        Ok(obj_to_value(LispObject::integer(
+            crate::buffer::with_current(|b| b.point) as i64,
+        )))
     }
-    Ok(Value::nil())
 }
 pub(super) fn eval_delete_char(
     args: Value,
@@ -245,6 +248,11 @@ pub(super) fn eval_forward_char(
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {
         cb.forward_char(n);
+    } else {
+        drop(e);
+        let args = LispObject::cons(LispObject::integer(n), LispObject::nil());
+        crate::primitives_buffer::call_buffer_primitive("forward-char", &args)
+            .ok_or_else(|| ElispError::VoidFunction("forward-char".to_string()))??;
     }
     Ok(Value::nil())
 }
@@ -282,6 +290,18 @@ pub(super) fn eval_save_buffer(
         let success = cb.save_buffer();
         Ok(if success { Value::t() } else { Value::nil() })
     } else {
+        let write_result = crate::buffer::with_current(|buffer| {
+            buffer
+                .file_name
+                .as_ref()
+                .map(|path| std::fs::write(path, buffer.buffer_string()))
+        });
+        if let Some(Err(_)) = write_result {
+            return Err(ElispError::Signal(Box::new(crate::error::SignalData {
+                symbol: LispObject::symbol("file-error"),
+                data: LispObject::cons(LispObject::string("cannot write"), LispObject::nil()),
+            })));
+        }
         crate::buffer::with_current_mut(|buffer| {
             buffer.modified = false;
             buffer.modified_status = None;

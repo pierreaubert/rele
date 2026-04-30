@@ -14,6 +14,9 @@ run_gate() {
 run_gate "compile/default tests (no run)" \
   cargo test -p rele-elisp --no-run
 
+run_gate "stub inventory gate" \
+  python3 crates/elisp/ert-progress/stub_inventory.py --check
+
 run_gate "runtime/default tests" \
   cargo test -p rele-elisp
 

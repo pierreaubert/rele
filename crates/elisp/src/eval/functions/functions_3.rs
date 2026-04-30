@@ -4,7 +4,7 @@
 
 use super::SyncRefCell as RwLock;
 use super::{Environment, InterpreterState, MacroTable, eval, eval_progn};
-use super::{bind_param_dynamic, unwind_specpdl};
+use super::{bind_param_dynamic_id, unwind_specpdl};
 use crate::EditorCallbacks;
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
@@ -13,6 +13,19 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::functions::{call_stateful_primitive, source_level_fallback};
+
+fn lambda_keyword(id: crate::obarray::SymbolId) -> Option<&'static str> {
+    [
+        "&optional",
+        "&rest",
+        "&body",
+        "&key",
+        "&allow-other-keys",
+        "&aux",
+    ]
+    .into_iter()
+    .find(|name| crate::obarray::intern(name) == id)
+}
 
 pub(super) fn eval_list(
     args: Value,
@@ -57,7 +70,7 @@ pub(crate) fn apply_lambda(
     let mut rest = false;
     let mut aux = false;
     let mut key_mode = false;
-    let mut key_params: Vec<(String, LispObject)> = Vec::new();
+    let mut key_params: Vec<(crate::obarray::SymbolId, String, LispObject)> = Vec::new();
     loop {
         if params_list.is_nil() {
             break;
@@ -65,34 +78,35 @@ pub(crate) fn apply_lambda(
         let (param, params_rest) = match params_list.destructure_cons() {
             Some((p, r)) => (p, r),
             None => {
-                if let Some(name) = params_list.as_symbol() {
-                    bind_param_dynamic(&name, args_list.clone(), &new_env, state);
+                if let Some(id) = params_list.as_symbol_id() {
+                    bind_param_dynamic_id(id, args_list.clone(), &new_env, state);
                 }
                 break;
             }
         };
-        if let Some(name) = param.as_symbol() {
-            match name.as_str() {
-                "&optional" => {
+        if let Some(id) = param.as_symbol_id() {
+            let name = crate::obarray::symbol_name(id);
+            match lambda_keyword(id) {
+                Some("&optional") => {
                     optional = true;
                     params_list = params_rest;
                     continue;
                 }
-                "&rest" | "&body" => {
+                Some("&rest" | "&body") => {
                     rest = true;
                     params_list = params_rest;
                     continue;
                 }
-                "&key" => {
+                Some("&key") => {
                     key_mode = true;
                     params_list = params_rest;
                     continue;
                 }
-                "&allow-other-keys" => {
+                Some("&allow-other-keys") => {
                     params_list = params_rest;
                     continue;
                 }
-                "&aux" => {
+                Some("&aux") => {
                     aux = true;
                     key_mode = false;
                     rest = false;
@@ -103,20 +117,20 @@ pub(crate) fn apply_lambda(
             }
             if aux {
                 let value = LispObject::nil();
-                param_ids.insert(crate::obarray::intern(&name));
-                bind_param_dynamic(&name, value, &new_env, state);
+                param_ids.insert(id);
+                bind_param_dynamic_id(id, value, &new_env, state);
                 params_list = params_rest;
                 continue;
             }
             if key_mode {
-                param_ids.insert(crate::obarray::intern(&name));
-                key_params.push((name, LispObject::nil()));
+                param_ids.insert(id);
+                key_params.push((id, name, LispObject::nil()));
                 params_list = params_rest;
                 continue;
             }
             if rest {
-                param_ids.insert(crate::obarray::intern(&name));
-                bind_param_dynamic(&name, args_list.clone(), &new_env, state);
+                param_ids.insert(id);
+                bind_param_dynamic_id(id, args_list.clone(), &new_env, state);
                 args_list = LispObject::nil();
                 params_list = params_rest;
                 continue;
@@ -132,23 +146,24 @@ pub(crate) fn apply_lambda(
                     }
                 }
             };
-            param_ids.insert(crate::obarray::intern(&name));
-            bind_param_dynamic(&name, arg, &new_env, state);
+            param_ids.insert(id);
+            bind_param_dynamic_id(id, arg, &new_env, state);
             args_list = args_rest;
         } else if aux {
             if let Some((name_obj, init_rest)) = param.destructure_cons()
-                && let Some(name) = name_obj.as_symbol()
+                && let Some(id) = name_obj.as_symbol_id()
             {
                 let init = init_rest.first().unwrap_or(LispObject::nil());
                 let value =
                     value_to_obj(eval(obj_to_value(init), &new_env, editor, macros, state)?);
-                param_ids.insert(crate::obarray::intern(&name));
-                bind_param_dynamic(&name, value, &new_env, state);
+                param_ids.insert(id);
+                bind_param_dynamic_id(id, value, &new_env, state);
             }
         } else if key_mode {
             let (name, default) = super::special_forms::extract_key_param(param);
-            param_ids.insert(crate::obarray::intern(&name));
-            key_params.push((name, default));
+            let id = crate::obarray::intern(&name);
+            param_ids.insert(id);
+            key_params.push((id, name, default));
             params_list = params_rest;
             continue;
         }
@@ -167,7 +182,7 @@ pub(crate) fn apply_lambda(
                 && key_name.starts_with(':')
             {
                 let param_name = &key_name[1..];
-                for (i, (name, _)) in key_params.iter().enumerate() {
+                for (i, (_, name, _)) in key_params.iter().enumerate() {
                     if name == param_name {
                         found[i] = Some(krest.first().unwrap_or(LispObject::nil()));
                         break;
@@ -178,7 +193,7 @@ pub(crate) fn apply_lambda(
             }
             cursor = krest;
         }
-        for (i, (name, default)) in key_params.iter().enumerate() {
+        for (i, (id, name, default)) in key_params.iter().enumerate() {
             if name.is_empty() {
                 continue;
             }
@@ -201,8 +216,8 @@ pub(crate) fn apply_lambda(
                     }
                 }
             };
-            param_ids.insert(crate::obarray::intern(name));
-            bind_param_dynamic(name, value, &new_env, state);
+            param_ids.insert(*id);
+            bind_param_dynamic_id(*id, value, &new_env, state);
         }
     }
     let result = eval_progn(obj_to_value(body.clone()), &new_env, editor, macros, state);
@@ -361,6 +376,11 @@ fn call_function_inner(
             if let Some(result) = crate::primitives_value::try_call_primitive_value(name, args) {
                 crate::primitives_value::inc_fast_hits();
                 return result;
+            }
+            if matches!(name.as_str(), "ignore" | "identity") {
+                crate::primitives::core::stub_telemetry::record_primitive_alias_hit(
+                    name, caller_sym,
+                );
             }
             crate::primitives_value::inc_slow_hits();
             let args_obj = value_to_obj(args);

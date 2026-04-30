@@ -16,6 +16,7 @@ mod predicates;
 pub mod records;
 mod sequence;
 mod string;
+pub mod stub_telemetry;
 mod stubs;
 mod symbol;
 mod time;
@@ -1115,6 +1116,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "field-string-no-properties",
         "minibuffer-prompt-end",
         "gap-position",
+        "gap-size",
         "position-bytes",
         "total-line-spacing",
         "next-single-char-property-change",

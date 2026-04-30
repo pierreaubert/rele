@@ -51,7 +51,9 @@ pub(crate) fn call_stateful_primitive(
         "defalias" => Some(stateful_defalias(args, macros, state)),
         "fset" => Some(stateful_fset(args, state)),
         "eval" => Some(stateful_eval(args, env, editor, macros, state)),
-        "funcall" => Some(stateful_funcall(args, env, editor, macros, state)),
+        "funcall" | "funcall-interactively" => {
+            Some(stateful_funcall(args, env, editor, macros, state))
+        }
         "apply" => Some(stateful_apply(args, env, editor, macros, state)),
         "put" => Some(stateful_put(args, state)),
         "get" => Some(stateful_get(args, state)),
@@ -68,6 +70,7 @@ pub(crate) fn call_stateful_primitive(
         "cl-generic-define-method" => Some(stateful_cl_generic_define_method(args, state)),
         "add-to-list" | "add-to-ordered-list" => Some(stateful_add_to_list(args, env, state)),
         "boundp" => Some(stateful_boundp(args, env, state)),
+        "char-equal" => Some(stateful_char_equal(args, env, state)),
         "fboundp" => Some(stateful_fboundp(args, env, state, macros)),
         "intern" => Some(stateful_intern(args)),
         "intern-soft" => Some(stateful_intern_soft(args, env, state)),
@@ -211,6 +214,36 @@ fn variable_value(
         .get(name)
         .or_else(|| state.get_value_cell(crate::obarray::intern(name)))
         .unwrap_or_else(LispObject::nil)
+}
+
+fn stateful_char_equal(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let a = args
+        .first()
+        .and_then(|value| value.as_integer())
+        .ok_or_else(|| ElispError::WrongTypeArgument("character".into()))?;
+    let b = args
+        .nth(1)
+        .and_then(|value| value.as_integer())
+        .ok_or_else(|| ElispError::WrongTypeArgument("character".into()))?;
+    if a == b {
+        return Ok(LispObject::t());
+    }
+    if variable_value("case-fold-search", env, state).is_nil() {
+        return Ok(LispObject::nil());
+    }
+    let Some(a) = char::from_u32(a as u32) else {
+        return Ok(LispObject::nil());
+    };
+    let Some(b) = char::from_u32(b as u32) else {
+        return Ok(LispObject::nil());
+    };
+    Ok(LispObject::from(
+        a.to_lowercase().to_string() == b.to_lowercase().to_string(),
+    ))
 }
 
 fn stateful_interaction_read(

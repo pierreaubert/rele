@@ -492,8 +492,9 @@ pub fn prim_string_to_char(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::String(s) => s.clone(),
         _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
     };
-    let first_char = s.chars().next().ok_or(ElispError::WrongNumberOfArguments)?;
-    Ok(LispObject::integer(first_char as i64))
+    Ok(LispObject::integer(
+        s.chars().next().map_or(0, |first_char| first_char as i64),
+    ))
 }
 
 pub fn prim_string_width(args: &LispObject) -> ElispResult<LispObject> {
@@ -836,4 +837,23 @@ pub fn prim_split_string(args: &LispObject) -> ElispResult<LispObject> {
         result = LispObject::cons(part, result);
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(items: Vec<LispObject>) -> LispObject {
+        let mut out = LispObject::nil();
+        for item in items.into_iter().rev() {
+            out = LispObject::cons(item, out);
+        }
+        out
+    }
+
+    #[test]
+    fn string_to_char_returns_zero_for_empty_string() {
+        let result = prim_string_to_char(&args(vec![LispObject::string("")])).unwrap();
+        assert_eq!(result, LispObject::integer(0));
+    }
 }

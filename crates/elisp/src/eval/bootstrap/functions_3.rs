@@ -294,6 +294,18 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
     interp.define("erc-nicks-track-faces", LispObject::symbol("prepend"));
     interp.define("erc-d-u--library-directory", LispObject::nil());
     reinstall_runtime_compat(interp);
+    for name in [
+        "mark",
+        "set-mark",
+        "push-mark",
+        "region-active-p",
+        "region-beginning",
+        "region-end",
+        "find-file",
+        "find-file-noselect",
+    ] {
+        interp.define(name, LispObject::primitive(name));
+    }
 }
 
 fn reinstall_runtime_compat(interp: &Interpreter) {

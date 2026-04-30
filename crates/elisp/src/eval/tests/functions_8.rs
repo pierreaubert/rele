@@ -111,6 +111,47 @@ fn test_ert_run_per_test_timeout() {
         .expect("spawn");
     handle.join().expect("join");
 }
+
+#[test]
+fn test_ert_records_runtime_stub_hits() {
+    if !ensure_stdlib_files() {
+        return;
+    }
+    let handle = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let interp = make_stdlib_interp();
+            interp.define(
+                "rele-stubbed",
+                crate::object::LispObject::primitive("ignore"),
+            );
+            interp
+                .eval(read("(ert-deftest rele-stub-hit () (rele-stubbed 1 2))").unwrap())
+                .unwrap();
+            let (_stats, results) = run_rele_ert_tests_detailed(&interp);
+            let row = results
+                .iter()
+                .find(|r| r.name == "rele-stub-hit")
+                .expect("rele-stub-hit missing");
+            assert_eq!(row.result, "pass");
+            assert!(
+                row.stub_hits
+                    .iter()
+                    .any(|hit| hit.name == "rele-stubbed->ignore" && hit.count == 1),
+                "stub hits were {:?}",
+                row.stub_hits,
+            );
+            assert!(
+                row.to_jsonl("stub.el")
+                    .contains(r#""stubs":"rele-stubbed->ignore=1""#),
+                "jsonl row did not include encoded stubs: {}",
+                row.to_jsonl("stub.el"),
+            );
+        })
+        .expect("spawn");
+    handle.join().expect("join");
+}
+
 /// Walk `<emacs>/test/**/*.el` and run every test in every file. Each file
 /// gets a fresh interpreter. Per-test timeout is enforced by `eval-ops`.
 ///

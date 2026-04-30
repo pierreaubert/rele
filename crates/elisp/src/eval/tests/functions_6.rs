@@ -155,6 +155,44 @@ fn test_get_buffer_create() {
     assert_eq!(result, LispObject::string("test"));
 }
 #[test]
+fn test_find_buffer_by_local_value() {
+    crate::buffer::reset();
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let result = interp
+        .eval(
+            read(
+                "(progn
+                   (get-buffer-create \"find-buffer-probe\")
+                   (set-buffer \"find-buffer-probe\")
+                   (setq-local rele-find-buffer-key 42)
+                   (buffer-name (find-buffer 'rele-find-buffer-key 42)))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(result, LispObject::string("find-buffer-probe"));
+}
+#[test]
+fn test_kill_current_buffer_keeps_fallback_buffer() {
+    crate::buffer::reset();
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let result = interp
+        .eval(
+            read(
+                "(progn
+                   (get-buffer-create \"kill-probe\")
+                   (set-buffer \"kill-probe\")
+                   (kill-buffer)
+                   (buffer-name (current-buffer)))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(result, LispObject::string("*scratch*"));
+}
+#[test]
 fn test_buffer_list() {
     let interp = Interpreter::new();
     let result = interp

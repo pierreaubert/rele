@@ -624,6 +624,38 @@ fn test_remaining_did_not_signal_contracts() {
 }
 
 #[test]
+fn test_call_interactively_decodes_args_and_records_history() {
+    let interp = make_stdlib_interp();
+
+    let embedded_nuls = interp
+        .eval(
+            read("(let ((unread-command-events '(?a ?b))) (call-interactively (lambda (a b) (interactive \"ka\\0a: \\nkb: \") (list a b))))")
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(embedded_nuls.princ_to_string(), "(\"a\" \"b\")");
+
+    interp
+        .eval_source(
+            "(defun rele-callint-test-int-args (foo bar &optional zot)
+               (declare (interactive-args (bar 10) (zot 11)))
+               (interactive (list 1 1 1))
+               (+ foo bar zot))",
+        )
+        .unwrap();
+    let history = interp
+        .eval(
+            read("(let ((history-length 1) (command-history nil)) (list (call-interactively 'rele-callint-test-int-args t) command-history))")
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        history.princ_to_string(),
+        "(3 ((rele-callint-test-int-args 1 10 11)))"
+    );
+}
+
+#[test]
 fn test_batched_defun_stubs_resolve_round3() {
     let interp = make_stdlib_interp();
     let cases: &[(&str, &str)] = &[
