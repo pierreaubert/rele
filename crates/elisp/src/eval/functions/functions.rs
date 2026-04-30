@@ -166,6 +166,9 @@ pub(crate) fn call_stateful_primitive(
         "describe-buffer-bindings" => Some(stateful_describe_buffer_bindings(
             args, env, editor, macros, state,
         )),
+        "frame-or-buffer-changed-p" => Some(stateful_frame_or_buffer_changed_p(
+            args, env, editor, macros, state,
+        )),
         "any" => Some(stateful_any(args, env, editor, macros, state)),
         "substitute-command-keys" => Some(stateful_substitute_command_keys(args, state)),
         _ => {
@@ -561,13 +564,18 @@ fn stateful_describe_buffer_bindings(
         state,
     };
     let mut lines = vec![String::from("key             binding\n")];
-    let global_map = state
-        .get_value_cell(crate::obarray::intern("global-map"))
-        .or_else(|| env.read().get("global-map"))
-        .unwrap_or_else(LispObject::nil);
-    collect_described_key_bindings(&global_map, None, &mut lines, &ctx)?;
+    let global_map = variable_value("global-map", env, state);
+    let mut seen = HashSet::new();
+    collect_described_key_bindings(&global_map, None, &mut lines, &ctx, &mut seen)?;
     crate::buffer::with_current_mut(|buffer| buffer.insert(&lines.concat()));
     Ok(LispObject::nil())
+}
+
+fn cons_identity(obj: &LispObject) -> Option<usize> {
+    match obj {
+        LispObject::Cons(cell) => Some(Arc::as_ptr(cell) as usize),
+        _ => None,
+    }
 }
 
 fn is_described_keymap(obj: &LispObject) -> bool {
@@ -634,28 +642,71 @@ fn described_binding_command(
     Ok(Some(command))
 }
 
+fn described_binding_keymap(def: &LispObject) -> Option<LispObject> {
+    if is_described_keymap(def) {
+        return Some(def.clone());
+    }
+    if def.car().and_then(|head| head.as_symbol()).as_deref() == Some("menu-item")
+        && let Some(command) = def.nth(2)
+        && is_described_keymap(&command)
+    {
+        return Some(command);
+    }
+    def.destructure_cons()
+        .and_then(|(_, tail)| is_described_keymap(&tail).then_some(tail))
+}
+
+fn described_command_text(command: &LispObject) -> Option<String> {
+    match command {
+        LispObject::Nil => None,
+        LispObject::Symbol(_) | LispObject::String(_) | LispObject::Primitive(_) => {
+            Some(command.princ_to_string())
+        }
+        LispObject::BytecodeFn(_) => Some(String::from("#<byte-code-function>")),
+        LispObject::Cons(_) => command
+            .car()
+            .and_then(|head| head.as_symbol())
+            .filter(|name| matches!(name.as_str(), "lambda" | "closure"))
+            .map(|name| format!("#{name}")),
+        _ => None,
+    }
+}
+
 fn collect_described_key_bindings(
     map: &LispObject,
     prefix: Option<&str>,
     lines: &mut Vec<String>,
     ctx: &EvalContext<'_>,
+    seen: &mut HashSet<usize>,
 ) -> ElispResult<()> {
     if !is_described_keymap(map) {
         return Ok(());
     }
+    if let Some(ptr) = cons_identity(map)
+        && !seen.insert(ptr)
+    {
+        return Ok(());
+    }
     let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
     while let Some((entry, rest)) = cur.destructure_cons() {
+        if let Some(ptr) = cons_identity(&cur)
+            && !seen.insert(ptr)
+        {
+            break;
+        }
         if is_described_keymap(&entry) {
-            collect_described_key_bindings(&entry, prefix, lines, ctx)?;
+            collect_described_key_bindings(&entry, prefix, lines, ctx, seen)?;
         } else if let Some((key, value)) = entry.destructure_cons() {
             if key.as_symbol().as_deref() == Some(":parent") {
-                collect_described_key_bindings(&value, prefix, lines, ctx)?;
+                collect_described_key_bindings(&value, prefix, lines, ctx, seen)?;
             } else {
                 let key_text = combine_described_key(prefix, &key);
-                if is_described_keymap(&value) {
-                    collect_described_key_bindings(&value, Some(&key_text), lines, ctx)?;
-                } else if let Some(command) = described_binding_command(&value, ctx)? {
-                    lines.push(format!("{key_text:<15} {}\n", command.princ_to_string()));
+                if let Some(submap) = described_binding_keymap(&value) {
+                    collect_described_key_bindings(&submap, Some(&key_text), lines, ctx, seen)?;
+                } else if let Some(command) = described_binding_command(&value, ctx)?
+                    && let Some(command_text) = described_command_text(&command)
+                {
+                    lines.push(format!("{key_text:<15} {command_text}\n"));
                 }
             }
         }
@@ -2400,7 +2451,101 @@ fn stateful_make_hash_table(
     let v = state.heap_hashtable(crate::object::LispHashTable::new(test));
     Ok(value_to_obj(v))
 }
+
+fn frame_buffer_snapshot(state: &InterpreterState) -> LispObject {
+    let mut items = vec![
+        LispObject::cons(LispObject::symbol("frame"), LispObject::integer(0)),
+        LispObject::string("rele"),
+    ];
+
+    crate::buffer::with_registry(|registry| {
+        let mut ids: Vec<_> = registry.buffers.keys().copied().collect();
+        ids.sort_unstable();
+        for id in ids {
+            let Some(buffer) = registry.get(id) else {
+                continue;
+            };
+            if buffer.name.starts_with(' ') {
+                continue;
+            }
+            items.push(crate::primitives_buffer::make_buffer_object(id));
+            items.push(
+                buffer
+                    .locals
+                    .get("buffer-read-only")
+                    .cloned()
+                    .unwrap_or_else(LispObject::nil),
+            );
+            items.push(
+                buffer
+                    .modified_status
+                    .clone()
+                    .unwrap_or_else(LispObject::nil),
+            );
+        }
+    });
+    items.push(LispObject::symbol("lambda"));
+
+    value_to_obj(state.heap_vector_from_objects(&items))
+}
+
+fn frame_buffer_changed_with_internal_state(snapshot: LispObject) -> LispObject {
+    LispObject::from(FRAME_BUFFER_STATE.with(|cell| {
+        let mut current = cell.borrow_mut();
+        if current
+            .as_ref()
+            .is_some_and(|existing| existing == &snapshot)
+        {
+            false
+        } else {
+            *current = Some(snapshot);
+            true
+        }
+    }))
+}
+
+fn stateful_frame_or_buffer_changed_p(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    if args.nth(1).is_some() {
+        return Err(ElispError::WrongNumberOfArguments);
+    }
+
+    let snapshot = frame_buffer_snapshot(state);
+    let Some(variable) = args.first() else {
+        return Ok(frame_buffer_changed_with_internal_state(snapshot));
+    };
+    if variable.is_nil() {
+        return Ok(frame_buffer_changed_with_internal_state(snapshot));
+    }
+
+    let sym_id = variable
+        .as_symbol_id()
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let current = env.read().get_id(sym_id).unwrap_or_else(LispObject::nil);
+    if matches!(current, LispObject::Vector(_)) && current == snapshot {
+        return Ok(LispObject::nil());
+    }
+
+    assign_symbol_value(
+        sym_id,
+        snapshot,
+        env,
+        editor,
+        macros,
+        state,
+        SetOperation::Set,
+    )?;
+    Ok(LispObject::t())
+}
+
 thread_local! {
+    static FRAME_BUFFER_STATE: std::cell::RefCell < Option < LispObject >> =
+        const { std::cell::RefCell::new(None) };
     #[doc = " Names currently inside `source_level_fallback`. If the same"] #[doc =
     " name re-enters, it means the source-level eval dispatch also"] #[doc =
     " funcalls through this name — definitely no implementation; bail"] #[doc =

@@ -1,5 +1,7 @@
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
     match name {
@@ -443,18 +445,35 @@ fn substitute_definition_in_map(map: &LispObject, olddef: &LispObject, newdef: &
     }
 }
 
-fn deep_copy(obj: &LispObject) -> LispObject {
+fn deep_copy_seen(obj: &LispObject, seen: &mut HashMap<usize, LispObject>) -> LispObject {
     match obj {
-        LispObject::Cons(_) => {
-            let car = obj.car().unwrap_or_else(LispObject::nil);
-            let cdr = obj.cdr().unwrap_or_else(LispObject::nil);
-            LispObject::cons(deep_copy(&car), deep_copy(&cdr))
+        LispObject::Cons(cell) => {
+            let ptr = Arc::as_ptr(cell) as usize;
+            if let Some(existing) = seen.get(&ptr) {
+                return existing.clone();
+            }
+            let copy = LispObject::cons(LispObject::nil(), LispObject::nil());
+            seen.insert(ptr, copy.clone());
+            let (car, cdr) = cell.lock().clone();
+            copy.set_car(deep_copy_seen(&car, seen));
+            copy.set_cdr(deep_copy_seen(&cdr, seen));
+            copy
         }
-        LispObject::Vector(v) => LispObject::Vector(std::sync::Arc::new(
-            crate::eval::SyncRefCell::new(v.lock().iter().map(deep_copy).collect()),
-        )),
+        LispObject::Vector(v) => {
+            LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(
+                v.lock()
+                    .iter()
+                    .map(|item| deep_copy_seen(item, seen))
+                    .collect(),
+            )))
+        }
         _ => obj.clone(),
     }
+}
+
+fn deep_copy(obj: &LispObject) -> LispObject {
+    let mut seen = HashMap::new();
+    deep_copy_seen(obj, &mut seen)
 }
 
 pub fn prim_make_sparse_keymap(args: &LispObject) -> ElispResult<LispObject> {

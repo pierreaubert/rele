@@ -3,6 +3,111 @@
 Append-only — newest entries at top. Each session: what changed, what
 landed, what to look at next.
 
+## 2026-04-30 - frame-or-buffer-changed-p implementation
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --test window_display_headless -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --lib -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/keymap-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py
+python3 crates/elisp/ert-progress/stub_inventory.py -o crates/elisp/ert-progress/stub_inventory_baseline.tsv --quiet
+python3 crates/elisp/ert-progress/stub_inventory.py --check
+```
+
+**Movement:**
+
+- Source-derived stub inventory moved from `779` records to `778`.
+  `window/display` moved from `84` records to `83`.
+- Full tracked refresh stayed at `892` pass / `120` fail / `23` err /
+  `128` skip (`76%`).
+- `keymap-tests.el` stayed at `22` pass, `25` fail, `0` err, `0` skip,
+  but no longer reports `frame-or-buffer-changed-p` as a runtime stub hit.
+
+**Code landed:**
+
+- Implemented stateful `frame-or-buffer-changed-p` with an internal
+  frame/buffer snapshot and support for updating an optional state
+  variable.
+- Moved the primitive into the headless window/display registration and
+  removed the old nil stub from `core/stubs.rs`.
+- Added headless window tests covering initial change detection, stable
+  unchanged detection, visible buffer creation, and hidden temp-buffer
+  exclusion.
+
+**Validation:**
+
+- `window_display_headless`: `8` passed.
+- `rele-elisp` library tests: `534` passed, `3` ignored.
+- Stub inventory gate passed with `778` records.
+- Full ERT snapshot: `892` pass, `120` fail, `23` err, `128` skip
+  (`76%`).
+
+**Next leverage targets:**
+
+1. `describe-buffer-bindings/header-in-current-buffer` is now a semantic
+   output assertion, not a runtime-stub failure.
+2. `text-char-description` is the remaining compact keymap runtime stub.
+3. Larger keymap failures remain concentrated around menu-vector table
+   shape, mixed-case lookup, and help shadow formatting.
+
+## 2026-04-30 - Keymap stack overflow guard
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --test other_runtime_primitives -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --lib -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py /Volumes/home_ext1/Src/emacs/test/src/keymap-tests.el
+CARGO_TARGET_DIR=tmp/cargo-target PER_TEST_MS=2000 PER_FILE_TIMEOUT=60 python3 crates/elisp/ert-progress/refresh.py
+CARGO_TARGET_DIR=tmp/cargo-target cargo fmt --check
+python3 crates/elisp/ert-progress/stub_inventory.py -o crates/elisp/ert-progress/stub_inventory_baseline.tsv --quiet
+python3 crates/elisp/ert-progress/stub_inventory.py --check
+```
+
+**Movement:**
+
+- Full tracked refresh moved from `887` pass / `123` fail / `25` err /
+  `128` skip (`76%`) to `892` pass / `120` fail / `23` err / `128`
+  skip (`76%`).
+- `keymap-tests.el` no longer aborts the worker. It now reports `22`
+  pass, `25` fail, `0` err, `0` skip.
+- `coding-tests.el` is reflected in the full dashboard at `14` pass,
+  `13` fail, `0` err, `1` skip after the previous coding stub work.
+- `terminal-tests.el` is now `1` pass, `0` fail, `0` err.
+- `xdisp-tests.el` is now `9` pass, `1` fail, `0` err.
+
+**Code landed:**
+
+- Made `describe-buffer-bindings` cycle-aware when walking bootstrap
+  keymaps, including prefix/menu entries that wrap submaps.
+- Avoided printing cyclic command objects during binding description;
+  command-like leaves still render, while complex non-command objects are
+  skipped.
+- Made `copy-keymap` preserve cyclic cons structure through a memoized
+  copy, and made Lisp `equal` cycle-aware for conses, vectors, and hash
+  tables.
+- Added a nil bootstrap default for `vc-mode`, which converts the
+  describe-buffer-bindings keymap tests from void-variable errors into
+  ordinary assertion results.
+
+**Validation:**
+
+- `other_runtime_primitives`: `9` passed.
+- `rele-elisp` library tests: `534` passed, `3` ignored.
+- Stub inventory gate passed with `779` records unchanged.
+- Full ERT snapshot: `892` pass, `120` fail, `23` err, `128` skip
+  (`76%`).
+
+**Next leverage targets:**
+
+1. `frame-or-buffer-changed-p` is now the top keymap-related runtime stub
+   affecting a failing describe-buffer-bindings assertion.
+2. `text-char-description` is a compact remaining keymap/runtime stub.
+3. Larger keymap semantic failures are now ordinary assertions around menu
+   vector shapes, mixed-case lookup, and help shadow formatting.
+
 ## 2026-04-30 - String/coding/window stub pass
 
 **Commands run:**

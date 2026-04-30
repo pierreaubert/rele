@@ -85,6 +85,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("symbol-with-pos-p", LispObject::primitive("ignore"));
     interp.define("byte-run--ssp-seen", LispObject::nil());
     interp.define("mapbacktrace", LispObject::nil());
+    interp.define("vc-mode", LispObject::nil());
     interp.define("byte-compile-macro-environment", LispObject::nil());
     interp.define("macro-declaration-function", LispObject::nil());
     interp.define("byte-run--set-speed", LispObject::nil());

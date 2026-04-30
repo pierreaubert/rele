@@ -1,5 +1,7 @@
 use crate::error::{ElispError, ElispResult};
-use crate::object::LispObject;
+use crate::object::{HashKey, LispObject};
+use std::collections::HashSet;
+use std::sync::Arc;
 
 pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
     match name {
@@ -119,7 +121,96 @@ pub fn prim_equal(args: &LispObject) -> ElispResult<LispObject> {
     if let Some(equal) = overlays_equal(&a, &b) {
         return Ok(LispObject::from(equal));
     }
-    Ok(LispObject::from(a == b))
+    let mut seen = HashSet::new();
+    Ok(LispObject::from(lisp_equal_seen(&a, &b, &mut seen)))
+}
+
+fn lisp_identity(obj: &LispObject) -> Option<(u8, usize)> {
+    match obj {
+        LispObject::Cons(cell) => Some((0, Arc::as_ptr(cell) as usize)),
+        LispObject::Vector(items) => Some((1, Arc::as_ptr(items) as usize)),
+        LispObject::HashTable(table) => Some((2, Arc::as_ptr(table) as usize)),
+        _ => None,
+    }
+}
+
+fn seen_equal_pair(
+    a: &LispObject,
+    b: &LispObject,
+    seen: &mut HashSet<((u8, usize), (u8, usize))>,
+) -> bool {
+    let Some(a_id) = lisp_identity(a) else {
+        return false;
+    };
+    let Some(b_id) = lisp_identity(b) else {
+        return false;
+    };
+    !seen.insert((a_id, b_id))
+}
+
+fn lisp_equal_seen(
+    a: &LispObject,
+    b: &LispObject,
+    seen: &mut HashSet<((u8, usize), (u8, usize))>,
+) -> bool {
+    if seen_equal_pair(a, b, seen) {
+        return true;
+    }
+    match (a, b) {
+        (LispObject::Nil, LispObject::Nil) | (LispObject::T, LispObject::T) => true,
+        (LispObject::Symbol(a), LispObject::Symbol(b)) => a == b,
+        (LispObject::Integer(a), LispObject::Integer(b)) => a == b,
+        (LispObject::BigInt(a), LispObject::BigInt(b)) => a == b,
+        (LispObject::Integer(a), LispObject::BigInt(b))
+        | (LispObject::BigInt(b), LispObject::Integer(a)) => num_bigint::BigInt::from(*a) == *b,
+        (LispObject::Float(a), LispObject::Float(b)) => a == b,
+        (LispObject::String(a), LispObject::String(b)) => {
+            crate::object::current_string_value(a) == crate::object::current_string_value(b)
+        }
+        (LispObject::Primitive(a), LispObject::Primitive(b)) => a == b,
+        (LispObject::BytecodeFn(a), LispObject::BytecodeFn(b)) => a == b,
+        (LispObject::Cons(a_cell), LispObject::Cons(b_cell)) => {
+            if Arc::ptr_eq(a_cell, b_cell) {
+                return true;
+            }
+            let (a_car, a_cdr) = a_cell.lock().clone();
+            let (b_car, b_cdr) = b_cell.lock().clone();
+            lisp_equal_seen(&a_car, &b_car, seen) && lisp_equal_seen(&a_cdr, &b_cdr, seen)
+        }
+        (LispObject::Vector(a_items), LispObject::Vector(b_items)) => {
+            if Arc::ptr_eq(a_items, b_items) {
+                return true;
+            }
+            let a_guard = a_items.lock();
+            let b_guard = b_items.lock();
+            a_guard.len() == b_guard.len()
+                && a_guard
+                    .iter()
+                    .zip(b_guard.iter())
+                    .all(|(a, b)| lisp_equal_seen(a, b, seen))
+        }
+        (LispObject::HashTable(a_table), LispObject::HashTable(b_table)) => {
+            if Arc::ptr_eq(a_table, b_table) {
+                return true;
+            }
+            let a_guard = a_table.lock();
+            let b_guard = b_table.lock();
+            a_guard.test == b_guard.test
+                && a_guard.data.len() == b_guard.data.len()
+                && a_guard.data.iter().all(|(key, a_value)| {
+                    hash_value_for_key(&b_guard.data, key)
+                        .is_some_and(|b_value| lisp_equal_seen(a_value, b_value, seen))
+                })
+        }
+        _ => false,
+    }
+}
+
+fn hash_value_for_key<'a>(
+    data: &'a std::collections::HashMap<HashKey, LispObject>,
+    key: &HashKey,
+) -> Option<&'a LispObject> {
+    data.get(key)
 }
 
 fn overlays_equal(a: &LispObject, b: &LispObject) -> Option<bool> {

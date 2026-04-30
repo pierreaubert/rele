@@ -63,6 +63,41 @@ fn window_dedication_round_trips_on_single_headless_window() {
 }
 
 #[test]
+fn frame_or_buffer_changed_tracks_headless_state() {
+    let interp = make_stdlib_interp();
+    assert_eq!(
+        eval_princ(
+            &interp,
+            "(let ((state nil))
+               (list (frame-or-buffer-changed-p 'state)
+                     (vectorp state)
+                     (frame-or-buffer-changed-p 'state)))",
+        ),
+        "(t t nil)",
+    );
+    assert_eq!(
+        eval_princ(
+            &interp,
+            "(let ((state nil))
+               (frame-or-buffer-changed-p 'state)
+               (get-buffer-create \"frame-buffer-state-test\")
+               (frame-or-buffer-changed-p 'state))",
+        ),
+        "t",
+    );
+    assert_eq!(
+        eval_princ(
+            &interp,
+            "(let ((state nil))
+               (frame-or-buffer-changed-p 'state)
+               (with-temp-buffer
+                 (frame-or-buffer-changed-p 'state)))",
+        ),
+        "nil",
+    );
+}
+
+#[test]
 fn window_text_pixel_size_uses_virtual_cell_metrics() {
     let interp = make_stdlib_interp();
     assert_eq!(

@@ -96,6 +96,33 @@ fn describe_buffer_bindings_writes_header_and_visible_menu_items() {
 }
 
 #[test]
+fn describe_buffer_bindings_handles_cyclic_prefix_maps() {
+    assert_eq!(
+        eval_string(
+            "(let ((global-map (make-sparse-keymap)))
+               (define-key global-map (kbd \"C-c\") (cons \"Prefix\" global-map))
+               (with-temp-buffer
+                 (describe-buffer-bindings (current-buffer))
+                 (goto-char (point-min))
+                 (not (null (search-forward \"key             binding\" nil t)))))",
+        ),
+        "t",
+    );
+}
+
+#[test]
+fn copy_keymap_and_equal_handle_cyclic_keymaps() {
+    assert_eq!(
+        eval_string(
+            "(let ((map (make-sparse-keymap)))
+               (setcdr map (cons map nil))
+               (equal (copy-keymap map) map))",
+        ),
+        "t",
+    );
+}
+
+#[test]
 fn read_string_runs_minibuffer_setup_hook() {
     assert_eq!(
         eval_string(

@@ -656,7 +656,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "posn-timestamp",
         "posn-image",
         "posn-object-width-height",
-        "frame-or-buffer-changed-p",
         "keyboard-quit",
         "abort-minibuffers",
         "minibuffer-message",

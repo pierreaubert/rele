@@ -762,6 +762,10 @@ pub fn prim_redisplay(_args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::nil())
 }
 
+pub fn prim_frame_or_buffer_changed_p(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::t())
+}
+
 pub fn prim_frame_pixel_width(_args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::integer(frame_pixel_width()))
 }
@@ -1532,6 +1536,7 @@ pub fn call_window_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         | "display-images-p"
         | "display-popup-menus-p" => prim_display_predicate(args),
         "redisplay" | "force-mode-line-update" => prim_redisplay(args),
+        "frame-or-buffer-changed-p" => prim_frame_or_buffer_changed_p(args),
         "frame-pixel-width" | "frame-native-width" => prim_frame_pixel_width(args),
         "frame-pixel-height" | "frame-native-height" => prim_frame_pixel_height(args),
         "frame-width" | "frame-text-cols" => prim_frame_width(args),
@@ -1748,6 +1753,7 @@ pub const WINDOW_PRIMITIVE_NAMES: &[&str] = &[
     "display-popup-menus-p",
     "redisplay",
     "force-mode-line-update",
+    "frame-or-buffer-changed-p",
     "frame-pixel-width",
     "frame-pixel-height",
     "frame-width",

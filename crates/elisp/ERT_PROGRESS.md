@@ -30,7 +30,7 @@ that a single fix will close.
 ## Per-file snapshot
 
 Last refreshed: **2026-04-30**, target: `ert-progress/tractable.list`.
-Current total: **887 pass / 123 fail / 25 err / 128 skip** (`76%`).
+Current total: **892 pass / 120 fail / 23 err / 128 skip** (`76%`).
 
 | File                       | Pass | Fail | Err | Skip | Pct  | Notes |
 |----------------------------|-----:|-----:|----:|-----:|-----:|-------|
@@ -43,7 +43,7 @@ Current total: **887 pass / 123 fail / 25 err / 128 skip** (`76%`).
 | charset-tests.el           |   14 |    6 |   1 |    0 |  67% | lightweight charset tables |
 | chartab-tests.el           |    6 |    0 |   0 |    0 | 100% | |
 | cmds-tests.el              |    2 |    0 |   0 |    0 | 100% | |
-| coding-tests.el            |   12 |   15 |   0 |    1 |  43% | coding systems |
+| coding-tests.el            |   14 |   13 |   0 |    1 |  50% | coding systems |
 | data-tests.el              |   74 |    3 |   0 |    2 |  94% | format edge cases |
 | decompress-tests.el        |    0 |    0 |   0 |    1 |   0% | needs zlib |
 | doc-tests.el               |    2 |    3 |   0 |    0 |  40% | documentation semantics need follow-up |
@@ -56,7 +56,7 @@ Current total: **887 pass / 123 fail / 25 err / 128 skip** (`76%`).
 | inotify-tests.el           |    0 |    0 |   0 |    3 |   0% | needs inotify |
 | json-tests.el              |   17 |    7 |   1 |    0 |  68% | JSON encode/decode |
 | keyboard-tests.el          |    1 |    2 |   0 |    0 |  33% | |
-| keymap-tests.el            |   21 |   25 |   1 |    0 |  45% | keymap/help traversal improved |
+| keymap-tests.el            |   22 |   25 |   0 |    0 |  47% | cyclic keymap traversal no longer aborts |
 | lcms-tests.el              |    0 |    0 |   0 |    6 |   0% | needs lcms |
 | lread-tests.el             |   42 |   12 |   4 |    0 |  72% | reader edge cases |
 | marker-tests.el            |    3 |    5 |   4 |    0 |  25% | marker semantics |
@@ -66,27 +66,14 @@ Current total: **887 pass / 123 fail / 25 err / 128 skip** (`76%`).
 | search-tests.el            |    0 |    1 |   0 |    0 |   0% | |
 | sqlite-tests.el            |    0 |    0 |   0 |   12 |   0% | needs sqlite |
 | syntax-tests.el            |   98 |    0 |   2 |    0 |  98% | char-syntax edge cases |
-| terminal-tests.el          |    0 |    0 |   1 |    0 |   0% | |
+| terminal-tests.el          |    1 |    0 |   0 |    0 | 100% | |
 | textprop-tests.el          |    1 |    1 |   0 |    0 |  50% | |
 | thread-tests.el            |    0 |    0 |   1 |   36 |   0% | needs threads |
 | treesit-tests.el           |    1 |    2 |   0 |   35 |   3% | needs tree-sitter |
 | undo-tests.el              |   16 |    0 |   1 |    0 |  94% | one new error after text-property pass |
-| xdisp-tests.el             |    8 |    2 |   0 |    0 |  80% | bidi/display-property paths improved |
+| xdisp-tests.el             |    9 |    1 |   0 |    0 |  90% | bidi/display-property paths improved |
 | xfaces-tests.el            |    2 |    1 |   0 |    0 |  67% | faces |
 | xml-tests.el               |    0 |    1 |   0 |    0 |   0% | needs libxml |
-
-### Targeted follow-up after snapshot
-
-The full-suite total above has not been rerun after the latest
-string/coding/window stub pass. Targeted runs after that pass show:
-
-| File              | Result | Notes |
-|-------------------|--------|-------|
-| xdisp-tests.el    | 9 pass / 1 fail / 0 err / 0 skip | `read-string` now runs minibuffer setup hooks |
-| terminal-tests.el | 1 pass / 0 fail / 0 err / 0 skip | single headless terminal object is live |
-| coding-tests.el   | 14 pass / 13 fail / 0 err / 1 skip | `detect-coding-string` and unibyte string stubs removed from hit path |
-| buffer-tests.el   | 408 pass / 1 fail / 0 err / 1 skip | `delete-file-internal` no longer hits a stub |
-| undo-tests.el     | 16 pass / 0 fail / 1 err / 0 skip | `recent-auto-save-p` no longer hits a stub |
 
 ## Top leverage targets (2026-04-30)
 
@@ -102,23 +89,34 @@ current by running `./ert-progress/refresh.sh` before tackling.
 |  2 | `ASSERT: iso-charset ascii` in charset-tests.el | charset equivalence/declaration model |
 |  2 | `ASSERT: keymap make-keymap` in keymap-tests.el | menu-vector table shape |
 |  2 | `ASSERT: keymap lookup mixed case` in keymap-tests.el | menu-vector and key normalization |
-|  2 | `WRONG_N_ARGS` in keymap-tests.el | keymaps-for-keymap/window argument handling |
+|  2 | `ASSERT: keymap help describe-vector` in keymap-tests.el | shadow range description formatting |
 |  2 | `ASSERT: marker buffer/window semantics` in marker-tests.el | marker/window-buffer compatibility |
 
 ## Runtime stub hits (2026-04-30)
 
 `refresh.sh` records stub/no-op primitive calls per ERT test and ranks them
-by failing/erroring tests affected. The last full refresh predates the
-latest targeted pass, so rerun a full refresh before treating runtime hit
-rankings as authoritative.
-
-The source-derived inventory currently classifies `779` records:
-`editing/regions=37`, `window/display=84`, `keymap/help=26`, `other=632`.
-By status: `needs-classification=556`, `runtime-missing=218`,
+by failing/erroring tests affected. The source-derived inventory currently
+classifies `778` records:
+`editing/regions=37`, `window/display=83`, `keymap/help=26`, `other=632`.
+By status: `needs-classification=555`, `runtime-missing=218`,
 `compat-identity=5`.
 
-Removed from the source inventory in the latest pass:
+Top runtime stub hits from the latest full refresh:
+
+| Bad tests | Hits | Bucket | Stub | Example |
+|----------:|-----:|--------|------|---------|
+| 2 | 2 | other | `make-thread` | `thread-tests.el::threads-test-bug33073` |
+| 1 | 2035957 | other | `thread-yield` | `thread-tests.el::threads-test-bug48990` |
+| 1 | 2 | other | `lossage-size` | `keyboard-tests.el::keyboard-lossage-size` |
+| 1 | 2 | other | `check-coding-systems-region` | `coding-tests.el::coding-check-coding-systems-region` |
+| 1 | 1 | other | `upcase-word` | `casefiddle-tests.el::casefiddle-tests-casing-word` |
+| 1 | 1 | other | `text-char-description` | `keymap-tests.el::keymap-text-char-description` |
+| 1 | 1 | other | `split-char` | `charset-tests.el::charset-tests--split-char` |
+| 1 | 1 | other | `libxml-parse-xml-region` | `xml-tests.el::libxml-tests` |
+
+Removed from the source inventory in the latest stub pass:
 `describe-buffer-bindings`, `detect-coding-string`, `delete-file-internal`,
+`frame-or-buffer-changed-p`,
 `read-string`, `recent-auto-save-p`, `string-as-unibyte`,
 `string-to-unibyte`, `string-make-unibyte`, `string-as-multibyte`,
 `string-to-multibyte`, `string-make-multibyte`, `terminal-list`,
