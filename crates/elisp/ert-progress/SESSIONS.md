@@ -922,3 +922,55 @@ CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elis
    remaining `WRONG_N_ARGS` callint cases.
 3. Model `select-active-regions` / mark-active selection policy before
    returning to undo tests.
+
+## 2026-04-30 — Clean process-tests supportable cases
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib test_cl_defstruct_type_vector_setf_accessor -- --nocapture
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib test_push_pop_generated_symbol_place -- --nocapture
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh /Volumes/home_ext1/Src/emacs/test/src/process-tests.el
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target cargo test -p rele-elisp --lib
+CARGO_TARGET_DIR=/Users/pierre/src/rele/tmp/codex-target ./ert-progress/refresh.sh
+```
+
+**Movement:**
+
+- `process-tests.el` now has no failures or errors: `12` pass, `0`
+  fail, `0` err, `27` skip.
+- The old vector `timerp` process bucket is gone from the global top
+  patterns.
+- The full tracked refresh is now `795` pass, `185` fail, `55` err,
+  `129` skip (`68%`).
+
+**Code landed:**
+
+- Vector-backed `cl-defstruct (:type vector)` timers now match the
+  shape expected by upstream `timer.el`, unblocking `with-timeout`
+  wrappers in `process-tests.el`.
+- Headless process objects now cover the supportable process metadata,
+  sentinels, filters, pipe objects, and numeric address lookup contracts
+  needed by the file.
+- `push` and `pop` now preserve `make-symbol` identity by reading and
+  writing symbol IDs instead of names. This lets macro-generated
+  variables in the FD-setsize helper accumulate the created pipe
+  process list.
+- Added `test_push_pop_generated_symbol_place` and kept
+  `test_cl_defstruct_type_vector_setf_accessor` as focused regressions.
+
+**Refresh snapshot:**
+
+- Total: `795` pass, `185` fail, `55` err, `129` skip (`68%`).
+- Top patterns now: syntax `open-pos` assertions (`8`),
+  `WRONG_N_ARGS` (`6`), `select-active-regions` void var (`5`), undo
+  `user-error` cases (`4`), and multibyte/string/numeric edge buckets
+  at `3` each.
+
+**Next leverage targets:**
+
+1. Continue syntax `syntax-ppss` open-position tracking.
+2. Improve `call-interactively` and related argument decoding for the
+   remaining `WRONG_N_ARGS` bucket.
+3. Model `select-active-regions` / mark-active selection policy for the
+   undo tests.

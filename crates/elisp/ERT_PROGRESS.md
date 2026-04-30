@@ -28,52 +28,52 @@ that a single fix will close.
 
 ## Per-file snapshot
 
-Last refreshed: **2026-04-27**, target: `<emacs>/test/src/`.
+Last refreshed: **2026-04-30**, target: `ert-progress/tractable.list`.
 
 | File                       | Pass | Fail | Err | Skip | Pct  | Notes |
 |----------------------------|-----:|-----:|----:|-----:|-----:|-------|
 | alloc-tests.el             |    4 |    0 |   0 |    0 | 100% | |
-| buffer-tests.el            |  410 |    0 |   0 |    1 | 100% | |
-| callint-tests.el           |    0 |    2 |   2 |    0 |   0% | call-interactively edge cases |
-| casefiddle-tests.el        |    0 |    5 |   5 |    1 |   0% | case tables |
+| buffer-tests.el            |  408 |    1 |   0 |    1 | 100% | |
+| callint-tests.el           |    1 |    1 |   2 |    0 |  25% | call-interactively edge cases |
+| casefiddle-tests.el        |    1 |    4 |   5 |    1 |   9% | case tables |
 | category-tests.el          |    1 |    4 |   1 |    0 |  17% | category tables |
 | character-tests.el         |    3 |    0 |   0 |    0 | 100% | |
-| charset-tests.el           |    3 |   17 |   0 |    1 |  14% | charset infrastructure |
+| charset-tests.el           |    5 |   15 |   0 |    1 |  24% | charset infrastructure |
 | chartab-tests.el           |    6 |    0 |   0 |    0 | 100% | |
-| cmds-tests.el              |    1 |    0 |   1 |    0 |  50% | bignum forward-line |
-| coding-tests.el            |    8 |   19 |   0 |    1 |  29% | coding systems |
+| cmds-tests.el              |    2 |    0 |   0 |    0 | 100% | |
+| coding-tests.el            |   11 |   16 |   0 |    1 |  39% | coding systems |
 | data-tests.el              |   74 |    3 |   0 |    2 |  94% | format edge cases |
 | decompress-tests.el        |    0 |    0 |   0 |    1 |   0% | needs zlib |
 | doc-tests.el               |    3 |    2 |   0 |    0 |  60% | autoloadp recognition |
-| editfns-tests.el           |    6 |   37 |  14 |    0 |  11% | format spec, missing fns |
-| eval-tests.el              |    ? |    ? |   ? |    ? |    ? | runs slow; not in last sweep |
-| floatfns-tests.el          |    ? |    ? |   ? |    ? |    ? | not in last sweep |
+| editfns-tests.el           |   10 |   38 |   9 |    0 |  18% | format spec, missing fns |
+| eval-tests.el              |    ? |    ? |   ? |    ? |    ? | no results emitted in last sweep |
+| floatfns-tests.el          |   28 |    2 |   3 |    0 |  85% | bignum edge cases |
 | font-tests.el              |    0 |    2 |   0 |    0 |   0% | |
 | image-tests.el             |    3 |    0 |   0 |    2 |  60% | |
 | indent-tests.el            |    0 |    3 |   0 |    0 |   0% | |
 | inotify-tests.el           |    0 |    0 |   0 |    3 |   0% | needs inotify |
-| json-tests.el              |    0 |   24 |   1 |    0 |   0% | JSON encode/decode |
-| keyboard-tests.el          |    0 |    3 |   0 |    0 |   0% | |
-| keymap-tests.el            |    8 |   36 |   4 |    0 |  17% | keymap manipulation |
+| json-tests.el              |   17 |    6 |   2 |    0 |  68% | JSON encode/decode |
+| keyboard-tests.el          |    1 |    2 |   0 |    0 |  33% | |
+| keymap-tests.el            |    8 |   35 |   4 |    0 |  17% | keymap manipulation |
 | lcms-tests.el              |    0 |    0 |   0 |    6 |   0% | needs lcms |
-| lread-tests.el             |   18 |   35 |   5 |    0 |  31% | reader edge cases |
-| marker-tests.el            |    4 |    6 |   2 |    0 |  33% | marker semantics |
-| minibuf-tests.el           |   60 |    6 |   0 |    0 |  91% | obarray-predicate, ignore-case |
-| process-tests.el           |    2 |    3 |  12 |   22 |   5% | subprocess (mostly skipped) |
+| lread-tests.el             |   42 |   12 |   4 |    0 |  72% | reader edge cases |
+| marker-tests.el            |    3 |    5 |   4 |    0 |  25% | marker semantics |
+| minibuf-tests.el           |   61 |    5 |   0 |    0 |  92% | obarray-predicate, ignore-case |
+| process-tests.el           |   12 |    0 |   0 |   27 |  31% | supportable headless cases pass |
 | profiler-tests.el          |    0 |    0 |   1 |    1 |   0% | |
 | search-tests.el            |    0 |    1 |   0 |    0 |   0% | |
 | sqlite-tests.el            |    0 |    0 |   0 |   12 |   0% | needs sqlite |
-| syntax-tests.el            |   20 |   16 |  64 |    0 |  20% | parse-partial-sexp |
+| syntax-tests.el            |   86 |   13 |   1 |    0 |  86% | parse-partial-sexp |
 | terminal-tests.el          |    0 |    0 |   1 |    0 |   0% | |
 | textprop-tests.el          |    1 |    1 |   0 |    0 |  50% | |
 | thread-tests.el            |    0 |    0 |   1 |   36 |   0% | needs threads |
 | treesit-tests.el           |    1 |    2 |   0 |   35 |   3% | needs tree-sitter |
 | undo-tests.el              |    0 |    4 |  14 |    0 |   0% | undo machinery |
 | xdisp-tests.el             |    1 |    6 |   3 |    0 |  10% | display engine |
-| xfaces-tests.el            |    1 |    2 |   0 |    0 |  33% | faces |
+| xfaces-tests.el            |    2 |    1 |   0 |    0 |  67% | faces |
 | xml-tests.el               |    0 |    1 |   0 |    0 |   0% | needs libxml |
 
-## Top leverage targets (2026-04-27)
+## Top leverage targets (2026-04-30)
 
 These are the failure patterns ranked by impact. A single fix at any of
 these unblocks the listed count of tests at once. Verify the count is still
@@ -81,15 +81,16 @@ current by running `./ert-progress/refresh.sh` before tackling.
 
 | Tests | Pattern | Likely cause |
 |------:|---------|--------------|
-| 64 | `WRONG_TYPE_INTEGER` in syntax-tests.el | `parse-partial-sexp` over Pascal-style syntax tables |
-| 21 | `DID_NOT_SIGNAL` in lread-tests.el | reader doesn't validate as many invalid syntaxes as Emacs |
-| 21 | `ASSERT: try-completion …` in keymap-tests.el | menu-bar / `where-is-internal` lookups |
-| 14 | `ASSERT: ((equal (try-completion …))` (residual minibuf) | obarray-predicate, ignore-case |
-| 13 | various format `%b` / `%#x` / `%n$` patterns in editfns-tests.el | `format` specifier set incomplete |
-| 10 | `signal wrong-type-argument: (timerp …)` | `timerp` recognising vector timer objects |
-|  6 | `(memq (quote ascii) charsets)` etc. in charset-tests.el | charset registry not populated |
-|  5 | `where-is-internal` in keymap-tests.el | reverse keymap lookup |
-|  3 | `bidi-find-overridden-directionality` | not implemented |
+|  8 | `ASSERT: ((eq (point) open-pos))` in syntax-tests.el | `syntax-ppss` comment open-position tracking |
+|  6 | `WRONG_N_ARGS` in callint/editfns/lread tests | argument decoding and arity edge cases |
+|  5 | `VOID_VAR: select-active-regions` in undo-tests.el | mark/selection policy variables not modeled |
+|  4 | `SIGNAL: user-error` in undo-tests.el | undo boundary/history semantics |
+|  3 | `WRONG_TYPE_STRING` in casefiddle/lread tests | string-vs-char validation |
+|  3 | `VOID_VAR: enable-multibyte-characters` | buffer multibyte state missing |
+|  3 | `WRONG_TYPE_INTEGER` in floatfns-tests.el | bignum numeric edge cases |
+|  3 | `VOID_VAR: help-mode-map` in keymap-tests.el | help-mode keymap bootstrap |
+|  3 | `VOID_VAR: funs` in undo-tests.el | undo helper lexical/closure binding |
+|  3 | `ASSERT: division by zero` in xdisp-tests.el | display geometry stubs |
 
 ## Skip rationale
 

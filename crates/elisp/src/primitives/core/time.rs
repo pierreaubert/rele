@@ -91,6 +91,34 @@ fn prim_time_convert(args: &LispObject) -> ElispResult<LispObject> {
     let t = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let secs =
         time_to_seconds(&t).ok_or_else(|| ElispError::WrongTypeArgument("time".to_string()))?;
+    let form = args.nth(1).unwrap_or_else(LispObject::nil);
+    if form.as_symbol().as_deref() == Some("list") {
+        let whole = secs.trunc() as i64;
+        let high = whole >> 16;
+        let low = whole & 0xffff;
+        let usec = ((secs - whole as f64) * 1_000_000.0).round() as i64;
+        return Ok(LispObject::cons(
+            LispObject::integer(high),
+            LispObject::cons(
+                LispObject::integer(low),
+                LispObject::cons(
+                    LispObject::integer(usec),
+                    LispObject::cons(LispObject::integer(0), LispObject::nil()),
+                ),
+            ),
+        ));
+    }
+    if form.as_symbol().as_deref() == Some("integer") || form.is_t() {
+        return Ok(LispObject::integer(secs.trunc() as i64));
+    }
+    if let Some(hz) = form.as_integer()
+        && hz > 0
+    {
+        return Ok(LispObject::cons(
+            LispObject::integer((secs * hz as f64).round() as i64),
+            LispObject::integer(hz),
+        ));
+    }
     Ok(LispObject::float(secs))
 }
 

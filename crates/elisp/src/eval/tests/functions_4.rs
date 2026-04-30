@@ -568,6 +568,81 @@ fn test_cl_defstruct_with_options() {
     assert_eq!(s, LispObject::integer(200));
 }
 #[test]
+fn test_cl_defstruct_type_vector_setf_accessor() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let result = interp
+        .eval(
+            read(
+                r#"(progn
+                     (cl-defstruct (timer
+                                    (:constructor timer--create ())
+                                    (:type vector)
+                                    (:conc-name timer--))
+                       (triggered t)
+                       high-seconds low-seconds usecs)
+                     (let ((timer (timer--create)))
+                       (setf (timer--high-seconds timer) 12)
+                       (list (length timer)
+                             (timer--triggered timer)
+                             (timer--high-seconds timer))))"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(result.princ_to_string(), "(4 t 12)",);
+}
+#[test]
+fn test_push_pop_generated_symbol_place() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let result = interp
+        .eval(
+            read(
+                r#"(progn
+                     (defmacro rele-with-generated-list ()
+                       (let ((items (make-symbol "items"))
+                             (first (make-symbol "first"))
+                             (second (make-symbol "second")))
+                         `(let ((,items nil)
+                                (,first 'a)
+                                (,second 'b))
+                            (push ,first ,items)
+                            (push ,second ,items)
+                            (list (length ,items)
+                                  (pop ,items)
+                                  (length ,items)))))
+                     (rele-with-generated-list))"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(result.princ_to_string(), "(2 b 1)");
+}
+#[test]
+fn test_defun_gv_setter_declaration() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let result = interp
+        .eval(
+            read(
+                r#"(progn
+                     (defun rele-test-time (obj)
+                       (declare (gv-setter rele-test-set-time))
+                       (aref obj 0))
+                     (defun rele-test-set-time (obj value)
+                       (aset obj 0 value)
+                       value)
+                     (let ((obj (vector nil)))
+                       (setf (rele-test-time obj) 42)
+                       (rele-test-time obj)))"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(result, LispObject::integer(42));
+}
+#[test]
 fn test_defalias_creates_function_alias() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);

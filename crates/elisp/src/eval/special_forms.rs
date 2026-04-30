@@ -189,6 +189,39 @@ fn remove_current_buffer_local(name: &str) {
     });
 }
 
+fn record_defun_declarations(
+    id: crate::obarray::SymbolId,
+    body: LispObject,
+    state: &InterpreterState,
+) {
+    let mut cur = body;
+    if let Some((first, rest)) = cur.destructure_cons()
+        && first.as_string().is_some()
+    {
+        cur = rest;
+    }
+
+    while let Some((form, rest)) = cur.destructure_cons() {
+        let Some((head, declarations)) = form.destructure_cons() else {
+            break;
+        };
+        if head.as_symbol().as_deref() != Some("declare") {
+            break;
+        }
+        let mut decls = declarations;
+        while let Some((decl, next)) = decls.destructure_cons() {
+            if let Some((decl_name, decl_args)) = decl.destructure_cons()
+                && decl_name.as_symbol().as_deref() == Some("gv-setter")
+                && let Some(setter) = decl_args.first()
+            {
+                state.put_plist(id, crate::obarray::intern("gv-setter"), setter);
+            }
+            decls = next;
+        }
+        cur = rest;
+    }
+}
+
 pub(super) fn eval_defun(
     args: Value,
     _env: &Arc<RwLock<Environment>>,
@@ -209,6 +242,7 @@ pub(super) fn eval_defun(
     );
     // defun writes the function cell directly.
     state.set_function_cell(id, lambda);
+    record_defun_declarations(id, rest.rest().unwrap_or(LispObject::nil()), state);
     Ok(obj_to_value(LispObject::Symbol(id)))
 }
 pub(super) fn eval_defmacro(args: Value, macros: &MacroTable) -> ElispResult<Value> {

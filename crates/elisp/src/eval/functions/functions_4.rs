@@ -13,11 +13,29 @@ use std::sync::Arc;
 use super::functions_5::{as_f64, is_loop_keyword};
 use super::types::{Accumulator, Action, Iter};
 
+fn collect_loop_pattern_ids(
+    pattern: &LispObject,
+    ids: &mut std::collections::HashSet<crate::obarray::SymbolId>,
+) {
+    match pattern {
+        LispObject::Symbol(id) => {
+            ids.insert(*id);
+        }
+        LispObject::Cons(_) => {
+            let car = pattern.first().unwrap_or_else(LispObject::nil);
+            let cdr = pattern.rest().unwrap_or_else(LispObject::nil);
+            collect_loop_pattern_ids(&car, ids);
+            collect_loop_pattern_ids(&cdr, ids);
+        }
+        LispObject::Nil => {}
+        _ => {}
+    }
+}
+
 fn define_loop_pattern(env: &Arc<RwLock<Environment>>, pattern: &LispObject) {
     match pattern {
         LispObject::Symbol(id) => {
-            env.write()
-                .define(&crate::obarray::symbol_name(*id), LispObject::nil());
+            env.write().define_id(*id, LispObject::nil());
         }
         LispObject::Cons(_) => {
             let car = pattern.first().unwrap_or_else(LispObject::nil);
@@ -33,7 +51,7 @@ fn define_loop_pattern(env: &Arc<RwLock<Environment>>, pattern: &LispObject) {
 fn bind_loop_pattern(env: &Arc<RwLock<Environment>>, pattern: &LispObject, value: LispObject) {
     match pattern {
         LispObject::Symbol(id) => {
-            env.write().set(&crate::obarray::symbol_name(*id), value);
+            env.write().set_id(*id, value);
         }
         LispObject::Cons(_) => {
             let pat_car = pattern.first().unwrap_or_else(LispObject::nil);
@@ -66,7 +84,7 @@ pub(in crate::eval) fn eval_cl_loop(
     let mut initially: Vec<LispObject> = Vec::new();
     let mut finally: Vec<LispObject> = Vec::new();
     let mut finally_return: Option<LispObject> = None;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     let mut accs: HashMap<String, (Accumulator, bool)> = HashMap::new();
     let mut default_collect_name: Option<String> = None;
     let mut cur = clauses_obj;
@@ -817,6 +835,15 @@ pub(in crate::eval) fn eval_cl_loop(
     }
     for form in &finally {
         eval(obj_to_value(form.clone()), &loop_env, editor, macros, state)?;
+    }
+    let mut loop_var_ids = HashSet::new();
+    for (pattern, _) in &bindings {
+        collect_loop_pattern_ids(pattern, &mut loop_var_ids);
+    }
+    for (id, value) in loop_env.read().local_binding_entries() {
+        if !loop_var_ids.contains(&id) {
+            env.write().set_id(id, value);
+        }
     }
     if let Some(v) = early_return {
         return Ok(obj_to_value(v));

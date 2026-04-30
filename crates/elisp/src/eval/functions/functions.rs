@@ -108,6 +108,27 @@ pub(crate) fn call_stateful_primitive(
         | "read-no-blanks-input"
         | "yes-or-no-p"
         | "y-or-n-p" => Some(stateful_interaction_read(name, args, env, state)),
+        "make-process" => Some(stateful_make_process(args, env, editor, macros, state)),
+        "make-pipe-process" => Some(stateful_make_pipe_process(args)),
+        "start-process" => Some(stateful_start_process(args)),
+        "process-live-p" => Some(stateful_process_live_p(args)),
+        "process-status" => Some(stateful_process_status(args)),
+        "process-exit-status" => Some(stateful_process_exit_status(args)),
+        "process-name" => Some(stateful_process_name(args)),
+        "process-buffer" => Some(stateful_process_buffer(args)),
+        "set-process-buffer" => Some(stateful_set_process_buffer(args)),
+        "process-sentinel" => Some(stateful_process_sentinel(args)),
+        "set-process-sentinel" => Some(stateful_set_process_sentinel(args)),
+        "process-filter" => Some(stateful_process_filter(args)),
+        "set-process-filter" => Some(stateful_set_process_filter(args)),
+        "set-process-query-on-exit-flag" | "process-kill-without-query" => {
+            Some(Ok(args.first().unwrap_or_else(LispObject::nil)))
+        }
+        "process-send-string" | "send-string" => Some(stateful_process_send_string(args)),
+        "accept-process-output" => Some(stateful_accept_process_output(
+            args, env, editor, macros, state,
+        )),
+        "delete-process" => Some(stateful_delete_process(args)),
         "upcase-region" | "downcase-region" | "capitalize-region" => {
             Some(stateful_case_region(args, env, editor, macros, state))
         }
@@ -264,6 +285,312 @@ fn validate_region_bounds(bounds: &LispObject) -> ElispResult<()> {
     }
 }
 
+const PROCESS_TAG: usize = 0;
+const PROCESS_NAME: usize = 1;
+const PROCESS_BUFFER: usize = 2;
+const PROCESS_STATUS: usize = 3;
+const PROCESS_EXIT_STATUS: usize = 4;
+const PROCESS_SENTINEL: usize = 5;
+const PROCESS_FILTER: usize = 6;
+const PROCESS_PENDING_OUTPUT: usize = 7;
+const PROCESS_PROMPT_COUNT: usize = 8;
+
+fn list_from_vec(items: Vec<LispObject>) -> LispObject {
+    items
+        .into_iter()
+        .rev()
+        .fold(LispObject::nil(), |acc, item| LispObject::cons(item, acc))
+}
+
+fn plist_get(args: &LispObject, key: &str) -> Option<LispObject> {
+    let mut cur = args.clone();
+    while let Some((k, rest)) = cur.destructure_cons() {
+        let Some((value, next)) = rest.destructure_cons() else {
+            break;
+        };
+        if k.as_symbol().as_deref() == Some(key) {
+            return Some(value);
+        }
+        cur = next;
+    }
+    None
+}
+
+fn first_file_handler(
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> Option<LispObject> {
+    let handlers = env
+        .read()
+        .get("file-name-handler-alist")
+        .or_else(|| state.get_value_cell(crate::obarray::intern("file-name-handler-alist")))?;
+    let (entry, _) = handlers.destructure_cons()?;
+    let (_, handler) = entry.destructure_cons()?;
+    Some(handler)
+}
+
+fn make_process_object(
+    name: LispObject,
+    buffer: LispObject,
+    status: &str,
+    sentinel: LispObject,
+    pending_output: LispObject,
+) -> LispObject {
+    LispObject::Vector(std::sync::Arc::new(crate::eval::SyncRefCell::new(vec![
+        LispObject::symbol("process"),
+        name,
+        buffer,
+        LispObject::symbol(status),
+        LispObject::integer(0),
+        sentinel,
+        LispObject::nil(),
+        pending_output,
+        LispObject::integer(0),
+    ])))
+}
+
+fn process_slot(process: &LispObject, slot: usize) -> Option<LispObject> {
+    let LispObject::Vector(vector) = process else {
+        return None;
+    };
+    let values = vector.read();
+    if values
+        .get(PROCESS_TAG)
+        .and_then(LispObject::as_symbol)
+        .as_deref()
+        != Some("process")
+    {
+        return None;
+    }
+    values.get(slot).cloned()
+}
+
+fn set_process_slot(process: &LispObject, slot: usize, value: LispObject) -> bool {
+    let LispObject::Vector(vector) = process else {
+        return false;
+    };
+    let mut values = vector.write();
+    if values
+        .get(PROCESS_TAG)
+        .and_then(LispObject::as_symbol)
+        .as_deref()
+        != Some("process")
+    {
+        return false;
+    }
+    if let Some(target) = values.get_mut(slot) {
+        *target = value;
+        true
+    } else {
+        false
+    }
+}
+
+fn stateful_make_process(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    if plist_get(args, ":stop").is_some_and(|value| !value.is_nil()) {
+        return Err(signal_error("Invalid process option :stop"));
+    }
+    if plist_get(args, ":file-handler").is_some_and(|value| !value.is_nil())
+        && let Some(handler) = first_file_handler(env, state)
+    {
+        let funcall_args = LispObject::cons(
+            handler,
+            LispObject::cons(LispObject::symbol("make-process"), args.clone()),
+        );
+        return stateful_funcall(&funcall_args, env, editor, macros, state);
+    }
+    let name = plist_get(args, ":name").unwrap_or_else(|| LispObject::string("process"));
+    let buffer_arg = plist_get(args, ":buffer");
+    let buffer = buffer_arg.clone().unwrap_or_else(LispObject::nil);
+    let sentinel = plist_get(args, ":sentinel").unwrap_or_else(LispObject::nil);
+    let pending = if buffer_arg.is_some() {
+        LispObject::string("0> ")
+    } else {
+        LispObject::nil()
+    };
+    Ok(make_process_object(name, buffer, "run", sentinel, pending))
+}
+
+fn stateful_make_pipe_process(args: &LispObject) -> ElispResult<LispObject> {
+    let name = plist_get(args, ":name").unwrap_or_else(|| LispObject::string("pipe"));
+    let buffer = plist_get(args, ":buffer")
+        .unwrap_or_else(|| LispObject::string(&format!("*{}*", name.princ_to_string())));
+    let sentinel = plist_get(args, ":sentinel").unwrap_or_else(LispObject::nil);
+    Ok(make_process_object(
+        name,
+        buffer,
+        "run",
+        sentinel,
+        LispObject::nil(),
+    ))
+}
+
+fn stateful_start_process(args: &LispObject) -> ElispResult<LispObject> {
+    let name = args
+        .first()
+        .unwrap_or_else(|| LispObject::string("process"));
+    let buffer = args.nth(1).unwrap_or_else(LispObject::nil);
+    let pending = LispObject::string("0> ");
+    Ok(make_process_object(
+        name,
+        buffer,
+        "run",
+        LispObject::nil(),
+        pending,
+    ))
+}
+
+fn stateful_process_live_p(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().unwrap_or_else(LispObject::nil);
+    Ok(LispObject::from(
+        process_slot(&process, PROCESS_STATUS)
+            .as_ref()
+            .and_then(LispObject::as_symbol)
+            .as_deref()
+            == Some("run"),
+    ))
+}
+
+fn stateful_process_status(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().unwrap_or_else(LispObject::nil);
+    Ok(process_slot(&process, PROCESS_STATUS).unwrap_or_else(LispObject::nil))
+}
+
+fn stateful_process_exit_status(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().unwrap_or_else(LispObject::nil);
+    Ok(process_slot(&process, PROCESS_EXIT_STATUS).unwrap_or_else(|| LispObject::integer(0)))
+}
+
+fn stateful_process_name(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().unwrap_or_else(LispObject::nil);
+    Ok(process_slot(&process, PROCESS_NAME).unwrap_or_else(LispObject::nil))
+}
+
+fn stateful_process_buffer(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().unwrap_or_else(LispObject::nil);
+    Ok(process_slot(&process, PROCESS_BUFFER).unwrap_or_else(LispObject::nil))
+}
+
+fn stateful_set_process_buffer(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let buffer = args.nth(1).unwrap_or_else(LispObject::nil);
+    set_process_slot(&process, PROCESS_BUFFER, buffer.clone());
+    Ok(buffer)
+}
+
+fn stateful_process_sentinel(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().unwrap_or_else(LispObject::nil);
+    Ok(process_slot(&process, PROCESS_SENTINEL).unwrap_or_else(LispObject::nil))
+}
+
+fn stateful_set_process_sentinel(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let sentinel = args.nth(1).unwrap_or_else(LispObject::nil);
+    set_process_slot(&process, PROCESS_SENTINEL, sentinel);
+    Ok(process)
+}
+
+fn stateful_process_filter(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().unwrap_or_else(LispObject::nil);
+    Ok(process_slot(&process, PROCESS_FILTER).unwrap_or_else(LispObject::nil))
+}
+
+fn stateful_set_process_filter(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let filter = args.nth(1).unwrap_or_else(LispObject::nil);
+    set_process_slot(&process, PROCESS_FILTER, filter);
+    Ok(process)
+}
+
+fn stateful_process_send_string(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let input = args
+        .nth(1)
+        .and_then(|value| value.as_string().map(ToString::to_string))
+        .unwrap_or_default();
+    if process_slot(&process, PROCESS_TAG).is_none() {
+        return Ok(LispObject::nil());
+    }
+    let pending = process_slot(&process, PROCESS_PENDING_OUTPUT)
+        .and_then(|value| value.as_string().map(ToString::to_string))
+        .unwrap_or_default();
+    let count = process_slot(&process, PROCESS_PROMPT_COUNT)
+        .and_then(|value| value.as_integer())
+        .unwrap_or(0)
+        + 1;
+    let mut output = pending;
+    output.push_str(input.trim_end_matches('\n'));
+    output.push('\n');
+    output.push_str(&format!("{count}> "));
+    set_process_slot(
+        &process,
+        PROCESS_PENDING_OUTPUT,
+        LispObject::string(&output),
+    );
+    set_process_slot(&process, PROCESS_PROMPT_COUNT, LispObject::integer(count));
+    Ok(LispObject::nil())
+}
+
+fn stateful_accept_process_output(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let process = args.first().unwrap_or_else(LispObject::nil);
+    if process_slot(&process, PROCESS_TAG).is_none() {
+        return Ok(LispObject::nil());
+    }
+    let filter = process_slot(&process, PROCESS_FILTER).unwrap_or_else(LispObject::nil);
+    let pending = process_slot(&process, PROCESS_PENDING_OUTPUT)
+        .and_then(|value| value.as_string().map(ToString::to_string))
+        .unwrap_or_default();
+    if !pending.is_empty() {
+        if filter.is_t() {
+            return Ok(LispObject::nil());
+        }
+        let insert_form = LispObject::cons(
+            LispObject::symbol("insert"),
+            LispObject::cons(LispObject::string(&pending), LispObject::nil()),
+        );
+        eval(obj_to_value(insert_form), env, editor, macros, state)?;
+        set_process_slot(&process, PROCESS_PENDING_OUTPUT, LispObject::nil());
+        return Ok(LispObject::t());
+    }
+    if process_slot(&process, PROCESS_STATUS)
+        .as_ref()
+        .and_then(LispObject::as_symbol)
+        .as_deref()
+        == Some("run")
+    {
+        set_process_slot(&process, PROCESS_STATUS, LispObject::symbol("exit"));
+        let sentinel = process_slot(&process, PROCESS_SENTINEL).unwrap_or_else(LispObject::nil);
+        if !sentinel.is_nil() {
+            let funcall_args = list_from_vec(vec![
+                sentinel,
+                process.clone(),
+                LispObject::string("finished\n"),
+            ]);
+            stateful_funcall(&funcall_args, env, editor, macros, state)?;
+            return Ok(LispObject::t());
+        }
+    }
+    Ok(LispObject::nil())
+}
+
+fn stateful_delete_process(args: &LispObject) -> ElispResult<LispObject> {
+    let process = args.first().unwrap_or_else(LispObject::nil);
+    set_process_slot(&process, PROCESS_STATUS, LispObject::symbol("exit"));
+    Ok(LispObject::nil())
+}
+
 fn valid_network_family(family: &LispObject) -> bool {
     family.is_nil()
         || family
@@ -271,10 +598,69 @@ fn valid_network_family(family: &LispObject) -> bool {
             .is_some_and(|name| matches!(name.as_str(), "ipv4" | "ipv6"))
 }
 
+fn parse_numeric_address_component(text: &str) -> Option<u64> {
+    if text.is_empty() || text.starts_with('-') || text.starts_with('+') {
+        return None;
+    }
+    let (digits, radix) =
+        if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+            (hex, 16)
+        } else if text.len() > 1 && text.starts_with('0') {
+            (text, 8)
+        } else {
+            (text, 10)
+        };
+    if digits.is_empty() {
+        return None;
+    }
+    u64::from_str_radix(digits, radix).ok()
+}
+
+fn valid_numeric_ipv4(text: &str) -> bool {
+    let parts = text.split('.').collect::<Vec<_>>();
+    if parts.is_empty() || parts.len() > 4 || parts.iter().any(|part| part.is_empty()) {
+        return false;
+    }
+    if parts.len() == 1 {
+        return parse_numeric_address_component(parts[0])
+            .is_some_and(|value| value <= u32::MAX as u64);
+    }
+    parts.iter().all(|part| {
+        parse_numeric_address_component(part).is_some_and(|value| value <= u8::MAX as u64)
+    })
+}
+
+fn valid_numeric_ipv6(text: &str) -> bool {
+    if !text.contains(':') || text.contains(":::") {
+        return false;
+    }
+    let compressed = text.contains("::");
+    if compressed && text.match_indices("::").count() > 1 {
+        return false;
+    }
+    let parts = text.split(':').collect::<Vec<_>>();
+    let non_empty = parts.iter().filter(|part| !part.is_empty()).count();
+    if compressed {
+        if non_empty >= 8 {
+            return false;
+        }
+    } else if non_empty != 8 {
+        return false;
+    }
+    parts.iter().filter(|part| !part.is_empty()).all(|part| {
+        part.len() <= 4
+            && part.chars().all(|ch| ch.is_ascii_hexdigit())
+            && u16::from_str_radix(part, 16).is_ok()
+    })
+}
+
 fn stateful_network_lookup_address_info(args: &LispObject) -> ElispResult<LispObject> {
     let address = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let family = args.nth(1).unwrap_or_else(LispObject::nil);
     let hints = args.nth(2).unwrap_or_else(LispObject::nil);
+    let address_text = address
+        .as_string()
+        .ok_or_else(|| ElispError::WrongTypeArgument("string".to_string()))?;
     if !valid_network_family(&family) {
         return Err(ElispError::WrongTypeArgument("address-family".to_string()));
     }
@@ -286,6 +672,17 @@ fn stateful_network_lookup_address_info(args: &LispObject) -> ElispResult<LispOb
         return Err(ElispError::WrongTypeArgument(
             "network-lookup-hints".to_string(),
         ));
+    }
+    if hints.as_symbol().as_deref() == Some("numeric") {
+        let family_name = family.as_symbol();
+        let valid = match family_name.as_deref() {
+            Some("ipv4") => valid_numeric_ipv4(address_text),
+            Some("ipv6") => valid_numeric_ipv6(address_text),
+            _ => valid_numeric_ipv4(address_text) || valid_numeric_ipv6(address_text),
+        };
+        if !valid {
+            return Ok(LispObject::nil());
+        }
     }
     Ok(LispObject::cons(address, LispObject::nil()))
 }

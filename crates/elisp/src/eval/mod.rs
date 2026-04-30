@@ -231,6 +231,66 @@ pub mod bootstrap;
 // `cargo test`. The pub helpers compile in all modes.
 pub mod tests;
 
+fn eval_let_star_binding_form(
+    binding: LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<(Option<String>, LispObject)> {
+    if let Some(name) = binding.as_symbol() {
+        let value = value_to_obj(eval(obj_to_value(binding), env, editor, macros, state)?);
+        let bind_name = (name != "_").then_some(name);
+        return Ok((bind_name, value));
+    }
+    if let Some((name_obj, rest)) = binding.destructure_cons() {
+        if let Some(name) = name_obj.as_symbol() {
+            let value_expr = rest.first().unwrap_or_else(|| name_obj.clone());
+            let value = value_to_obj(eval(obj_to_value(value_expr), env, editor, macros, state)?);
+            let bind_name = (name != "_").then_some(name);
+            return Ok((bind_name, value));
+        }
+        let value = value_to_obj(eval(obj_to_value(name_obj), env, editor, macros, state)?);
+        return Ok((None, value));
+    }
+    Ok((None, LispObject::nil()))
+}
+
+fn eval_if_or_when_let_star(
+    args: LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+    is_when: bool,
+) -> ElispResult<Value> {
+    let bindings = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let body = args.rest().unwrap_or(LispObject::nil());
+    let parent = Arc::new(env.read().clone());
+    let local = Arc::new(RwLock::new(Environment::with_parent(parent)));
+    let mut cur = bindings;
+    while let Some((binding, rest)) = cur.destructure_cons() {
+        let (name, value) = eval_let_star_binding_form(binding, &local, editor, macros, state)?;
+        if value.is_nil() {
+            if is_when {
+                return Ok(Value::nil());
+            }
+            let else_body = body.rest().unwrap_or(LispObject::nil());
+            return eval_progn(obj_to_value(else_body), env, editor, macros, state);
+        }
+        if let Some(name) = name {
+            local.write().define(&name, value);
+        }
+        cur = rest;
+    }
+    if is_when {
+        eval_progn(obj_to_value(body), &local, editor, macros, state)
+    } else {
+        let then_form = body.first().unwrap_or_else(LispObject::nil);
+        eval(obj_to_value(then_form), &local, editor, macros, state)
+    }
+}
+
 // --- Functions from original mod.rs (eval_setf_one, eval_cl_defgeneric_or_method) ---
 /// Expand and execute a single `(setf PLACE VALUE)` pair.
 ///
@@ -401,7 +461,40 @@ pub(super) fn eval_setf_one(
                 eval(obj_to_value(put_form), env, editor, macros, state)
             }
         }
-        _ => Ok(obj_to_value(new_val)),
+        _ => {
+            let accessor_id = crate::obarray::intern(&head_name);
+            let gv_setter = state.get_plist(accessor_id, crate::obarray::intern("gv-setter"));
+            if let Some(setter_name) = gv_setter.as_symbol() {
+                let mut setter_args = Vec::new();
+                let mut cur = args.clone();
+                while let Some((arg, rest)) = cur.destructure_cons() {
+                    setter_args.push(arg);
+                    cur = rest;
+                }
+                setter_args.push(quoted_new.clone());
+                let setter_args = setter_args
+                    .into_iter()
+                    .rev()
+                    .fold(LispObject::nil(), |acc, arg| LispObject::cons(arg, acc));
+                call(&setter_name, setter_args)?;
+                return Ok(obj_to_value(new_val));
+            }
+            let slot_key = crate::obarray::intern("cl-struct-slot-index");
+            if let Some(slot) = state.get_plist(accessor_id, slot_key).as_integer() {
+                let obj = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+                call(
+                    "aset",
+                    LispObject::cons(
+                        obj,
+                        LispObject::cons(
+                            LispObject::integer(slot),
+                            LispObject::cons(quoted_new, LispObject::nil()),
+                        ),
+                    ),
+                )?;
+            }
+            Ok(obj_to_value(new_val))
+        }
     }
 }
 /// Shared implementation for `cl-defgeneric` and `cl-defmethod`.
@@ -513,6 +606,7 @@ pub(super) fn eval_cl_defstruct(
     let mut conc_name: Option<String> = None;
     let mut predicate_name: Option<Option<String>> = None;
     let mut include_name: Option<String> = None;
+    let mut type_vector = false;
     let name = match &name_spec {
         LispObject::Symbol(id) => crate::obarray::symbol_name(*id),
         LispObject::Cons(_) => {
@@ -556,6 +650,11 @@ pub(super) fn eval_cl_defstruct(
                         ":include" => {
                             if let Some((parent, _)) = opt_rest.destructure_cons() {
                                 include_name = parent.as_symbol();
+                            }
+                        }
+                        ":type" => {
+                            if let Some((type_name, _)) = opt_rest.destructure_cons() {
+                                type_vector = type_name.as_symbol().as_deref() == Some("vector");
                             }
                         }
                         _ => {}
@@ -682,14 +781,21 @@ pub(super) fn eval_cl_defstruct(
         .map(|f| format!(":{f}"))
         .collect::<Vec<_>>()
         .join(" ");
+    let tag_init = if type_vector {
+        String::new()
+    } else {
+        format!("(aset vec 0 '{tag_name})")
+    };
+    let field_offset = if type_vector { 0 } else { 1 };
+    let ctor_slots = n_fields + field_offset;
     let ctor_body = format!(
         "(lambda (&rest args)\
          (let ((vec (make-vector {n} nil))\
                (defaults (list {defaults}))\
                (fields '({field_kws}))\
                (i 0))\
-           (aset vec 0 '{tag})\
-           (let ((d defaults) (j 1))\
+           {tag_init}\
+           (let ((d defaults) (j {field_offset}))\
              (while d\
                (aset vec j (car d))\
                (setq d (cdr d) j (+ j 1))))\
@@ -701,21 +807,22 @@ pub(super) fn eval_cl_defstruct(
                    (let ((idx 0) (found nil) (flds fields))\
                      (while flds\
                        (when (eq kw (car flds))\
-                         (aset vec (+ idx 1) (car rst))\
+                         (aset vec (+ idx {field_offset}) (car rst))\
                          (setq found t flds nil))\
                        (setq idx (+ idx 1) flds (cdr flds)))\
                      (setq args (cdr rst)))\
                    (setq args nil))))\
              (while (and args (< i {nf}))\
-               (aset vec (+ i 1) (car args))\
+               (aset vec (+ i {field_offset}) (car args))\
                (setq args (cdr args))\
                (setq i (+ i 1))))\
            vec))",
-        n = n_fields + 1,
-        tag = tag_name,
+        n = ctor_slots,
         nf = n_fields,
         defaults = defaults_str,
         field_kws = field_kws,
+        tag_init = tag_init,
+        field_offset = field_offset,
     );
     let ctor_expr = crate::read(&ctor_body)
         .map_err(|e| ElispError::EvalError(format!("cl-defstruct ctor parse: {e}")))?;
@@ -735,14 +842,18 @@ pub(super) fn eval_cl_defstruct(
                     {
                         assignments.push_str(&format!(
                             "(aset vec {} {})",
-                            field_idx + 1,
+                            field_idx + field_offset,
                             param_name
                         ));
                     }
                 } else if let Some(param_name) = param.first().and_then(|obj| obj.as_symbol())
                     && let Some(field_idx) = field_names.iter().position(|f| f == &param_name)
                 {
-                    assignments.push_str(&format!("(aset vec {} {})", field_idx + 1, param_name));
+                    assignments.push_str(&format!(
+                        "(aset vec {} {})",
+                        field_idx + field_offset,
+                        param_name
+                    ));
                 }
                 cur = rest;
             }
@@ -750,17 +861,18 @@ pub(super) fn eval_cl_defstruct(
                 "(lambda {arglist}\
                  (let ((vec (make-vector {n} nil))\
                        (defaults (list {defaults})))\
-                   (aset vec 0 '{tag})\
-                   (let ((d defaults) (j 1))\
+                   {tag_init}\
+                   (let ((d defaults) (j {field_offset}))\
                      (while d\
                        (aset vec j (car d))\
                        (setq d (cdr d) j (+ j 1))))\
                    {assignments}\
-                   vec))",
+                vec))",
                 arglist = arglist.princ_to_string(),
-                n = n_fields + 1,
+                n = ctor_slots,
                 defaults = defaults_str,
-                tag = tag_name,
+                tag_init = tag_init,
+                field_offset = field_offset,
                 assignments = assignments,
             );
             let custom_ctor_expr = crate::read(&custom_ctor_body).map_err(|e| {
@@ -811,12 +923,16 @@ pub(super) fn eval_cl_defstruct(
         }
     }
     if let Some(pred_name) = predicate_name.unwrap_or_else(|| Some(format!("{}-p", name))) {
-        let pred_body = format!(
-            "(lambda (obj) \
-               (and (vectorp obj) (> (length obj) 0) \
-                    (if (memq (aref obj 0) cl-struct-{name}-tags) t nil)))",
-            name = name,
-        );
+        let pred_body = if type_vector {
+            format!("(lambda (obj) (and (vectorp obj) (= (length obj) {n_fields})))")
+        } else {
+            format!(
+                "(lambda (obj) \
+                   (and (vectorp obj) (> (length obj) 0) \
+                        (if (memq (aref obj 0) cl-struct-{name}-tags) t nil)))",
+                name = name,
+            )
+        };
         let pred_expr = crate::read(&pred_body)
             .map_err(|e| ElispError::EvalError(format!("cl-defstruct pred parse: {e}")))?;
         let pred_val = value_to_obj(eval(obj_to_value(pred_expr), env, editor, macros, state)?);
@@ -824,11 +940,17 @@ pub(super) fn eval_cl_defstruct(
     }
     let prefix = conc_name.unwrap_or_else(|| format!("{}-", name));
     for (i, field) in field_names.iter().enumerate() {
-        let body = format!("(lambda (obj) (aref obj {}))", i + 1);
+        let body = format!("(lambda (obj) (aref obj {}))", i + field_offset);
         let expr = crate::read(&body)
             .map_err(|e| ElispError::EvalError(format!("cl-defstruct accessor parse: {e}")))?;
         let val = value_to_obj(eval(obj_to_value(expr), env, editor, macros, state)?);
-        state.set_function_cell(crate::obarray::intern(&format!("{}{}", prefix, field)), val);
+        let accessor_id = crate::obarray::intern(&format!("{}{}", prefix, field));
+        state.set_function_cell(accessor_id, val);
+        state.put_plist(
+            accessor_id,
+            crate::obarray::intern("cl-struct-slot-index"),
+            LispObject::integer((i + field_offset) as i64),
+        );
     }
     let copier_expr = crate::read("(lambda (obj) (copy-sequence obj))")
         .map_err(|e| ElispError::EvalError(format!("cl-defstruct copier parse: {e}")))?;
@@ -2570,6 +2692,8 @@ pub(super) fn eval_inner(
                 "or" => eval_or(obj_to_value(cdr), env, editor, macros, state),
                 "when" => eval_when(obj_to_value(cdr), env, editor, macros, state),
                 "unless" => eval_unless(obj_to_value(cdr), env, editor, macros, state),
+                "when-let*" => eval_if_or_when_let_star(cdr, env, editor, macros, state, true),
+                "if-let*" => eval_if_or_when_let_star(cdr, env, editor, macros, state, false),
                 "while" => eval_while(obj_to_value(cdr), env, editor, macros, state),
                 "let*" => eval_let_star(obj_to_value(cdr), env, editor, macros, state),
                 "dlet" => eval_dlet(obj_to_value(cdr), env, editor, macros, state),
@@ -4812,8 +4936,8 @@ pub(super) fn eval_inner(
                     let place = cdr.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
                     let val =
                         value_to_obj(eval(obj_to_value(val_expr), env, editor, macros, state)?);
-                    let old = if let Some(place_name) = place.as_symbol() {
-                        env.read().get(&place_name).unwrap_or(LispObject::nil())
+                    let old = if let Some(place_id) = place.as_symbol_id() {
+                        env.read().get_id(place_id).unwrap_or_else(LispObject::nil)
                     } else {
                         value_to_obj(eval(
                             obj_to_value(place.clone()),
@@ -4833,13 +4957,13 @@ pub(super) fn eval_inner(
                 }
                 "pop" => {
                     let place = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
-                    let place_name = place
-                        .as_symbol()
+                    let place_id = place
+                        .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
-                    let list = env.read().get(&place_name).unwrap_or(LispObject::nil());
+                    let list = env.read().get_id(place_id).unwrap_or_else(LispObject::nil);
                     let car_val = list.first().unwrap_or(LispObject::nil());
                     let cdr_val = list.rest().unwrap_or(LispObject::nil());
-                    env.write().set(&place_name, cdr_val);
+                    env.write().set_id(place_id, cdr_val);
                     Ok(obj_to_value(car_val))
                 }
                 "symbol-value" => {

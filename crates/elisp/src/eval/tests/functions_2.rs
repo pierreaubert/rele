@@ -518,6 +518,7 @@ fn test_batched_defun_stubs_resolve() {
         ("(logb 1024.0)", "10"),
         ("(time-equal-p 0 0)", "t"),
         ("(time-less-p 0 1)", "t"),
+        ("(time-convert 1 'list)", "(0 1 0 0)"),
         ("(mapp nil)", "t"),
         ("(mapp '(a b))", "t"),
         ("(mapp 7)", "nil"),
@@ -595,6 +596,14 @@ fn test_remaining_did_not_signal_contracts() {
         (
             "(condition-case e (network-lookup-address-info \"1.1.1.1\" nil t) (wrong-type-argument 'caught))",
             "caught",
+        ),
+        (
+            "(network-lookup-address-info \"343.1.2.3\" nil 'numeric)",
+            "nil",
+        ),
+        (
+            "(network-lookup-address-info \"0xe3.1.2.3\" nil 'numeric)",
+            "(\"0xe3.1.2.3\")",
         ),
         (
             "(condition-case e (progn (set-face-attribute 'button nil :inherit 'link) (set-face-attribute 'link nil :inherit 'button)) (error 'caught))",

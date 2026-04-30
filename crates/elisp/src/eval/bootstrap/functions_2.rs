@@ -807,6 +807,8 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("tty-color-approximate", LispObject::primitive("ignore"));
     interp.define("tty-color-by-index", LispObject::primitive("ignore"));
     interp.define("tty-color-standard-values", LispObject::primitive("ignore"));
+    interp.define("timer-list", LispObject::nil());
+    interp.define("timer-idle-list", LispObject::nil());
     interp.define("timer-create", LispObject::primitive("ignore"));
     interp.define("timer-set-time", LispObject::primitive("ignore"));
     interp.define("timer-set-function", LispObject::primitive("ignore"));
