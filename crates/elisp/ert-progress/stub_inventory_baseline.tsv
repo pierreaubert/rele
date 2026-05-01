@@ -1,676 +1,425 @@
 bucket	status	name	dispatch	target	file	line	note
-editing/regions	needs-classification	posn-at-point	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-editing/regions	needs-classification	posn-point	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-editing/regions	runtime-missing	posn-at-point	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1047	silent primitive alias
-keymap/help	needs-classification	describe-input-method	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	251	matched in stubs::call
-keymap/help	needs-classification	execute-kbd-macro	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	46	matched in stubs::call
-keymap/help	needs-classification	keyboard-escape-quit	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	256	matched in stubs::call
-keymap/help	needs-classification	keyboard-quit	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	234	matched in stubs::call
-keymap/help	needs-classification	keymap-prompt	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	876	registered through Phase-1 stub list
-keymap/help	needs-classification	keymap-prompt	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	505	matched in stubs::call
-keymap/help	needs-classification	listify-key-sequence	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	174	matched in stubs::call
-keymap/help	needs-classification	read-kbd-macro	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	878	registered through Phase-1 stub list
-keymap/help	needs-classification	read-kbd-macro	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	511	matched in stubs::call
-keymap/help	needs-classification	read-key-sequence	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	57	matched in stubs::call
-keymap/help	needs-classification	read-key-sequence-vector	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	57	matched in stubs::call
-keymap/help	needs-classification	single-key-description	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	173	matched in stubs::call
-keymap/help	needs-classification	this-command-keys	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	54	matched in stubs::call
-keymap/help	needs-classification	this-command-keys-vector	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	54	matched in stubs::call
-keymap/help	runtime-missing	describe-key	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	723	silent primitive alias
-keymap/help	runtime-missing	describe-mode	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	728	silent primitive alias
-keymap/help	runtime-missing	describe-variable	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	722	silent primitive alias
+editing/regions	needs-classification	posn-at-point	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+editing/regions	needs-classification	posn-point	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+editing/regions	runtime-missing	posn-at-point	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1039	silent primitive alias
+keymap/help	needs-classification	keyboard-escape-quit	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	169	matched in stubs::call
+keymap/help	needs-classification	keyboard-quit	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	153	matched in stubs::call
+keymap/help	needs-classification	keymap-prompt	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	726	registered through Phase-1 stub list
+keymap/help	needs-classification	keymap-prompt	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	337	matched in stubs::call
+keymap/help	needs-classification	listify-key-sequence	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	125	matched in stubs::call
+keymap/help	needs-classification	read-kbd-macro	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	728	registered through Phase-1 stub list
+keymap/help	needs-classification	read-kbd-macro	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	343	matched in stubs::call
+keymap/help	needs-classification	single-key-description	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	124	matched in stubs::call
+keymap/help	runtime-missing	describe-key	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	724	silent primitive alias
+keymap/help	runtime-missing	describe-mode	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	729	silent primitive alias
+keymap/help	runtime-missing	describe-variable	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	723	silent primitive alias
 keymap/help	runtime-missing	key-valid-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	293	silent primitive alias
 keymap/help	runtime-missing	keymap--check	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	351	silent primitive alias
 keymap/help	runtime-missing	keymap--compile-check	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	352	silent primitive alias
 keymap/help	runtime-missing	keymap-set-after	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	292	silent primitive alias
 keymap/help	runtime-missing	listify-key-sequence	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	117	silent primitive alias
-keymap/help	runtime-missing	this-command-keys	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1005	silent primitive alias
-keymap/help	runtime-missing	this-command-keys-vector	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1006	silent primitive alias
-keymap/help	runtime-missing	this-single-command-keys	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1007	silent primitive alias
 other	compat-identity	bare-symbol	bootstrap-alias	identity	crates/elisp/src/eval/bootstrap/functions_2.rs	84	silent primitive alias
-other	compat-identity	locate-user-emacs-file	bootstrap-alias	identity	crates/elisp/src/eval/bootstrap/functions_2.rs	717	silent primitive alias
+other	compat-identity	locate-user-emacs-file	bootstrap-alias	identity	crates/elisp/src/eval/bootstrap/functions_2.rs	718	silent primitive alias
 other	compat-identity	propertize	bootstrap-alias	identity	crates/elisp/src/eval/bootstrap/functions_2.rs	307	silent primitive alias
 other	compat-identity	purecopy	bootstrap-alias	identity	crates/elisp/src/eval/bootstrap/functions_2.rs	94	silent primitive alias
 other	compat-identity	regexp	bootstrap-alias	identity	crates/elisp/src/eval/bootstrap/functions_2.rs	227	silent primitive alias
-other	needs-classification	UTC	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	495	matched in stubs::call
-other	needs-classification	Wrong type argument: wholenump, -1	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	455	matched in stubs::call
-other	needs-classification	abbrev-expansion	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	abbrev-get	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	abbrev-insert	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	abbrev-put	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	abbrev-symbol	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	abbrev-table-empty-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	abbrev-table-get	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	abbrev-table-put	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	abbreviate-file-name	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	66	matched in stubs::call
-other	needs-classification	abort-minibuffers	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	234	matched in stubs::call
-other	needs-classification	abort-recursive-edit	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	256	matched in stubs::call
-other	needs-classification	accept-process-output	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	access-file	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	854	registered through Phase-1 stub list
-other	needs-classification	access-file	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	446	matched in stubs::call
-other	needs-classification	activate-input-method	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	251	matched in stubs::call
-other	needs-classification	add-function	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
+other	needs-classification	UTC	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	327	matched in stubs::call
+other	needs-classification	Wrong type argument: wholenump, -1	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	287	matched in stubs::call
+other	needs-classification	abbreviate-file-name	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	49	matched in stubs::call
+other	needs-classification	access-file	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	704	registered through Phase-1 stub list
+other	needs-classification	access-file	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	278	matched in stubs::call
+other	needs-classification	add-function	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	209	matched in stubs::call
 other	needs-classification	add-minor-mode	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	30	matched in stubs::call
-other	needs-classification	add-name-to-file	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	855	registered through Phase-1 stub list
-other	needs-classification	add-name-to-file	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	446	matched in stubs::call
-other	needs-classification	add-to-invisibility-spec	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	150	matched in stubs::call
-other	needs-classification	add-to-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	149	matched in stubs::call
-other	needs-classification	add-to-ordered-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	149	matched in stubs::call
-other	needs-classification	advice--add-function	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
-other	needs-classification	advice--make	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
-other	needs-classification	advice--p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
-other	needs-classification	advice--symbol-function	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
-other	needs-classification	advice--tweaked	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
-other	needs-classification	advice-add	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
-other	needs-classification	advice-eval-interactive-spec	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
-other	needs-classification	advice-function-mapc	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
-other	needs-classification	advice-function-member-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
-other	needs-classification	advice-remove	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
-other	needs-classification	all-threads	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	apply	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	426	matched in stubs::call
-other	needs-classification	apply must be called through eval dispatch	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	427	matched in stubs::call
-other	needs-classification	ask-user-about-lock	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	287	matched in stubs::call
-other	needs-classification	ask-user-about-supersession-threat	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	287	matched in stubs::call
-other	needs-classification	backtrace-debug	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	347	matched in stubs::call
-other	needs-classification	backtrace-eval	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	347	matched in stubs::call
+other	needs-classification	add-name-to-file	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	705	registered through Phase-1 stub list
+other	needs-classification	add-name-to-file	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	278	matched in stubs::call
+other	needs-classification	add-to-invisibility-spec	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	106	matched in stubs::call
+other	needs-classification	add-to-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	105	matched in stubs::call
+other	needs-classification	add-to-ordered-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	105	matched in stubs::call
+other	needs-classification	advice--add-function	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	209	matched in stubs::call
+other	needs-classification	advice--make	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	209	matched in stubs::call
+other	needs-classification	advice--p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	209	matched in stubs::call
+other	needs-classification	advice--symbol-function	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	209	matched in stubs::call
+other	needs-classification	advice--tweaked	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	209	matched in stubs::call
+other	needs-classification	advice-eval-interactive-spec	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	209	matched in stubs::call
+other	needs-classification	advice-function-mapc	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	209	matched in stubs::call
+other	needs-classification	advice-function-member-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	209	matched in stubs::call
+other	needs-classification	apply	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	263	matched in stubs::call
+other	needs-classification	apply must be called through eval dispatch	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	264	matched in stubs::call
+other	needs-classification	ask-user-about-lock	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
+other	needs-classification	ask-user-about-supersession-threat	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
+other	needs-classification	backtrace-debug	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	221	matched in stubs::call
+other	needs-classification	backtrace-eval	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	221	matched in stubs::call
 other	needs-classification	backward-prefix-chars	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	22	matched in stubs::call
-other	needs-classification	backward-up-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	249	matched in stubs::call
-other	needs-classification	bare-symbol-p	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	466	matched in stubs::call
-other	needs-classification	beep	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	108	matched in stubs::call
-other	needs-classification	bookmark-delete	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	312	matched in stubs::call
-other	needs-classification	bookmark-get-bookmark-record	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	312	matched in stubs::call
-other	needs-classification	bookmark-jump	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	312	matched in stubs::call
-other	needs-classification	bookmark-set	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	312	matched in stubs::call
-other	needs-classification	buffer-base-buffer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	153	matched in stubs::call
-other	needs-classification	buffer-chars-modified-tick	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	154	matched in stubs::call
-other	needs-classification	buffer-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	153	matched in stubs::call
-other	needs-classification	buffer-local-variables	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	237	matched in stubs::call
-other	needs-classification	buffer-modified-p	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	155	matched in stubs::call
-other	needs-classification	buffer-modified-tick	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	154	matched in stubs::call
-other	needs-classification	buffer-swap-text	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	95	matched in stubs::call
-other	needs-classification	byte-to-string	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	867	registered through Phase-1 stub list
-other	needs-classification	byte-to-string	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	486	matched in stubs::call
-other	needs-classification	byteorder	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	427	matched in stubs::call
-other	needs-classification	call-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
-other	needs-classification	call-process-region	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
-other	needs-classification	cancel-debug-on-entry	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	347	matched in stubs::call
-other	needs-classification	cancel-function-timers	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
-other	needs-classification	cancel-timer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
-other	needs-classification	char-displayable-p	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	111	matched in stubs::call
-other	needs-classification	char-equal	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	866	registered through Phase-1 stub list
-other	needs-classification	char-equal	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	477	matched in stubs::call
-other	needs-classification	char-resolve-modifiers	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	868	registered through Phase-1 stub list
-other	needs-classification	char-resolve-modifiers	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	487	matched in stubs::call
-other	needs-classification	char-width	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	162	matched in stubs::call
-other	needs-classification	clear-abbrev-table	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	clear-visited-file-modtime	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	287	matched in stubs::call
-other	needs-classification	clipboard-kill-region	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	328	matched in stubs::call
-other	needs-classification	clipboard-kill-ring-save	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	328	matched in stubs::call
-other	needs-classification	clipboard-yank	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	328	matched in stubs::call
-other	needs-classification	closurep	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	474	matched in stubs::call
-other	needs-classification	command-remapping	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	95	matched in stubs::call
-other	needs-classification	completing-read	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	101	matched in stubs::call
-other	needs-classification	composition-get-gstring	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	112	matched in stubs::call
-other	needs-classification	condition-mutex	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	condition-name	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	condition-notify	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	condition-wait	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	continue-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	copy-abbrev-table	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	copy-tramp-file-name	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	871	registered through Phase-1 stub list
-other	needs-classification	copy-tramp-file-name	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	490	matched in stubs::call
-other	needs-classification	current-column	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	242	matched in stubs::call
-other	needs-classification	current-idle-time	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
-other	needs-classification	current-indentation	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	242	matched in stubs::call
-other	needs-classification	current-input-method	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	250	matched in stubs::call
-other	needs-classification	current-input-mode	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	46	matched in stubs::call
-other	needs-classification	current-kill	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	300	matched in stubs::call
-other	needs-classification	current-message	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	53	matched in stubs::call
-other	needs-classification	current-thread	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	current-time-zone	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	872	registered through Phase-1 stub list
-other	needs-classification	current-time-zone	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	493	matched in stubs::call
+other	needs-classification	backward-up-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	167	matched in stubs::call
+other	needs-classification	bare-symbol-p	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	298	matched in stubs::call
+other	needs-classification	bookmark-delete	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	200	matched in stubs::call
+other	needs-classification	bookmark-get-bookmark-record	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	200	matched in stubs::call
+other	needs-classification	bookmark-jump	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	200	matched in stubs::call
+other	needs-classification	bookmark-set	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	200	matched in stubs::call
+other	needs-classification	byte-to-string	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	717	registered through Phase-1 stub list
+other	needs-classification	byte-to-string	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	318	matched in stubs::call
+other	needs-classification	cancel-debug-on-entry	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	221	matched in stubs::call
+other	needs-classification	char-displayable-p	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	77	matched in stubs::call
+other	needs-classification	char-equal	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	716	registered through Phase-1 stub list
+other	needs-classification	char-equal	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	309	matched in stubs::call
+other	needs-classification	char-resolve-modifiers	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	718	registered through Phase-1 stub list
+other	needs-classification	char-resolve-modifiers	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	319	matched in stubs::call
+other	needs-classification	char-width	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	113	matched in stubs::call
+other	needs-classification	clear-visited-file-modtime	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
+other	needs-classification	closurep	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	306	matched in stubs::call
+other	needs-classification	command-remapping	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	72	matched in stubs::call
+other	needs-classification	composition-get-gstring	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	78	matched in stubs::call
+other	needs-classification	copy-tramp-file-name	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	721	registered through Phase-1 stub list
+other	needs-classification	copy-tramp-file-name	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	322	matched in stubs::call
+other	needs-classification	current-column	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	160	matched in stubs::call
+other	needs-classification	current-indentation	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	160	matched in stubs::call
+other	needs-classification	current-kill	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	188	matched in stubs::call
+other	needs-classification	current-time-zone	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	722	registered through Phase-1 stub list
+other	needs-classification	current-time-zone	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	325	matched in stubs::call
 other	needs-classification	dbus-available-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	13	matched in stubs::call
-other	needs-classification	deactivate-input-method	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	251	matched in stubs::call
-other	needs-classification	debug	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	347	matched in stubs::call
-other	needs-classification	debug-on-entry	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	347	matched in stubs::call
-other	needs-classification	default-boundp	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	81	matched in stubs::call
-other	needs-classification	default-file-modes	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	856	registered through Phase-1 stub list
-other	needs-classification	default-file-modes	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	447	matched in stubs::call
-other	needs-classification	default-value	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	81	matched in stubs::call
-other	needs-classification	define-abbrev	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	delete-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	ding	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	108	matched in stubs::call
-other	needs-classification	down-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	249	matched in stubs::call
-other	needs-classification	error-type-p	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	865	registered through Phase-1 stub list
-other	needs-classification	error-type-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	474	matched in stubs::call
-other	needs-classification	event-basic-type	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	event-click-count	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	event-convert-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	event-end	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	event-line-count	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	event-modifiers	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	event-start	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	exit-minibuffer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	256	matched in stubs::call
-other	needs-classification	exit-recursive-edit	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	256	matched in stubs::call
-other	needs-classification	expand-file-name	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	66	matched in stubs::call
-other	needs-classification	file-acl	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	857	registered through Phase-1 stub list
-other	needs-classification	file-acl	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	448	matched in stubs::call
-other	needs-classification	file-locked-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	287	matched in stubs::call
-other	needs-classification	file-name-all-completions	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	852	registered through Phase-1 stub list
-other	needs-classification	file-name-all-completions	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	445	matched in stubs::call
-other	needs-classification	file-name-completion	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	853	registered through Phase-1 stub list
-other	needs-classification	file-name-completion	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	445	matched in stubs::call
-other	needs-classification	file-selinux-context	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	858	registered through Phase-1 stub list
-other	needs-classification	file-selinux-context	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	448	matched in stubs::call
-other	needs-classification	file-truename	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	66	matched in stubs::call
-other	needs-classification	finalizer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	520	matched in stubs::call
-other	needs-classification	finalizer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	520	matched in stubs::call
-other	needs-classification	find-composition	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	112	matched in stubs::call
-other	needs-classification	find-composition-internal	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	112	matched in stubs::call
-other	needs-classification	format-network-address	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	897	registered through Phase-1 stub list
-other	needs-classification	format-network-address	stub-module	constant-string	crates/elisp/src/primitives/core/stubs.rs	551	matched in stubs::call
-other	needs-classification	format-seconds	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	898	registered through Phase-1 stub list
-other	needs-classification	format-seconds	stub-module	constant-string	crates/elisp/src/primitives/core/stubs.rs	552	matched in stubs::call
-other	needs-classification	func-arity	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	875	registered through Phase-1 stub list
-other	needs-classification	func-arity	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	503	matched in stubs::call
-other	needs-classification	funcall-interactively	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	874	registered through Phase-1 stub list
-other	needs-classification	funcall-interactively	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	500	matched in stubs::call
-other	needs-classification	generate-new-buffer	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	238	matched in stubs::call
+other	needs-classification	debug	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	221	matched in stubs::call
+other	needs-classification	debug-on-entry	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	221	matched in stubs::call
+other	needs-classification	default-file-modes	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	706	registered through Phase-1 stub list
+other	needs-classification	default-file-modes	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	279	matched in stubs::call
+other	needs-classification	down-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	167	matched in stubs::call
+other	needs-classification	error-type-p	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	715	registered through Phase-1 stub list
+other	needs-classification	error-type-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	306	matched in stubs::call
+other	needs-classification	event-basic-type	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	event-click-count	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	event-convert-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	event-end	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	event-line-count	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	event-modifiers	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	event-start	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	expand-file-name	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	49	matched in stubs::call
+other	needs-classification	file-acl	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	707	registered through Phase-1 stub list
+other	needs-classification	file-acl	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	280	matched in stubs::call
+other	needs-classification	file-locked-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
+other	needs-classification	file-name-all-completions	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	702	registered through Phase-1 stub list
+other	needs-classification	file-name-all-completions	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	277	matched in stubs::call
+other	needs-classification	file-name-completion	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	703	registered through Phase-1 stub list
+other	needs-classification	file-name-completion	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	277	matched in stubs::call
+other	needs-classification	file-selinux-context	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	708	registered through Phase-1 stub list
+other	needs-classification	file-selinux-context	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	280	matched in stubs::call
+other	needs-classification	file-truename	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	49	matched in stubs::call
+other	needs-classification	finalizer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	352	matched in stubs::call
+other	needs-classification	finalizer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	352	matched in stubs::call
+other	needs-classification	find-composition	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	78	matched in stubs::call
+other	needs-classification	find-composition-internal	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	78	matched in stubs::call
+other	needs-classification	format-network-address	stub-module	constant-string	crates/elisp/src/primitives/core/stubs.rs	382	matched in stubs::call
+other	needs-classification	format-seconds	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	739	registered through Phase-1 stub list
+other	needs-classification	format-seconds	stub-module	constant-string	crates/elisp/src/primitives/core/stubs.rs	383	matched in stubs::call
+other	needs-classification	func-arity	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	725	registered through Phase-1 stub list
+other	needs-classification	func-arity	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	335	matched in stubs::call
+other	needs-classification	funcall-interactively	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	724	registered through Phase-1 stub list
+other	needs-classification	funcall-interactively	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	332	matched in stubs::call
+other	needs-classification	generate-new-buffer	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	156	matched in stubs::call
 other	needs-classification	get-load-suffixes	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	27	matched in stubs::call
-other	needs-classification	get-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
 other	needs-classification	get-truename-buffer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	28	matched in stubs::call
 other	needs-classification	gnutls-available-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	13	matched in stubs::call
-other	needs-classification	group-gid	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	90	matched in stubs::call
-other	needs-classification	group-name	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	895	registered through Phase-1 stub list
-other	needs-classification	group-name	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	547	matched in stubs::call
-other	needs-classification	group-real-gid	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	90	matched in stubs::call
-other	needs-classification	gui-get-selection	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	317	matched in stubs::call
-other	needs-classification	gui-selection-exists-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	317	matched in stubs::call
-other	needs-classification	gui-selection-owner-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	317	matched in stubs::call
-other	needs-classification	gui-set-selection	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	317	matched in stubs::call
-other	needs-classification	hash-table-contains-p	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	885	registered through Phase-1 stub list
-other	needs-classification	hash-table-contains-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	532	matched in stubs::call
-other	needs-classification	hash-table-literal	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	884	registered through Phase-1 stub list
-other	needs-classification	hash-table-literal	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	531	matched in stubs::call
-other	needs-classification	indent-according-to-mode	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	245	matched in stubs::call
-other	needs-classification	indent-for-tab-command	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	245	matched in stubs::call
-other	needs-classification	input-pending-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	53	matched in stubs::call
-other	needs-classification	internal--obarray-buckets	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	887	registered through Phase-1 stub list
-other	needs-classification	internal--obarray-buckets	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	536	matched in stubs::call
-other	needs-classification	interrupt-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	kill-all-local-variables	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	237	matched in stubs::call
-other	needs-classification	kill-append	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	300	matched in stubs::call
-other	needs-classification	kill-emacs	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	891	registered through Phase-1 stub list
-other	needs-classification	kill-emacs	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	539	matched in stubs::call
-other	needs-classification	kill-line	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	300	matched in stubs::call
-other	needs-classification	kill-local-variable	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	84	matched in stubs::call
-other	needs-classification	kill-new	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	300	matched in stubs::call
-other	needs-classification	kill-process	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	890	registered through Phase-1 stub list
-other	needs-classification	kill-process	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	539	matched in stubs::call
-other	needs-classification	kill-region	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	300	matched in stubs::call
-other	needs-classification	kill-ring-save	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	300	matched in stubs::call
-other	needs-classification	kill-whole-line	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	300	matched in stubs::call
+other	needs-classification	group-gid	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	68	matched in stubs::call
+other	needs-classification	group-name	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	737	registered through Phase-1 stub list
+other	needs-classification	group-name	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	378	matched in stubs::call
+other	needs-classification	group-real-gid	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	68	matched in stubs::call
+other	needs-classification	hash-table-contains-p	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	735	registered through Phase-1 stub list
+other	needs-classification	hash-table-contains-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	364	matched in stubs::call
+other	needs-classification	hash-table-literal	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	734	registered through Phase-1 stub list
+other	needs-classification	hash-table-literal	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	363	matched in stubs::call
+other	needs-classification	indent-according-to-mode	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	163	matched in stubs::call
+other	needs-classification	indent-for-tab-command	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	163	matched in stubs::call
+other	needs-classification	kill-append	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	188	matched in stubs::call
+other	needs-classification	kill-emacs	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	370	matched in stubs::call
+other	needs-classification	kill-line	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	188	matched in stubs::call
+other	needs-classification	kill-new	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	188	matched in stubs::call
+other	needs-classification	kill-process	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	370	matched in stubs::call
+other	needs-classification	kill-region	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	188	matched in stubs::call
+other	needs-classification	kill-ring-save	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	188	matched in stubs::call
+other	needs-classification	kill-whole-line	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	188	matched in stubs::call
 other	needs-classification	libxml-available-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	13	matched in stubs::call
-other	needs-classification	libxml-parse-html-region	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	385	matched in stubs::call
-other	needs-classification	libxml-parse-xml-region	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	385	matched in stubs::call
-other	needs-classification	local-variable-if-set-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	83	matched in stubs::call
-other	needs-classification	local-variable-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	83	matched in stubs::call
-other	needs-classification	lock-buffer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	287	matched in stubs::call
-other	needs-classification	lossage-size	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	892	registered through Phase-1 stub list
-other	needs-classification	lossage-size	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	544	matched in stubs::call
-other	needs-classification	make-abbrev-table	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	273	matched in stubs::call
-other	needs-classification	make-condition-variable	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	make-finalizer	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	881	registered through Phase-1 stub list
-other	needs-classification	make-finalizer	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	519	matched in stubs::call
-other	needs-classification	make-indirect-buffer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	47	matched in stubs::call
-other	needs-classification	make-mutex	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	make-network-process	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	32	matched in stubs::call
-other	needs-classification	make-network-process: no network in test env	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
-other	needs-classification	make-pipe-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
-other	needs-classification	make-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
-other	needs-classification	make-record	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	880	registered through Phase-1 stub list
-other	needs-classification	make-record	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	518	matched in stubs::call
-other	needs-classification	make-ring	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	882	registered through Phase-1 stub list
-other	needs-classification	make-ring	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	520	matched in stubs::call
-other	needs-classification	make-serial-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
-other	needs-classification	make-thread	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	make-variable-buffer-local	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	84	matched in stubs::call
-other	needs-classification	many	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	505	matched in stubs::call
-other	needs-classification	map-do	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	873	registered through Phase-1 stub list
-other	needs-classification	map-do	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	495	matched in stubs::call
-other	needs-classification	mapatoms	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	147	matched in stubs::call
-other	needs-classification	mapbacktrace	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	347	matched in stubs::call
-other	needs-classification	mapp	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	72	matched in stubs::call
-other	needs-classification	menu-bar-lines	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	143	matched in stubs::call
-other	needs-classification	menu-bar-mode	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	143	matched in stubs::call
-other	needs-classification	message-box	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	108	matched in stubs::call
-other	needs-classification	minibuffer-depth	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	52	matched in stubs::call
-other	needs-classification	minibuffer-message	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	234	matched in stubs::call
-other	needs-classification	minibufferp	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	52	matched in stubs::call
-other	needs-classification	module-function-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	474	matched in stubs::call
-other	needs-classification	multibyte-char-to-unibyte	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	161	matched in stubs::call
-other	needs-classification	mutex-lock	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	mutex-name	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	mutex-unlock	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
+other	needs-classification	libxml-parse-html-region	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	233	matched in stubs::call
+other	needs-classification	libxml-parse-xml-region	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	233	matched in stubs::call
+other	needs-classification	lossage-size	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	736	registered through Phase-1 stub list
+other	needs-classification	lossage-size	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	375	matched in stubs::call
+other	needs-classification	make-finalizer	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	731	registered through Phase-1 stub list
+other	needs-classification	make-finalizer	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	351	matched in stubs::call
+other	needs-classification	make-indirect-buffer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	36	matched in stubs::call
+other	needs-classification	make-record	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	730	registered through Phase-1 stub list
+other	needs-classification	make-record	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	350	matched in stubs::call
+other	needs-classification	make-ring	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	732	registered through Phase-1 stub list
+other	needs-classification	make-ring	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	352	matched in stubs::call
+other	needs-classification	many	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	337	matched in stubs::call
+other	needs-classification	map-do	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	723	registered through Phase-1 stub list
+other	needs-classification	map-do	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	327	matched in stubs::call
+other	needs-classification	mapatoms	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	103	matched in stubs::call
+other	needs-classification	mapbacktrace	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	221	matched in stubs::call
+other	needs-classification	mapp	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	55	matched in stubs::call
+other	needs-classification	menu-bar-lines	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	99	matched in stubs::call
+other	needs-classification	menu-bar-mode	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	99	matched in stubs::call
+other	needs-classification	module-function-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	306	matched in stubs::call
+other	needs-classification	multibyte-char-to-unibyte	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	112	matched in stubs::call
 other	needs-classification	native-comp-available-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	13	matched in stubs::call
-other	needs-classification	network-lookup-address-info	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	63	matched in stubs::call
-other	needs-classification	next-overlay-change	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	117	matched in stubs::call
-other	needs-classification	num-processors	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	893	registered through Phase-1 stub list
-other	needs-classification	num-processors	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	545	matched in stubs::call
-other	needs-classification	obarray-clear	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	886	registered through Phase-1 stub list
-other	needs-classification	obarray-clear	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	535	matched in stubs::call
-other	needs-classification	open-network-stream	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
-other	needs-classification	popup-menu	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	143	matched in stubs::call
-other	needs-classification	posn-actual-col-row	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	posn-area	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	posn-col-row	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	posn-object	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	posn-object-width-height	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	posn-object-x-y	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	posn-string	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	posn-timestamp	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	posn-x-y	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-other	needs-classification	prefix-numeric-value	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	851	registered through Phase-1 stub list
-other	needs-classification	prefix-numeric-value	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	440	matched in stubs::call
-other	needs-classification	previous-overlay-change	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	117	matched in stubs::call
-other	needs-classification	process-attributes	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
-other	needs-classification	process-buffer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-coding-system	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-command	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-contact	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	889	registered through Phase-1 stub list
-other	needs-classification	process-contact	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	539	matched in stubs::call
-other	needs-classification	process-exit-status	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-filter	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-id	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-kill-without-query	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
-other	needs-classification	process-live-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-name	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-query-on-exit-flag	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-running-child-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-send-eof	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-send-region	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-send-string	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-sentinel	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	process-status	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
-other	needs-classification	quit-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	read-buffer	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	101	matched in stubs::call
-other	needs-classification	read-char	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	58	matched in stubs::call
-other	needs-classification	read-char-exclusive	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	58	matched in stubs::call
-other	needs-classification	read-event	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	58	matched in stubs::call
-other	needs-classification	read-file-name	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	101	matched in stubs::call
-other	needs-classification	read-from-minibuffer	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	101	matched in stubs::call
-other	needs-classification	read-key	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	57	matched in stubs::call
-other	needs-classification	read-no-blanks-input	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	101	matched in stubs::call
-other	needs-classification	read-number	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	101	matched in stubs::call
-other	needs-classification	read-passwd	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	877	registered through Phase-1 stub list
-other	needs-classification	read-passwd	stub-module	constant-string	crates/elisp/src/primitives/core/stubs.rs	510	matched in stubs::call
-other	needs-classification	recent-keys	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	54	matched in stubs::call
-other	needs-classification	recursion-depth	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	52	matched in stubs::call
-other	needs-classification	recursive-edit	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	256	matched in stubs::call
-other	needs-classification	remove-from-invisibility-spec	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	150	matched in stubs::call
-other	needs-classification	remove-function	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	333	matched in stubs::call
-other	needs-classification	remove-hook	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	265	matched in stubs::call
-other	needs-classification	restore-buffer-modified-p	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	155	matched in stubs::call
-other	needs-classification	ring-convert-sequence-to-ring	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	883	registered through Phase-1 stub list
-other	needs-classification	ring-convert-sequence-to-ring	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	528	matched in stubs::call
-other	needs-classification	run-at-time	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
-other	needs-classification	run-hook-with-args	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	265	matched in stubs::call
-other	needs-classification	run-hook-with-args-until-failure	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	265	matched in stubs::call
-other	needs-classification	run-hook-with-args-until-success	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	265	matched in stubs::call
-other	needs-classification	run-hook-wrapped	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	265	matched in stubs::call
-other	needs-classification	run-hooks	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	265	matched in stubs::call
-other	needs-classification	run-with-idle-timer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
-other	needs-classification	run-with-timer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
-other	needs-classification	scroll-up	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	863	registered through Phase-1 stub list
-other	needs-classification	scroll-up	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	460	matched in stubs::call
-other	needs-classification	secure-hash-algorithms	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	869	registered through Phase-1 stub list
-other	needs-classification	secure-hash-algorithms	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	488	matched in stubs::call
-other	needs-classification	self-insert-command	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	862	registered through Phase-1 stub list
-other	needs-classification	self-insert-command	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	453	matched in stubs::call
-other	needs-classification	set-auto-mode--find-matching-alist-entry	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	899	registered through Phase-1 stub list
-other	needs-classification	set-auto-mode--find-matching-alist-entry	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	555	matched in stubs::call
-other	needs-classification	set-buffer-modified-p	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	155	matched in stubs::call
-other	needs-classification	set-buffer-multibyte	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	296	matched in stubs::call
-other	needs-classification	set-default	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	82	matched in stubs::call
-other	needs-classification	set-default-toplevel-value	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	92	matched in stubs::call
-other	needs-classification	set-file-acl	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	859	registered through Phase-1 stub list
-other	needs-classification	set-file-acl	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	448	matched in stubs::call
-other	needs-classification	set-file-modes	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	69	matched in stubs::call
-other	needs-classification	set-input-method	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	251	matched in stubs::call
-other	needs-classification	set-process-buffer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	set-process-filter	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	set-process-plist	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	888	registered through Phase-1 stub list
-other	needs-classification	set-process-plist	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	539	matched in stubs::call
-other	needs-classification	set-process-query-on-exit-flag	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	set-process-sentinel	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	set-visited-file-name	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	287	matched in stubs::call
-other	needs-classification	setopt	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	900	registered through Phase-1 stub list
-other	needs-classification	setopt	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	556	matched in stubs::call
-other	needs-classification	signal-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	split-char	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	870	registered through Phase-1 stub list
-other	needs-classification	split-char	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	489	matched in stubs::call
-other	needs-classification	sqlite-close	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	393	matched in stubs::call
-other	needs-classification	sqlite-commit	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	393	matched in stubs::call
-other	needs-classification	sqlite-execute	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	393	matched in stubs::call
-other	needs-classification	sqlite-load-extension	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	393	matched in stubs::call
-other	needs-classification	sqlite-open	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	393	matched in stubs::call
-other	needs-classification	sqlite-pragma	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	393	matched in stubs::call
-other	needs-classification	sqlite-rollback	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	393	matched in stubs::call
-other	needs-classification	sqlite-select	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	393	matched in stubs::call
-other	needs-classification	sqlite-transaction	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	393	matched in stubs::call
-other	needs-classification	sqlite-version	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	393	matched in stubs::call
-other	needs-classification	sqlitep	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	393	matched in stubs::call
-other	needs-classification	start-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	33	matched in stubs::call
-other	needs-classification	stop-process	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-other	needs-classification	substitute-in-file-name	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	860	registered through Phase-1 stub list
-other	needs-classification	substitute-in-file-name	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	449	matched in stubs::call
-other	needs-classification	symbol-file	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	239	matched in stubs::call
-other	needs-classification	symbol-plist	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	148	matched in stubs::call
-other	needs-classification	tab-bar-mode	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	143	matched in stubs::call
-other	needs-classification	text-char-description	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	172	matched in stubs::call
-other	needs-classification	thread--blocker	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	thread-alive-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	thread-join	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	thread-last-error	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	thread-live-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	thread-name	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	thread-signal	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	thread-yield	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	190	matched in stubs::call
-other	needs-classification	timer-activate	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
-other	needs-classification	timer-event-handler	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
-other	needs-classification	timer-inc-time	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	187	matched in stubs::call
-other	needs-classification	timer-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
-other	needs-classification	timer-set-function	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	187	matched in stubs::call
-other	needs-classification	timer-set-idle-time	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	187	matched in stubs::call
-other	needs-classification	timer-set-time	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	187	matched in stubs::call
-other	needs-classification	timerp	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
-other	needs-classification	toggle-input-method	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	251	matched in stubs::call
-other	needs-classification	tool-bar-local-item	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	51	matched in stubs::call
-other	needs-classification	tool-bar-local-item-from-menu	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	51	matched in stubs::call
-other	needs-classification	tool-bar-mode	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	143	matched in stubs::call
-other	needs-classification	top-level	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	256	matched in stubs::call
-other	needs-classification	total-line-spacing	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	864	registered through Phase-1 stub list
-other	needs-classification	total-line-spacing	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	461	matched in stubs::call
-other	needs-classification	translation-table-id	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	262	matched in stubs::call
-other	needs-classification	treesit-language-available-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-library-abi-version	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-node-child	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-node-child-by-field-name	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-node-children	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-node-end	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-node-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-node-parent	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-node-start	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-node-string	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-node-type	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-parser-buffer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-parser-create	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-parser-delete	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-parser-language	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-parser-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-query-capture	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	treesit-query-compile	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	406	matched in stubs::call
-other	needs-classification	truncate-string-to-width	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	168	matched in stubs::call
+other	needs-classification	next-overlay-change	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	83	matched in stubs::call
+other	needs-classification	num-processors	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	376	matched in stubs::call
+other	needs-classification	popup-menu	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	99	matched in stubs::call
+other	needs-classification	posn-actual-col-row	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	posn-area	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	posn-col-row	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	posn-object	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	posn-object-width-height	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	posn-object-x-y	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	posn-string	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	posn-timestamp	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	posn-x-y	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+other	needs-classification	prefix-numeric-value	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	701	registered through Phase-1 stub list
+other	needs-classification	prefix-numeric-value	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	264	matched in stubs::call
+other	needs-classification	previous-overlay-change	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	83	matched in stubs::call
+other	needs-classification	process-contact	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	370	matched in stubs::call
+other	needs-classification	read-passwd	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	727	registered through Phase-1 stub list
+other	needs-classification	read-passwd	stub-module	constant-string	crates/elisp/src/primitives/core/stubs.rs	342	matched in stubs::call
+other	needs-classification	remove-from-invisibility-spec	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	106	matched in stubs::call
+other	needs-classification	remove-function	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	209	matched in stubs::call
+other	needs-classification	ring-convert-sequence-to-ring	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	733	registered through Phase-1 stub list
+other	needs-classification	ring-convert-sequence-to-ring	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	360	matched in stubs::call
+other	needs-classification	scroll-up	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	713	registered through Phase-1 stub list
+other	needs-classification	scroll-up	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	292	matched in stubs::call
+other	needs-classification	secure-hash-algorithms	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	719	registered through Phase-1 stub list
+other	needs-classification	secure-hash-algorithms	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	320	matched in stubs::call
+other	needs-classification	self-insert-command	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	712	registered through Phase-1 stub list
+other	needs-classification	self-insert-command	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	285	matched in stubs::call
+other	needs-classification	set-auto-mode--find-matching-alist-entry	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	740	registered through Phase-1 stub list
+other	needs-classification	set-auto-mode--find-matching-alist-entry	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	386	matched in stubs::call
+other	needs-classification	set-buffer-multibyte	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	184	matched in stubs::call
+other	needs-classification	set-file-acl	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	709	registered through Phase-1 stub list
+other	needs-classification	set-file-acl	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	280	matched in stubs::call
+other	needs-classification	set-file-modes	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	52	matched in stubs::call
+other	needs-classification	set-process-plist	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	370	matched in stubs::call
+other	needs-classification	set-visited-file-name	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
+other	needs-classification	setopt	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	741	registered through Phase-1 stub list
+other	needs-classification	setopt	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	387	matched in stubs::call
+other	needs-classification	split-char	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	720	registered through Phase-1 stub list
+other	needs-classification	split-char	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	321	matched in stubs::call
+other	needs-classification	substitute-in-file-name	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	710	registered through Phase-1 stub list
+other	needs-classification	substitute-in-file-name	stub-module	argument-derived	crates/elisp/src/primitives/core/stubs.rs	281	matched in stubs::call
+other	needs-classification	symbol-file	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	157	matched in stubs::call
+other	needs-classification	symbol-plist	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	104	matched in stubs::call
+other	needs-classification	tab-bar-mode	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	99	matched in stubs::call
+other	needs-classification	text-char-description	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	123	matched in stubs::call
+other	needs-classification	tool-bar-local-item	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	40	matched in stubs::call
+other	needs-classification	tool-bar-local-item-from-menu	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	40	matched in stubs::call
+other	needs-classification	tool-bar-mode	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	99	matched in stubs::call
+other	needs-classification	total-line-spacing	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	714	registered through Phase-1 stub list
+other	needs-classification	total-line-spacing	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	293	matched in stubs::call
+other	needs-classification	translation-table-id	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	170	matched in stubs::call
+other	needs-classification	treesit-language-available-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-library-abi-version	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-node-child	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-node-child-by-field-name	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-node-children	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-node-end	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-node-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-node-parent	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-node-start	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-node-string	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-node-type	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-parser-buffer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-parser-create	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-parser-delete	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-parser-language	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-parser-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-query-capture	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	treesit-query-compile	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	243	matched in stubs::call
+other	needs-classification	truncate-string-to-width	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	119	matched in stubs::call
 other	needs-classification	undo-boundary	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	22	matched in stubs::call
-other	needs-classification	unencodable-char-position	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	879	registered through Phase-1 stub list
-other	needs-classification	unencodable-char-position	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	516	matched in stubs::call
-other	needs-classification	unhandled-file-name-directory	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	861	registered through Phase-1 stub list
-other	needs-classification	unhandled-file-name-directory	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	450	matched in stubs::call
-other	needs-classification	unintern	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	147	matched in stubs::call
-other	needs-classification	unlock-buffer	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	287	matched in stubs::call
-other	needs-classification	up-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	249	matched in stubs::call
-other	needs-classification	user-real-uid	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	89	matched in stubs::call
-other	needs-classification	user-uid	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	89	matched in stubs::call
-other	needs-classification	verify-visited-file-modtime	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	287	matched in stubs::call
-other	needs-classification	visited-file-modtime	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	287	matched in stubs::call
-other	needs-classification	x-disown-selection	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	317	matched in stubs::call
-other	needs-classification	x-get-selection	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	317	matched in stubs::call
-other	needs-classification	x-own-selection	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	317	matched in stubs::call
-other	needs-classification	x-popup-menu	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	143	matched in stubs::call
-other	needs-classification	x-selection-exists-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	317	matched in stubs::call
-other	needs-classification	x-selection-owner-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	317	matched in stubs::call
-other	needs-classification	x-selection-value	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	317	matched in stubs::call
-other	needs-classification	x-set-selection	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	317	matched in stubs::call
-other	needs-classification	xml-parse-file	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	385	matched in stubs::call
-other	needs-classification	xml-parse-region	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	385	matched in stubs::call
-other	needs-classification	xml-parse-string	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	385	matched in stubs::call
-other	needs-classification	y-or-n-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	107	matched in stubs::call
-other	needs-classification	yank	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	300	matched in stubs::call
-other	needs-classification	yank-pop	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	300	matched in stubs::call
-other	needs-classification	yes-or-no-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	107	matched in stubs::call
+other	needs-classification	unencodable-char-position	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	729	registered through Phase-1 stub list
+other	needs-classification	unencodable-char-position	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	348	matched in stubs::call
+other	needs-classification	unhandled-file-name-directory	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	711	registered through Phase-1 stub list
+other	needs-classification	unhandled-file-name-directory	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	282	matched in stubs::call
+other	needs-classification	unintern	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	103	matched in stubs::call
+other	needs-classification	up-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	167	matched in stubs::call
+other	needs-classification	user-real-uid	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	67	matched in stubs::call
+other	needs-classification	user-uid	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	67	matched in stubs::call
+other	needs-classification	verify-visited-file-modtime	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
+other	needs-classification	visited-file-modtime	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	177	matched in stubs::call
+other	needs-classification	x-popup-menu	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	99	matched in stubs::call
+other	needs-classification	xml-parse-file	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	233	matched in stubs::call
+other	needs-classification	xml-parse-region	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	233	matched in stubs::call
+other	needs-classification	xml-parse-string	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	233	matched in stubs::call
+other	needs-classification	yank	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	188	matched in stubs::call
+other	needs-classification	yank-pop	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	188	matched in stubs::call
 other	runtime-missing	abbrev-table-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	628	silent primitive alias
-other	runtime-missing	add-hook	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	713	silent primitive alias
-other	runtime-missing	all-completions	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	910	silent primitive alias
+other	runtime-missing	all-completions	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	911	silent primitive alias
 other	runtime-missing	ask-user-about-lock	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	681	silent primitive alias
 other	runtime-missing	autoload	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	237	silent primitive alias
 other	runtime-missing	backup-buffer	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	680	silent primitive alias
 other	runtime-missing	beep	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	700	silent primitive alias
-other	runtime-missing	buffer-hash	core-alias	ignore	crates/elisp/src/primitives/core.rs	285	registered as primitive("ignore")
-other	runtime-missing	buffer-line-statistics	core-alias	ignore	crates/elisp/src/primitives/core.rs	288	registered as primitive("ignore")
 other	runtime-missing	byte-compile-warn	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	353	silent primitive alias
-other	runtime-missing	cancel-timer	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1001	silent primitive alias
-other	runtime-missing	cl-progv	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1095	silent primitive alias
+other	runtime-missing	cl-progv	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1087	silent primitive alias
 other	runtime-missing	clear-abbrev-table	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	627	silent primitive alias
-other	runtime-missing	clear-composition-cache	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	871	silent primitive alias
-other	runtime-missing	clear-string	core-alias	ignore	crates/elisp/src/primitives/core.rs	289	registered as primitive("ignore")
+other	runtime-missing	clear-composition-cache	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	872	silent primitive alias
+other	runtime-missing	clear-string	core-alias	ignore	crates/elisp/src/primitives/core.rs	306	registered as primitive("ignore")
 other	runtime-missing	coding-system-type	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	490	silent primitive alias
-other	runtime-missing	commandp	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1402	silent primitive alias
+other	runtime-missing	commandp	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1394	silent primitive alias
 other	runtime-missing	completing-read	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	694	silent primitive alias
-other	runtime-missing	compose-region-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	868	silent primitive alias
-other	runtime-missing	compose-string-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	869	silent primitive alias
-other	runtime-missing	current-input-mode	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1014	silent primitive alias
-other	runtime-missing	current-message	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	953	silent primitive alias
+other	runtime-missing	compose-region-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	869	silent primitive alias
+other	runtime-missing	compose-string-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	870	silent primitive alias
+other	runtime-missing	current-message	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	954	silent primitive alias
 other	runtime-missing	current-time-string	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	308	silent primitive alias
-other	runtime-missing	daemonp	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1090	silent primitive alias
-other	runtime-missing	dbus-ping	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1086	silent primitive alias
-other	runtime-missing	declare-function	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	888	silent primitive alias
+other	runtime-missing	daemonp	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1082	silent primitive alias
+other	runtime-missing	dbus-ping	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1078	silent primitive alias
+other	runtime-missing	declare-function	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	889	silent primitive alias
 other	runtime-missing	default-boundp	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	239	silent primitive alias
 other	runtime-missing	define-abbrev-table	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	626	silent primitive alias
-other	runtime-missing	define-ccl-program	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	857	silent primitive alias
-other	runtime-missing	define-hash-table-test	core-alias	ignore	crates/elisp/src/primitives/core.rs	290	registered as primitive("ignore")
-other	runtime-missing	defvar-local	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	889	silent primitive alias
+other	runtime-missing	define-ccl-program	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	858	silent primitive alias
+other	runtime-missing	define-hash-table-test	core-alias	ignore	crates/elisp/src/primitives/core.rs	307	registered as primitive("ignore")
+other	runtime-missing	defvar-local	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	890	silent primitive alias
 other	runtime-missing	ding	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	699	silent primitive alias
 other	runtime-missing	emacs-pid	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	303	silent primitive alias
 other	runtime-missing	event-basic-type	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	115	silent primitive alias
 other	runtime-missing	event-convert-list	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	358	silent primitive alias
 other	runtime-missing	event-modifiers	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	114	silent primitive alias
 other	runtime-missing	file-locked-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	684	silent primitive alias
-other	runtime-missing	file-name-case-insensitive-p	core-alias	ignore	crates/elisp/src/primitives/core.rs	272	registered as primitive("ignore")
+other	runtime-missing	file-name-case-insensitive-p	core-alias	ignore	crates/elisp/src/primitives/core.rs	294	registered as primitive("ignore")
 other	runtime-missing	find-buffer-visiting	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	679	silent primitive alias
-other	runtime-missing	find-composition-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	870	silent primitive alias
-other	runtime-missing	fontp	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	875	silent primitive alias
-other	runtime-missing	format-message	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	730	silent primitive alias
-other	runtime-missing	get-char-code-property	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	880	silent primitive alias
-other	runtime-missing	gui-get-selection	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1056	silent primitive alias
-other	runtime-missing	gui-selection-exists-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1058	silent primitive alias
-other	runtime-missing	gui-selection-owner-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1057	silent primitive alias
-other	runtime-missing	gui-set-selection	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1055	silent primitive alias
+other	runtime-missing	find-composition-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	871	silent primitive alias
+other	runtime-missing	fontp	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	876	silent primitive alias
+other	runtime-missing	format-message	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	731	silent primitive alias
+other	runtime-missing	get-char-code-property	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	881	silent primitive alias
+other	runtime-missing	gui-get-selection	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1048	silent primitive alias
+other	runtime-missing	gui-selection-exists-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1050	silent primitive alias
+other	runtime-missing	gui-selection-owner-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1049	silent primitive alias
+other	runtime-missing	gui-set-selection	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1047	silent primitive alias
 other	runtime-missing	hash-table-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	252	silent primitive alias
-other	runtime-missing	indent-line-to	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	965	silent primitive alias
-other	runtime-missing	input-pending-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1004	silent primitive alias
-other	runtime-missing	interactive-form	core-alias	ignore	crates/elisp/src/primitives/core.rs	277	registered as primitive("ignore")
-other	runtime-missing	internal--hash-table-buckets	core-alias	ignore	crates/elisp/src/primitives/core.rs	292	registered as primitive("ignore")
-other	runtime-missing	internal--hash-table-histogram	core-alias	ignore	crates/elisp/src/primitives/core.rs	293	registered as primitive("ignore")
-other	runtime-missing	internal--hash-table-index-size	core-alias	ignore	crates/elisp/src/primitives/core.rs	294	registered as primitive("ignore")
-other	runtime-missing	internal-complete-buffer	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	912	silent primitive alias
-other	runtime-missing	json-available-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1088	silent primitive alias
-other	runtime-missing	line-number-at-pos	core-alias	ignore	crates/elisp/src/primitives/core.rs	295	registered as primitive("ignore")
-other	runtime-missing	load-average	core-alias	ignore	crates/elisp/src/primitives/core.rs	287	registered as primitive("ignore")
-other	runtime-missing	locale-info	core-alias	ignore	crates/elisp/src/primitives/core.rs	286	registered as primitive("ignore")
-other	runtime-missing	locate-file-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	764	silent primitive alias
+other	runtime-missing	indent-line-to	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	966	silent primitive alias
+other	runtime-missing	interactive-form	core-alias	ignore	crates/elisp/src/primitives/core.rs	296	registered as primitive("ignore")
+other	runtime-missing	internal--hash-table-buckets	core-alias	ignore	crates/elisp/src/primitives/core.rs	309	registered as primitive("ignore")
+other	runtime-missing	internal--hash-table-histogram	core-alias	ignore	crates/elisp/src/primitives/core.rs	310	registered as primitive("ignore")
+other	runtime-missing	internal--hash-table-index-size	core-alias	ignore	crates/elisp/src/primitives/core.rs	311	registered as primitive("ignore")
+other	runtime-missing	internal-complete-buffer	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	913	silent primitive alias
+other	runtime-missing	json-available-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1080	silent primitive alias
+other	runtime-missing	line-number-at-pos	core-alias	ignore	crates/elisp/src/primitives/core.rs	312	registered as primitive("ignore")
+other	runtime-missing	load-average	core-alias	ignore	crates/elisp/src/primitives/core.rs	305	registered as primitive("ignore")
+other	runtime-missing	locale-info	core-alias	ignore	crates/elisp/src/primitives/core.rs	304	registered as primitive("ignore")
+other	runtime-missing	locate-file-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	765	silent primitive alias
 other	runtime-missing	lock-buffer	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	682	silent primitive alias
-other	runtime-missing	lookup-nested-alist	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	859	silent primitive alias
+other	runtime-missing	lookup-nested-alist	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	860	silent primitive alias
 other	runtime-missing	lwarn	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	702	silent primitive alias
 other	runtime-missing	make-byte-code	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	95	silent primitive alias
-other	runtime-missing	make-obsolete	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	885	silent primitive alias
-other	runtime-missing	make-obsolete-variable	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	886	silent primitive alias
+other	runtime-missing	make-obsolete	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	886	silent primitive alias
+other	runtime-missing	make-obsolete-variable	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	887	silent primitive alias
 other	runtime-missing	mapconcat	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	111	silent primitive alias
-other	runtime-missing	match-data--translate	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	884	silent primitive alias
-other	runtime-missing	md5	core-alias	ignore	crates/elisp/src/primitives/core.rs	284	registered as primitive("ignore")
-other	runtime-missing	minibuffer-depth	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	903	silent primitive alias
-other	runtime-missing	minibufferp	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	894	silent primitive alias
-other	runtime-missing	module-load	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1085	silent primitive alias
-other	runtime-missing	mouse-position	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1039	silent primitive alias
-other	runtime-missing	native-comp-available-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1082	silent primitive alias
-other	runtime-missing	native-comp-unit-file	core-alias	ignore	crates/elisp/src/primitives/core.rs	278	registered as primitive("ignore")
-other	runtime-missing	native-comp-unit-set-file	core-alias	ignore	crates/elisp/src/primitives/core.rs	279	registered as primitive("ignore")
-other	runtime-missing	native-compile	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1084	silent primitive alias
-other	runtime-missing	obarray-get	core-alias	ignore	crates/elisp/src/primitives/core.rs	274	registered as primitive("ignore")
-other	runtime-missing	obarray-make	core-alias	ignore	crates/elisp/src/primitives/core.rs	273	registered as primitive("ignore")
-other	runtime-missing	obarray-put	core-alias	ignore	crates/elisp/src/primitives/core.rs	275	registered as primitive("ignore")
-other	runtime-missing	object-intervals	core-alias	ignore	crates/elisp/src/primitives/core.rs	291	registered as primitive("ignore")
-other	runtime-missing	oclosure-define	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	887	silent primitive alias
-other	runtime-missing	pdumper-stats	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1081	silent primitive alias
-other	runtime-missing	posn-at-x-y	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1048	silent primitive alias
+other	runtime-missing	match-data--translate	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	885	silent primitive alias
+other	runtime-missing	md5	core-alias	ignore	crates/elisp/src/primitives/core.rs	303	registered as primitive("ignore")
+other	runtime-missing	minibuffer-depth	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	904	silent primitive alias
+other	runtime-missing	minibufferp	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	895	silent primitive alias
+other	runtime-missing	module-load	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1077	silent primitive alias
+other	runtime-missing	mouse-position	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1031	silent primitive alias
+other	runtime-missing	native-comp-available-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1074	silent primitive alias
+other	runtime-missing	native-comp-unit-file	core-alias	ignore	crates/elisp/src/primitives/core.rs	297	registered as primitive("ignore")
+other	runtime-missing	native-comp-unit-set-file	core-alias	ignore	crates/elisp/src/primitives/core.rs	298	registered as primitive("ignore")
+other	runtime-missing	native-compile	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1076	silent primitive alias
+other	runtime-missing	object-intervals	core-alias	ignore	crates/elisp/src/primitives/core.rs	308	registered as primitive("ignore")
+other	runtime-missing	oclosure-define	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	888	silent primitive alias
+other	runtime-missing	pdumper-stats	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1073	silent primitive alias
+other	runtime-missing	posn-at-x-y	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1040	silent primitive alias
 other	runtime-missing	process-attributes	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	112	silent primitive alias
 other	runtime-missing	process-attributes	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	304	silent primitive alias
-other	runtime-missing	process-list	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1067	silent primitive alias
+other	runtime-missing	process-list	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1059	silent primitive alias
 other	runtime-missing	read-directory-name	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	688	silent primitive alias
 other	runtime-missing	read-file-name	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	687	silent primitive alias
-other	runtime-missing	recent-keys	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1012	silent primitive alias
 other	runtime-missing	recursive-edit	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	697	silent primitive alias
-other	runtime-missing	regexp-opt	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	867	silent primitive alias
+other	runtime-missing	regexp-opt	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	868	silent primitive alias
 other	runtime-missing	register-input-method	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	658	silent primitive alias
-other	runtime-missing	register-input-method	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	848	silent primitive alias
-other	runtime-missing	remove-hook	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	714	silent primitive alias
-other	runtime-missing	run-hook-with-args	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	704	silent primitive alias
-other	runtime-missing	run-hooks	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	703	silent primitive alias
-other	runtime-missing	rx-define	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1500	silent primitive alias
-other	runtime-missing	save-buffer	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	883	silent primitive alias
-other	runtime-missing	secure-hash	core-alias	ignore	crates/elisp/src/primitives/core.rs	283	registered as primitive("ignore")
-other	runtime-missing	set-buffer-major-mode	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	767	silent primitive alias
+other	runtime-missing	register-input-method	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	849	silent primitive alias
+other	runtime-missing	rx-define	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1492	silent primitive alias
+other	runtime-missing	save-buffer	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	884	silent primitive alias
+other	runtime-missing	secure-hash	core-alias	ignore	crates/elisp/src/primitives/core.rs	302	registered as primitive("ignore")
+other	runtime-missing	set-buffer-major-mode	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	768	silent primitive alias
 other	runtime-missing	set-file-modes	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	677	silent primitive alias
 other	runtime-missing	set-file-times	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	678	silent primitive alias
-other	runtime-missing	set-input-mode	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1013	silent primitive alias
 other	runtime-missing	set-language-environment	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	411	silent primitive alias
-other	runtime-missing	set-language-info	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	847	silent primitive alias
+other	runtime-missing	set-language-info	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	848	silent primitive alias
 other	runtime-missing	set-language-info-alist	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	657	silent primitive alias
-other	runtime-missing	set-mouse-position	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1040	silent primitive alias
-other	runtime-missing	set-nested-alist	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	858	silent primitive alias
+other	runtime-missing	set-mouse-position	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1032	silent primitive alias
+other	runtime-missing	set-nested-alist	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	859	silent primitive alias
 other	runtime-missing	set-process-sentinel	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	113	silent primitive alias
 other	runtime-missing	set-visited-file-modtime	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	676	silent primitive alias
-other	runtime-missing	setenv-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	766	silent primitive alias
+other	runtime-missing	setenv-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	767	silent primitive alias
 other	runtime-missing	sit-for	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	695	silent primitive alias
 other	runtime-missing	sleep-for	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	696	silent primitive alias
-other	runtime-missing	sqlite-available-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1087	silent primitive alias
+other	runtime-missing	sqlite-available-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1079	silent primitive alias
 other	runtime-missing	string-collate-lessp	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	110	silent primitive alias
-other	runtime-missing	string-distance	core-alias	ignore	crates/elisp/src/primitives/core.rs	296	registered as primitive("ignore")
-other	runtime-missing	subr-native-comp-unit	core-alias	ignore	crates/elisp/src/primitives/core.rs	280	registered as primitive("ignore")
-other	runtime-missing	subr-native-elisp-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1083	silent primitive alias
-other	runtime-missing	subr-native-lambda-list	core-alias	ignore	crates/elisp/src/primitives/core.rs	281	registered as primitive("ignore")
-other	runtime-missing	subr-type	core-alias	ignore	crates/elisp/src/primitives/core.rs	282	registered as primitive("ignore")
-other	runtime-missing	subword-mode	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1091	silent primitive alias
+other	runtime-missing	string-distance	core-alias	ignore	crates/elisp/src/primitives/core.rs	313	registered as primitive("ignore")
+other	runtime-missing	subr-native-comp-unit	core-alias	ignore	crates/elisp/src/primitives/core.rs	299	registered as primitive("ignore")
+other	runtime-missing	subr-native-elisp-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1075	silent primitive alias
+other	runtime-missing	subr-native-lambda-list	core-alias	ignore	crates/elisp/src/primitives/core.rs	300	registered as primitive("ignore")
+other	runtime-missing	subr-type	core-alias	ignore	crates/elisp/src/primitives/core.rs	301	registered as primitive("ignore")
+other	runtime-missing	subword-mode	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1083	silent primitive alias
 other	runtime-missing	symbol-with-pos-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	85	silent primitive alias
-other	runtime-missing	syntax-ppss-flush-cache	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	981	silent primitive alias
-other	runtime-missing	syntax-propertize	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	982	silent primitive alias
-other	runtime-missing	system-name	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	731	silent primitive alias
-other	runtime-missing	system-name	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	765	silent primitive alias
-other	runtime-missing	test-completion	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	911	silent primitive alias
-other	runtime-missing	timer-activate	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1000	silent primitive alias
-other	runtime-missing	timer-activate-when-idle	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1003	silent primitive alias
-other	runtime-missing	timer-create	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	997	silent primitive alias
-other	runtime-missing	timer-set-function	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	999	silent primitive alias
-other	runtime-missing	timer-set-idle-time	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1002	silent primitive alias
-other	runtime-missing	timer-set-time	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	998	silent primitive alias
+other	runtime-missing	syntax-ppss-flush-cache	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	982	silent primitive alias
+other	runtime-missing	syntax-propertize	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	983	silent primitive alias
+other	runtime-missing	system-name	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	732	silent primitive alias
+other	runtime-missing	system-name	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	766	silent primitive alias
+other	runtime-missing	test-completion	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	912	silent primitive alias
 other	runtime-missing	top-level	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	698	silent primitive alias
-other	runtime-missing	track-mouse	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1041	silent primitive alias
-other	runtime-missing	treesit-available-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1089	silent primitive alias
-other	runtime-missing	treesit-parser-create	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	964	silent primitive alias
-other	runtime-missing	treesit-ready-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	963	silent primitive alias
-other	runtime-missing	try-completion	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	909	silent primitive alias
+other	runtime-missing	track-mouse	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1033	silent primitive alias
+other	runtime-missing	treesit-available-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1081	silent primitive alias
+other	runtime-missing	treesit-parser-create	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	965	silent primitive alias
+other	runtime-missing	treesit-ready-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	964	silent primitive alias
+other	runtime-missing	try-completion	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	910	silent primitive alias
 other	runtime-missing	unlock-buffer	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	683	silent primitive alias
-other	runtime-missing	upper-bound	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	763	silent primitive alias
-other	runtime-missing	use-cjk-char-width-table	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	860	silent primitive alias
-other	runtime-missing	variable-binding-locus	core-alias	ignore	crates/elisp/src/primitives/core.rs	276	registered as primitive("ignore")
-other	runtime-missing	view-lossage	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	729	silent primitive alias
-other	runtime-missing	with-temp-buffer	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	715	silent primitive alias
+other	runtime-missing	upper-bound	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	764	silent primitive alias
+other	runtime-missing	use-cjk-char-width-table	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	861	silent primitive alias
+other	runtime-missing	variable-binding-locus	core-alias	ignore	crates/elisp/src/primitives/core.rs	295	registered as primitive("ignore")
+other	runtime-missing	view-lossage	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	730	silent primitive alias
+other	runtime-missing	with-temp-buffer	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	716	silent primitive alias
 other	runtime-missing	x-get-resource	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	618	silent primitive alias
-other	runtime-missing	x-get-selection-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1060	silent primitive alias
 other	runtime-missing	x-list-fonts	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	619	silent primitive alias
-other	runtime-missing	x-own-selection-internal	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1059	silent primitive alias
-other	runtime-missing	x-parse-geometry	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1025	silent primitive alias
-other	runtime-missing	x-popup-dialog	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1050	silent primitive alias
-other	runtime-missing	x-popup-menu	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1049	silent primitive alias
-other	runtime-missing	x-selection-exists-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1066	silent primitive alias
-other	runtime-missing	x-selection-owner-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1065	silent primitive alias
+other	runtime-missing	x-parse-geometry	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1017	silent primitive alias
+other	runtime-missing	x-popup-dialog	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1042	silent primitive alias
+other	runtime-missing	x-popup-menu	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1041	silent primitive alias
+other	runtime-missing	x-selection-exists-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1058	silent primitive alias
+other	runtime-missing	x-selection-owner-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1057	silent primitive alias
 window/display	needs-classification	backtrace-frame--internal	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	29	matched in stubs::call
-window/display	needs-classification	backtrace-frames	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	347	matched in stubs::call
-window/display	needs-classification	bidi-resolved-levels	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	62	matched in stubs::call
+window/display	needs-classification	backtrace-frames	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	221	matched in stubs::call
+window/display	needs-classification	bidi-resolved-levels	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	46	matched in stubs::call
 window/display	needs-classification	buffer-text-pixel-size	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	23	matched in stubs::call
-window/display	needs-classification	color-name-to-rgb	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	96	matched in stubs::call
-window/display	needs-classification	color-values	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	96	matched in stubs::call
-window/display	needs-classification	color-values-from-color-spec	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	96	matched in stubs::call
-window/display	needs-classification	copy-face	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	140	matched in stubs::call
-window/display	needs-classification	create-image	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	127	matched in stubs::call
-window/display	needs-classification	define-fringe-bitmap	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	306	matched in stubs::call
-window/display	needs-classification	face-all-attributes	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	130	matched in stubs::call
-window/display	needs-classification	face-attribute	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	130	matched in stubs::call
-window/display	needs-classification	face-background	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	130	matched in stubs::call
-window/display	needs-classification	face-bold-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	130	matched in stubs::call
-window/display	needs-classification	face-font	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	130	matched in stubs::call
-window/display	needs-classification	face-foreground	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	130	matched in stubs::call
-window/display	needs-classification	face-italic-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	130	matched in stubs::call
-window/display	needs-classification	face-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	130	matched in stubs::call
-window/display	needs-classification	font-face-attributes	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	61	matched in stubs::call
-window/display	needs-classification	font-family-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	61	matched in stubs::call
-window/display	needs-classification	font-info	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	61	matched in stubs::call
-window/display	needs-classification	format-mode-line	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	896	registered through Phase-1 stub list
-window/display	needs-classification	format-mode-line	stub-module	constant-string	crates/elisp/src/primitives/core/stubs.rs	550	matched in stubs::call
-window/display	needs-classification	fringe-bitmap-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	306	matched in stubs::call
-window/display	needs-classification	fringe-bitmaps-at-pos	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	306	matched in stubs::call
-window/display	needs-classification	image-flush	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	127	matched in stubs::call
-window/display	needs-classification	image-frame-cache-size	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	127	matched in stubs::call
-window/display	needs-classification	image-mask-p	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	121	matched in stubs::call
-window/display	needs-classification	image-mask-p: not a graphic display	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	124	matched in stubs::call
-window/display	needs-classification	image-metadata	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	124	matched in stubs::call
-window/display	needs-classification	image-metadata: not a graphic display	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	127	matched in stubs::call
-window/display	needs-classification	image-size	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	120	matched in stubs::call
-window/display	needs-classification	image-size: not a graphic display	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	121	matched in stubs::call
+window/display	needs-classification	create-image	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	93	matched in stubs::call
+window/display	needs-classification	define-fringe-bitmap	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	194	matched in stubs::call
+window/display	needs-classification	format-mode-line	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	738	registered through Phase-1 stub list
+window/display	needs-classification	format-mode-line	stub-module	constant-string	crates/elisp/src/primitives/core/stubs.rs	381	matched in stubs::call
+window/display	needs-classification	fringe-bitmap-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	194	matched in stubs::call
+window/display	needs-classification	fringe-bitmaps-at-pos	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	194	matched in stubs::call
+window/display	needs-classification	image-flush	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	93	matched in stubs::call
+window/display	needs-classification	image-frame-cache-size	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	93	matched in stubs::call
+window/display	needs-classification	image-mask-p	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	87	matched in stubs::call
+window/display	needs-classification	image-mask-p: not a graphic display	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	90	matched in stubs::call
+window/display	needs-classification	image-metadata	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	90	matched in stubs::call
+window/display	needs-classification	image-metadata: not a graphic display	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	93	matched in stubs::call
+window/display	needs-classification	image-size	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	86	matched in stubs::call
+window/display	needs-classification	image-size: not a graphic display	stub-module	signals	crates/elisp/src/primitives/core/stubs.rs	87	matched in stubs::call
 window/display	needs-classification	image-type-available-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	13	matched in stubs::call
-window/display	needs-classification	internal-lisp-face-equal-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	130	matched in stubs::call
-window/display	needs-classification	internal-lisp-face-p	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	130	matched in stubs::call
-window/display	needs-classification	make-face	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	140	matched in stubs::call
-window/display	needs-classification	network-interface-list	phase1-registration	stubs::call	crates/elisp/src/primitives/core.rs	894	registered through Phase-1 stub list
-window/display	needs-classification	network-interface-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	546	matched in stubs::call
-window/display	needs-classification	posn-image	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-window/display	needs-classification	posn-window	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	212	matched in stubs::call
-window/display	needs-classification	process-tty-name	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	356	matched in stubs::call
-window/display	needs-classification	set-face-attribute	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	140	matched in stubs::call
-window/display	needs-classification	set-face-strike-through	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	158	matched in stubs::call
-window/display	needs-classification	set-face-underline	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	158	matched in stubs::call
-window/display	needs-classification	set-fringe-bitmap-face	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	306	matched in stubs::call
-window/display	needs-classification	string-pixel-width	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	171	matched in stubs::call
-window/display	needs-classification	truncate-string-pixelwise	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	168	matched in stubs::call
-window/display	runtime-missing	color-defined-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	615	silent primitive alias
-window/display	runtime-missing	color-values	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	616	silent primitive alias
-window/display	runtime-missing	define-fringe-bitmap	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	984	silent primitive alias
-window/display	runtime-missing	display-multi-font-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	861	silent primitive alias
+window/display	needs-classification	network-interface-list	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	377	matched in stubs::call
+window/display	needs-classification	posn-image	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+window/display	needs-classification	posn-window	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	131	matched in stubs::call
+window/display	needs-classification	set-face-strike-through	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	109	matched in stubs::call
+window/display	needs-classification	set-face-underline	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	109	matched in stubs::call
+window/display	needs-classification	set-fringe-bitmap-face	stub-module	nil	crates/elisp/src/primitives/core/stubs.rs	194	matched in stubs::call
+window/display	needs-classification	string-pixel-width	stub-module	constant-integer	crates/elisp/src/primitives/core/stubs.rs	122	matched in stubs::call
+window/display	needs-classification	truncate-string-pixelwise	stub-module	helper-or-compound	crates/elisp/src/primitives/core/stubs.rs	119	matched in stubs::call
+window/display	runtime-missing	define-fringe-bitmap	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	985	silent primitive alias
+window/display	runtime-missing	display-multi-font-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	862	silent primitive alias
 window/display	runtime-missing	display-warning	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	701	silent primitive alias
 window/display	runtime-missing	face-attribute	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	597	silent primitive alias
-window/display	runtime-missing	face-documentation	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	989	silent primitive alias
-window/display	runtime-missing	face-id	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	988	silent primitive alias
 window/display	runtime-missing	face-list	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	596	silent primitive alias
-window/display	runtime-missing	face-name	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	987	silent primitive alias
 window/display	runtime-missing	face-spec-recalc	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	605	silent primitive alias
-window/display	runtime-missing	font-at	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	874	silent primitive alias
-window/display	runtime-missing	font-get-glyphs	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	876	silent primitive alias
-window/display	runtime-missing	font-object-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	879	silent primitive alias
-window/display	runtime-missing	font-put	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	878	silent primitive alias
-window/display	runtime-missing	font-shape-gstring	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	872	silent primitive alias
-window/display	runtime-missing	font-variation-glyphs	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	877	silent primitive alias
-window/display	runtime-missing	handle-switch-frame	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1037	silent primitive alias
+window/display	runtime-missing	font-at	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	875	silent primitive alias
+window/display	runtime-missing	font-get-glyphs	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	877	silent primitive alias
+window/display	runtime-missing	font-object-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	880	silent primitive alias
+window/display	runtime-missing	font-put	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	879	silent primitive alias
+window/display	runtime-missing	font-shape-gstring	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	873	silent primitive alias
+window/display	runtime-missing	font-variation-glyphs	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	878	silent primitive alias
+window/display	runtime-missing	handle-switch-frame	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1029	silent primitive alias
 window/display	runtime-missing	internal-lisp-face-p	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	599	silent primitive alias
 window/display	runtime-missing	internal-make-lisp-face	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	600	silent primitive alias
-window/display	runtime-missing	mouse-pixel-position	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1042	silent primitive alias
+window/display	runtime-missing	mouse-pixel-position	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1034	silent primitive alias
 window/display	runtime-missing	set-face-attribute	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	598	silent primitive alias
-window/display	runtime-missing	set-face-background	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	985	silent primitive alias
-window/display	runtime-missing	set-face-foreground	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	986	silent primitive alias
-window/display	runtime-missing	set-terminal-parameter	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1017	silent primitive alias
-window/display	runtime-missing	terminal-parameter	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	1018	silent primitive alias
-window/display	runtime-missing	tty-color-alist	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	991	silent primitive alias
-window/display	runtime-missing	tty-color-approximate	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	992	silent primitive alias
-window/display	runtime-missing	tty-color-by-index	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	993	silent primitive alias
-window/display	runtime-missing	tty-color-define	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	617	silent primitive alias
-window/display	runtime-missing	tty-color-standard-values	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	994	silent primitive alias
-window/display	runtime-missing	tty-type	bootstrap-alias	ignore	crates/elisp/src/eval/bootstrap/functions_2.rs	990	silent primitive alias

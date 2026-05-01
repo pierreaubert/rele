@@ -505,6 +505,245 @@ pub(crate) fn eval_apply(
     }
     call_function(func_val, obj_to_value(all_args), env, editor, macros, state)
 }
+/// `(add-hook HOOK FUNCTION &optional APPEND LOCAL)` — push FUNCTION
+/// onto HOOK's value cell. APPEND non-nil places it at the tail.
+/// LOCAL is accepted for compatibility but ignored (no buffer-local
+/// hooks in the headless model).
+pub(super) fn stateful_add_hook(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let hook = args
+        .first()
+        .and_then(|a| a.as_symbol_id())
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let func = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let append = args.nth(2).is_some_and(|v| !v.is_nil());
+    let name = crate::obarray::symbol_name(hook);
+    let existing = state
+        .get_value_cell(hook)
+        .or_else(|| state.global_env.read().get(&name))
+        .unwrap_or_else(LispObject::nil);
+    let mut cur = existing.clone();
+    while let Some((head, tail)) = cur.destructure_cons() {
+        if head == func {
+            return Ok(LispObject::nil());
+        }
+        cur = tail;
+    }
+    let updated = if append {
+        append_lisp_list(existing, func)
+    } else {
+        LispObject::cons(func, existing)
+    };
+    state.set_value_cell(hook, updated.clone());
+    state.global_env.write().set_id(hook, updated);
+    Ok(LispObject::nil())
+}
+
+/// `(remove-hook HOOK FUNCTION &optional LOCAL)` — drop FUNCTION
+/// from HOOK's list of functions.
+pub(super) fn stateful_remove_hook(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let hook = args
+        .first()
+        .and_then(|a| a.as_symbol_id())
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let func = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let name = crate::obarray::symbol_name(hook);
+    let existing = state
+        .get_value_cell(hook)
+        .or_else(|| state.global_env.read().get(&name))
+        .unwrap_or_else(LispObject::nil);
+    let mut items = Vec::new();
+    let mut cur = existing;
+    while let Some((head, tail)) = cur.destructure_cons() {
+        if head != func {
+            items.push(head);
+        }
+        cur = tail;
+    }
+    let updated = items
+        .into_iter()
+        .rev()
+        .fold(LispObject::nil(), |tail, item| LispObject::cons(item, tail));
+    state.set_value_cell(hook, updated.clone());
+    state.global_env.write().set_id(hook, updated);
+    Ok(LispObject::nil())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_hook_functions(
+    hook: LispObject,
+    extra_args: LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+    stop_on_success: bool,
+    stop_on_failure: bool,
+) -> ElispResult<LispObject> {
+    let Some(sym) = hook.as_symbol_id() else {
+        return Ok(LispObject::nil());
+    };
+    let name = crate::obarray::symbol_name(sym);
+    let funcs = state
+        .get_value_cell(sym)
+        .or_else(|| state.global_env.read().get(&name))
+        .unwrap_or_else(LispObject::nil);
+    // A hook value can be either a single function or a list of functions.
+    // List form is recognised by a leading symbol of `lambda`/`closure` not
+    // applying — Emacs special-cases this; we keep it simple: if the value
+    // is a non-nil non-cons (e.g., symbol, primitive), treat as singleton.
+    let mut cur = match funcs {
+        LispObject::Nil => return Ok(LispObject::nil()),
+        LispObject::Cons(_) => funcs,
+        other => LispObject::cons(other, LispObject::nil()),
+    };
+    let mut last = LispObject::nil();
+    while let Some((func, rest)) = cur.destructure_cons() {
+        let result = call_function(
+            obj_to_value(func),
+            obj_to_value(extra_args.clone()),
+            env,
+            editor,
+            macros,
+            state,
+        )?;
+        last = value_to_obj(result);
+        if stop_on_success && !last.is_nil() {
+            return Ok(last);
+        }
+        if stop_on_failure && last.is_nil() {
+            return Ok(last);
+        }
+        cur = rest;
+    }
+    Ok(last)
+}
+
+/// `(run-hooks &rest HOOKS)` — run each hook for side effects.
+pub(super) fn stateful_run_hooks(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let mut cur = args.clone();
+    while let Some((hook, rest)) = cur.destructure_cons() {
+        run_hook_functions(
+            hook,
+            LispObject::nil(),
+            env,
+            editor,
+            macros,
+            state,
+            false,
+            false,
+        )?;
+        cur = rest;
+    }
+    Ok(LispObject::nil())
+}
+
+/// `(run-hook-with-args HOOK &rest ARGS)` — run HOOK passing ARGS.
+pub(super) fn stateful_run_hook_with_args(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let hook = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let extra = args.rest().unwrap_or_else(LispObject::nil);
+    run_hook_functions(hook, extra, env, editor, macros, state, false, false)
+}
+
+pub(super) fn stateful_run_hook_with_args_until_success(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let hook = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let extra = args.rest().unwrap_or_else(LispObject::nil);
+    run_hook_functions(hook, extra, env, editor, macros, state, true, false)
+}
+
+pub(super) fn stateful_run_hook_with_args_until_failure(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let hook = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let extra = args.rest().unwrap_or_else(LispObject::nil);
+    run_hook_functions(hook, extra, env, editor, macros, state, false, true)
+}
+
+/// `(run-hook-wrapped HOOK WRAP-FN &rest ARGS)` — call WRAP-FN on each
+/// function in HOOK. Stops on first non-nil result.
+pub(super) fn stateful_run_hook_wrapped(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let hook = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let wrap = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let extra = args.rest().and_then(|r| r.rest()).unwrap_or_else(LispObject::nil);
+    let Some(sym) = hook.as_symbol_id() else {
+        return Ok(LispObject::nil());
+    };
+    let name = crate::obarray::symbol_name(sym);
+    let funcs = state
+        .get_value_cell(sym)
+        .or_else(|| state.global_env.read().get(&name))
+        .unwrap_or_else(LispObject::nil);
+    let mut cur = match funcs {
+        LispObject::Nil => return Ok(LispObject::nil()),
+        LispObject::Cons(_) => funcs,
+        other => LispObject::cons(other, LispObject::nil()),
+    };
+    while let Some((func, rest)) = cur.destructure_cons() {
+        let call_args = LispObject::cons(func, extra.clone());
+        let result = call_function(
+            obj_to_value(wrap.clone()),
+            obj_to_value(call_args),
+            env,
+            editor,
+            macros,
+            state,
+        )?;
+        let v = value_to_obj(result);
+        if !v.is_nil() {
+            return Ok(v);
+        }
+        cur = rest;
+    }
+    Ok(LispObject::nil())
+}
+
+/// Advice family — rele-elisp does not yet model around/before/after
+/// advice. `advice-add` and friends accept the call but leave the
+/// underlying function untouched, so callers keep working without
+/// crashing.
+pub(super) fn stateful_advice_add(args: &LispObject) -> ElispResult<LispObject> {
+    let _ = args;
+    Ok(LispObject::nil())
+}
+
+pub(super) fn stateful_advice_remove(args: &LispObject) -> ElispResult<LispObject> {
+    let _ = args;
+    Ok(LispObject::nil())
+}
+
 pub(crate) fn eval_funcall_form(
     args: Value,
     env: &Arc<RwLock<Environment>>,

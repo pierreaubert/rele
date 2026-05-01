@@ -2,7 +2,18 @@ use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 
 // Submodules grouped by domain
+mod abbrevs;
 mod base64;
+mod faces;
+mod minibuf;
+mod misc_system;
+mod obarrays;
+mod processes;
+mod selections;
+mod sqlite;
+mod terminal;
+mod threads;
+mod timers;
 mod coding_systems;
 mod error_prims;
 pub(crate) mod ert;
@@ -45,6 +56,17 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     json::add_primitives(interp);
     base64::add_primitives(interp);
     coding_systems::add_primitives(interp);
+    abbrevs::add_primitives(interp);
+    obarrays::add_primitives(interp);
+    selections::add_primitives(interp);
+    faces::add_primitives(interp);
+    terminal::add_primitives(interp);
+    processes::add_primitives(interp);
+    threads::add_primitives(interp);
+    timers::add_primitives(interp);
+    sqlite::add_primitives(interp);
+    minibuf::add_primitives(interp);
+    misc_system::add_primitives(interp);
 
     // Submodules that dispatch via call() but register names inline
     for &name in list::LIST_PRIMITIVE_NAMES {
@@ -270,9 +292,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     // Primitives that map to existing names (aliases / trivial stubs)
     let alias_to_ignore = [
         "file-name-case-insensitive-p",
-        "obarray-make",
-        "obarray-get",
-        "obarray-put",
         "variable-binding-locus",
         "interactive-form",
         "native-comp-unit-file",
@@ -282,10 +301,8 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "subr-type",
         "secure-hash",
         "md5",
-        "buffer-hash",
         "locale-info",
         "load-average",
-        "buffer-line-statistics",
         "clear-string",
         "define-hash-table-test",
         "object-intervals",
@@ -421,73 +438,22 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "get-load-suffixes",
         "get-truename-buffer",
         "backtrace-frame--internal",
-        "make-network-process",
         "make-process",
-        "make-serial-process",
         "make-pipe-process",
-        "call-process",
-        "call-process-region",
         "start-process",
-        "open-network-stream",
-        "process-list",
-        "get-process",
-        "process-status",
-        "process-attributes",
-        "execute-kbd-macro",
-        "current-input-mode",
         "make-indirect-buffer",
-        "minibufferp",
-        "minibuffer-depth",
-        "recursion-depth",
-        "current-message",
-        "input-pending-p",
-        "this-command-keys",
-        "this-command-keys-vector",
-        "recent-keys",
-        "read-key-sequence",
-        "read-key-sequence-vector",
-        "read-key",
-        "read-char",
-        "read-char-exclusive",
-        "read-event",
-        "network-lookup-address-info",
-        "font-family-list",
-        "font-info",
-        "font-face-attributes",
         "bidi-resolved-levels",
         "file-truename",
         "expand-file-name",
         "abbreviate-file-name",
         "mapp",
-        "default-value",
-        "default-boundp",
-        "set-default",
-        "local-variable-p",
-        "local-variable-if-set-p",
-        "make-variable-buffer-local",
-        "kill-local-variable",
         "user-uid",
         "user-real-uid",
         "group-gid",
         "group-real-gid",
-        "set-default-toplevel-value",
         "detect-coding-region",
         "command-remapping",
         "buffer-swap-text",
-        "color-values-from-color-spec",
-        "color-values",
-        "color-name-to-rgb",
-        "completing-read",
-        "read-from-minibuffer",
-        "read-no-blanks-input",
-        "read-number",
-        "read-buffer",
-        "read-file-name",
-        "yes-or-no-p",
-        "y-or-n-p",
-        "message-box",
-        "ding",
-        "beep",
         "char-displayable-p",
         "composition-get-gstring",
         "find-composition",
@@ -515,19 +481,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "image-frame-cache-size",
         "image-metadata",
         "create-image",
-        "face-list",
-        "face-attribute",
-        "face-all-attributes",
-        "face-bold-p",
-        "face-italic-p",
-        "face-font",
-        "face-background",
-        "face-foreground",
-        "internal-lisp-face-p",
-        "internal-lisp-face-equal-p",
-        "set-face-attribute",
-        "make-face",
-        "copy-face",
         "menu-bar-lines",
         "menu-bar-mode",
         "tool-bar-mode",
@@ -541,15 +494,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "add-to-ordered-list",
         "remove-from-invisibility-spec",
         "add-to-invisibility-spec",
-        "buffer-list",
-        "buffer-base-buffer",
-        "buffer-chars-modified-tick",
-        "buffer-modified-tick",
-        "buffer-modified-p",
-        "set-buffer-modified-p",
-        "restore-buffer-modified-p",
-        "set-face-underline",
-        "set-face-strike-through",
         "multibyte-string-p",
         "multibyte-char-to-unibyte",
         "string-width",
@@ -560,40 +504,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "text-char-description",
         "single-key-description",
         "listify-key-sequence",
-        "run-at-time",
-        "run-with-timer",
-        "run-with-idle-timer",
-        "cancel-timer",
-        "cancel-function-timers",
-        "timer-list",
-        "timer-activate",
-        "timer-event-handler",
-        "timerp",
-        "current-idle-time",
-        "timer-set-time",
-        "timer-set-function",
-        "timer-set-idle-time",
-        "timer-inc-time",
-        "make-thread",
-        "current-thread",
-        "thread-name",
-        "thread-alive-p",
-        "thread-join",
-        "thread-signal",
-        "thread-yield",
-        "thread-last-error",
-        "thread-live-p",
-        "thread--blocker",
-        "all-threads",
-        "condition-mutex",
-        "condition-name",
-        "condition-notify",
-        "condition-wait",
-        "make-condition-variable",
-        "make-mutex",
-        "mutex-lock",
-        "mutex-unlock",
-        "mutex-name",
         "event-end",
         "event-start",
         "event-click-count",
@@ -617,7 +527,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "keyboard-quit",
         "abort-minibuffers",
         "minibuffer-message",
-        "kill-all-local-variables",
         "buffer-local-variables",
         "generate-new-buffer",
         "set-file-modes",
@@ -658,23 +567,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "keyboard-escape-quit",
         "translation-table-id",
         "remove-hook",
-        "run-hooks",
-        "run-hook-with-args",
-        "run-hook-with-args-until-success",
-        "run-hook-with-args-until-failure",
-        "run-hook-wrapped",
-        "make-abbrev-table",
-        "clear-abbrev-table",
-        "abbrev-table-empty-p",
-        "abbrev-expansion",
-        "abbrev-symbol",
-        "abbrev-get",
-        "abbrev-put",
-        "abbrev-insert",
-        "abbrev-table-get",
-        "abbrev-table-put",
-        "copy-abbrev-table",
-        "define-abbrev",
         "add-minor-mode",
         "easy-menu-do-define",
         "tool-bar-local-item",
@@ -685,8 +577,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "verify-visited-file-modtime",
         "visited-file-modtime",
         "file-locked-p",
-        "lock-buffer",
-        "unlock-buffer",
         "set-buffer-multibyte",
         "kill-line",
         "kill-whole-line",
@@ -705,24 +595,8 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "bookmark-jump",
         "bookmark-delete",
         "bookmark-get-bookmark-record",
-        "x-selection-owner-p",
-        "x-selection-exists-p",
-        "x-get-selection",
-        "x-set-selection",
-        "x-own-selection",
-        "x-disown-selection",
-        "x-selection-value",
-        "gui-get-selection",
-        "gui-set-selection",
-        "gui-selection-exists-p",
-        "gui-selection-owner-p",
-        "clipboard-yank",
-        "clipboard-kill-ring-save",
-        "clipboard-kill-region",
         "add-function",
         "remove-function",
-        "advice-add",
-        "advice-remove",
         "advice-function-mapc",
         "advice-function-member-p",
         "advice--p",
@@ -738,19 +612,13 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "cancel-debug-on-entry",
         "debug",
         "mapbacktrace",
-        "signal-process",
+        // The following process primitives are handled either by
+        // primitives/core/processes.rs or by stateful_process_* in
+        // eval/functions/functions.rs.
         "process-send-string",
-        "process-send-region",
-        "process-send-eof",
-        "process-kill-without-query",
-        "process-running-child-p",
         "process-live-p",
         "process-exit-status",
-        "process-id",
         "process-name",
-        "process-command",
-        "process-tty-name",
-        "process-coding-system",
         "process-filter",
         "process-sentinel",
         "set-process-filter",
@@ -758,10 +626,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "set-process-query-on-exit-flag",
         "process-query-on-exit-flag",
         "delete-process",
-        "continue-process",
-        "stop-process",
-        "interrupt-process",
-        "quit-process",
         "accept-process-output",
         "process-buffer",
         "set-process-buffer",
@@ -770,17 +634,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "xml-parse-file",
         "libxml-parse-xml-region",
         "libxml-parse-html-region",
-        "sqlite-open",
-        "sqlite-close",
-        "sqlite-execute",
-        "sqlite-select",
-        "sqlite-transaction",
-        "sqlite-commit",
-        "sqlite-rollback",
-        "sqlitep",
-        "sqlite-pragma",
-        "sqlite-load-extension",
-        "sqlite-version",
         "treesit-parser-create",
         "treesit-parser-delete",
         "treesit-parser-p",
@@ -834,9 +687,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "custom-declare-variable",
         "custom-declare-face",
         "custom-declare-group",
-        "advice-add",
-        "advice-remove",
-        "advice-function-mapc",
         "advice-function-member-p",
         "advice-member-p",
         "advice--p",
@@ -883,18 +733,9 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "ring-convert-sequence-to-ring",
         "hash-table-literal",
         "hash-table-contains-p",
-        "obarray-clear",
-        "internal--obarray-buckets",
-        "set-process-plist",
-        "process-contact",
-        "kill-process",
-        "kill-emacs",
         "lossage-size",
-        "num-processors",
-        "network-interface-list",
         "group-name",
         "format-mode-line",
-        "format-network-address",
         "format-seconds",
         "set-auto-mode--find-matching-alist-entry",
         "setopt",
@@ -937,6 +778,39 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
         return result;
     }
     if let Some(result) = coding_systems::call(name, args) {
+        return result;
+    }
+    if let Some(result) = abbrevs::call(name, args) {
+        return result;
+    }
+    if let Some(result) = obarrays::call(name, args) {
+        return result;
+    }
+    if let Some(result) = selections::call(name, args) {
+        return result;
+    }
+    if let Some(result) = faces::call(name, args) {
+        return result;
+    }
+    if let Some(result) = terminal::call(name, args) {
+        return result;
+    }
+    if let Some(result) = processes::call(name, args) {
+        return result;
+    }
+    if let Some(result) = threads::call(name, args) {
+        return result;
+    }
+    if let Some(result) = timers::call(name, args) {
+        return result;
+    }
+    if let Some(result) = sqlite::call(name, args) {
+        return result;
+    }
+    if let Some(result) = minibuf::call(name, args) {
+        return result;
+    }
+    if let Some(result) = misc_system::call(name, args) {
         return result;
     }
     if let Some(result) = records::call(name, args) {

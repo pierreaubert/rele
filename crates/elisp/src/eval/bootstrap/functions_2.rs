@@ -612,9 +612,9 @@ pub fn make_stdlib_interp() -> Interpreter {
         "display-supports-face-attributes-p",
         LispObject::primitive("ignore"),
     );
-    interp.define("color-defined-p", LispObject::primitive("ignore"));
-    interp.define("color-values", LispObject::primitive("ignore"));
-    interp.define("tty-color-define", LispObject::primitive("ignore"));
+    interp.define("color-defined-p", LispObject::primitive("color-defined-p"));
+    interp.define("color-values", LispObject::primitive("color-values"));
+    interp.define("tty-color-define", LispObject::primitive("tty-color-define"));
     interp.define("x-get-resource", LispObject::primitive("ignore"));
     interp.define("x-list-fonts", LispObject::primitive("ignore"));
     interp.define(
@@ -700,18 +700,19 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("beep", LispObject::primitive("ignore"));
     interp.define("display-warning", LispObject::primitive("ignore"));
     interp.define("lwarn", LispObject::primitive("ignore"));
-    interp.define("run-hooks", LispObject::primitive("ignore"));
-    interp.define("run-hook-with-args", LispObject::primitive("ignore"));
-    interp.define(
+    // Hook primitives: real impls live in eval/functions/functions_2.rs
+    // and dispatch via call_stateful_primitive.
+    for name in [
+        "run-hooks",
+        "run-hook-with-args",
         "run-hook-with-args-until-success",
-        LispObject::primitive("ignore"),
-    );
-    interp.define(
         "run-hook-with-args-until-failure",
-        LispObject::primitive("ignore"),
-    );
-    interp.define("add-hook", LispObject::primitive("ignore"));
-    interp.define("remove-hook", LispObject::primitive("ignore"));
+        "run-hook-wrapped",
+        "add-hook",
+        "remove-hook",
+    ] {
+        interp.define(name, LispObject::primitive(name));
+    }
     interp.define("with-temp-buffer", LispObject::primitive("ignore"));
     interp.define("init-file-user", LispObject::nil());
     interp.define("locate-user-emacs-file", LispObject::primitive("identity"));
@@ -982,40 +983,31 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("syntax-propertize", LispObject::primitive("ignore"));
     // add-face-text-property is registered via BUFFER_PRIMITIVE_NAMES.
     interp.define("define-fringe-bitmap", LispObject::primitive("ignore"));
-    interp.define("set-face-background", LispObject::primitive("ignore"));
-    interp.define("set-face-foreground", LispObject::primitive("ignore"));
-    interp.define("face-name", LispObject::primitive("ignore"));
-    interp.define("face-id", LispObject::primitive("ignore"));
-    interp.define("face-documentation", LispObject::primitive("ignore"));
-    interp.define("tty-type", LispObject::primitive("ignore"));
-    interp.define("tty-color-alist", LispObject::primitive("ignore"));
-    interp.define("tty-color-approximate", LispObject::primitive("ignore"));
-    interp.define("tty-color-by-index", LispObject::primitive("ignore"));
-    interp.define("tty-color-standard-values", LispObject::primitive("ignore"));
-    interp.define("timer-list", LispObject::nil());
+    // Face / TTY primitives are real, see primitives/core/faces.rs
+    // and primitives/core/terminal.rs.
+    for name in [
+        "set-face-background",
+        "set-face-foreground",
+        "face-name",
+        "face-id",
+        "face-documentation",
+        "tty-type",
+        "tty-color-alist",
+        "tty-color-approximate",
+        "tty-color-by-index",
+        "tty-color-standard-values",
+    ] {
+        interp.define(name, LispObject::primitive(name));
+    }
+    // Timer / minibuf primitives are real, see primitives/core/timers.rs
+    // and primitives/core/minibuf.rs.
     interp.define("timer-idle-list", LispObject::nil());
-    interp.define("timer-create", LispObject::primitive("ignore"));
-    interp.define("timer-set-time", LispObject::primitive("ignore"));
-    interp.define("timer-set-function", LispObject::primitive("ignore"));
-    interp.define("timer-activate", LispObject::primitive("ignore"));
-    interp.define("cancel-timer", LispObject::primitive("ignore"));
-    interp.define("timer-set-idle-time", LispObject::primitive("ignore"));
-    interp.define("timer-activate-when-idle", LispObject::primitive("ignore"));
-    interp.define("input-pending-p", LispObject::primitive("ignore"));
-    interp.define("this-command-keys", LispObject::primitive("ignore"));
-    interp.define("this-command-keys-vector", LispObject::primitive("ignore"));
-    interp.define("this-single-command-keys", LispObject::primitive("ignore"));
-    interp.define(
-        "this-single-command-raw-keys",
-        LispObject::primitive("ignore"),
-    );
-    interp.define("recent-keys", LispObject::primitive("ignore"));
-    interp.define("set-input-mode", LispObject::primitive("ignore"));
-    interp.define("current-input-mode", LispObject::primitive("ignore"));
     interp.define("x-display-list", LispObject::primitive("x-display-list"));
     interp.define("terminal-list", LispObject::primitive("terminal-list"));
-    interp.define("set-terminal-parameter", LispObject::primitive("ignore"));
-    interp.define("terminal-parameter", LispObject::primitive("ignore"));
+    // terminal-parameter / set-terminal-parameter are real,
+    // see primitives/core/terminal.rs.
+    interp.define("set-terminal-parameter", LispObject::primitive("set-terminal-parameter"));
+    interp.define("terminal-parameter", LispObject::primitive("terminal-parameter"));
     interp.define("terminal-live-p", LispObject::primitive("terminal-live-p"));
     interp.define("frame-terminal", LispObject::primitive("frame-terminal"));
     interp.define(
@@ -1056,8 +1048,8 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("gui-get-selection", LispObject::primitive("ignore"));
     interp.define("gui-selection-owner-p", LispObject::primitive("ignore"));
     interp.define("gui-selection-exists-p", LispObject::primitive("ignore"));
-    interp.define("x-own-selection-internal", LispObject::primitive("ignore"));
-    interp.define("x-get-selection-internal", LispObject::primitive("ignore"));
+    // x-own-selection-internal / x-get-selection-internal — real
+    // primitives in primitives/core/selections.rs.
     interp.define(
         "x-disown-selection-internal",
         LispObject::primitive("ignore"),

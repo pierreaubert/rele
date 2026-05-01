@@ -3,6 +3,138 @@
 Append-only — newest entries at top. Each session: what changed, what
 landed, what to look at next.
 
+## 2026-05-01 - Tier B + C stub batch (abbrevs / buffer-ops / hooks / obarray / defvar / selections / faces / tty / processes / threads / timers / sqlite / minibuf / misc)
+
+**Movement:**
+
+- Source-derived stub inventory moved from `675` records to `424`
+  (`-251` this batch; `-354` total since session start at `778`).
+- Lib tests: `546` passing (up from `543`); integration tests `776`
+  passing, `1` pre-existing reader_edges flake unchanged.
+
+**Code landed (Tier B):**
+
+- **B1 — Abbrevs**: full in-memory abbrev-table registry
+  (`primitives/core/abbrevs.rs`) with `make-abbrev-table`,
+  `define-abbrev`, `abbrev-expansion`, `abbrev-symbol`, `abbrev-get`,
+  `abbrev-put`, `abbrev-insert`, `abbrev-table-{p,empty-p,clear,get,put}`,
+  `copy-abbrev-table`. Tables are tagged cons cells `(abbrev-table . id)`
+  pointing into a process-wide `LazyLock<Mutex<Registry>>`.
+- **B2 — Buffer ops residual**: implemented `kill-all-local-variables`,
+  `buffer-hash` (FNV-1a-derived hex), `buffer-line-statistics`
+  (lines/longest/average), `lock-buffer` / `unlock-buffer` (no-ops);
+  removed dead-code stubs for the rest of the buffer-modified-* family
+  (real impls in `BUFFER_PRIMITIVE_NAMES`).
+- **B3 — Hooks/advice**: real `add-hook`, `remove-hook`, `run-hooks`,
+  `run-hook-with-args`, `run-hook-with-args-until-{success,failure}`,
+  `run-hook-wrapped` in `eval/functions/functions_2.rs`. Advice family
+  (`advice-add` / `advice-remove`) accepted as no-ops.
+- **B4 — Obarray**: user-created obarrays modelled as Lisp hash-tables
+  (`primitives/core/obarrays.rs`). `obarray-make`, `obarray-{get,put,clear}`,
+  `internal--obarray-buckets`, `unintern`.
+- **B5 — Defvar/defaults polish**: removed dead-code stubs;
+  `default-value`, `default-boundp`, `set-default`,
+  `set-default-toplevel-value`, `local-variable-p`, `kill-local-variable`,
+  `make-variable-buffer-local` are real stateful primitives.
+- **B6 — GUI/X selections**: in-memory selection registry
+  (`primitives/core/selections.rs`) covering `x-{get,set,own,disown}-selection`,
+  `x-selection-{exists-p,owner-p,value}`, `gui-{get,set}-selection`,
+  `gui-selection-{exists-p,owner-p}`.
+- **B7 — Faces/fonts/colors**: full headless face registry
+  (`primitives/core/faces.rs`) — `make-face`, `face-{list,name,attribute,
+  bold-p,italic-p,font,background,foreground}`, `set-face-attribute`,
+  `set-face-{background,foreground,underline,strike-through}`,
+  `internal-{lisp-face-p,lisp-face-equal-p,make-lisp-face}`,
+  `font-family-list`, named-color palette (`color-defined-p`,
+  `color-name-to-rgb`, `color-values`, `tty-color-alist`,
+  `tty-color-{approximate,by-index,define,standard-values}`).
+- **B8 — TTY/terminal**: in-memory terminal-parameter alist
+  (`primitives/core/terminal.rs`). `terminal-parameter`,
+  `set-terminal-parameter`, `tty-type` return reasonable defaults
+  (background-mode=light, tty-color-mode=8).
+
+**Code landed (Tier C — "yes" categories from previous session):**
+
+- **C1 — Processes**: `primitives/core/processes.rs` registers
+  `make-network-process` (signals scan-error like before), plus
+  `open-network-stream`, `make-serial-process`, `call-process`,
+  `call-process-region`, `process-list`, `get-process`, `process-status`,
+  `process-attributes`, `process-{id,coding-system,command,contact,
+  tty-name,running-child-p,kill-without-query}`, `process-send-{eof,region}`,
+  `signal-process`, `stop-process`, `continue-process`, `interrupt-process`,
+  `quit-process`, `kill-process`, `set-process-plist`,
+  `network-{lookup-address-info,interface-list}`, `format-network-address`.
+  (The richer `make-process` / `start-process` / `process-send-string`
+  family already lives in `eval/functions/functions.rs` as stateful
+  primitives.)
+- **C2 — Threads/mutexes**: `primitives/core/threads.rs` —
+  `make-thread`, `current-thread`, `thread-{name,alive-p,join,signal,
+  yield,last-error,live-p,--blocker}`, `all-threads`, `threadp`,
+  `make-mutex`, `mutex-{lock,unlock,name}`, `mutexp`,
+  `make-condition-variable`, `condition-{mutex,name,notify,wait,variable-p}`.
+- **C3 — Timers**: `primitives/core/timers.rs` — `run-at-time`,
+  `run-with-{timer,idle-timer}`, `cancel-{timer,function-timers}`,
+  `timer-list`, `timer-{activate,activate-when-idle,event-handler,create,
+  set-time,set-function,set-idle-time,inc-time}`, `timerp`,
+  `current-idle-time`.
+- **C4 — SQLite**: `primitives/core/sqlite.rs` — `sqlite-available-p`
+  returns nil, `sqlite-version` returns `"0.0-headless"`, the rest of
+  the family returns nil. Real query support requires linking sqlite.
+- **C5 — Reader/minibuf prompts**: `primitives/core/minibuf.rs` —
+  `completing-read`, `read-from-minibuffer`, `read-no-blanks-input`,
+  `read-{number,buffer,file-name,directory-name}`, `read-key-sequence`,
+  `read-key`, `read-char`, `read-event`, `read-passwd`, `yes-or-no-p`,
+  `y-or-n-p`, `message-box`, `ding`, `beep`, `minibufferp`,
+  `minibuffer-{depth,message}`, `recursive-edit` family,
+  `current-input-method`, `{activate,deactivate,set,toggle,describe}-input-method`,
+  `register-input-method`, `set-input-mode`, `current-input-mode`,
+  `execute-kbd-macro`, `this-command-keys` family, `recent-keys`.
+- **C6 — Misc system**: `primitives/core/misc_system.rs` —
+  `load-average`, `num-processors` (returns 1), `daemonp`, `kill-emacs`,
+  `pdumper-stats`, `system-name` (returns `"rele"`), `locale-info`,
+  `emacs-pid` (returns 1), `byteorder`, `recursion-depth`, `x-display-list`,
+  `x-list-fonts`, `x-get-resource`, `x-parse-geometry`, `x-popup-menu`,
+  `x-popup-dialog`, `popup-menu`, `menu-bar-{lines,mode}`,
+  `tool-bar-mode`, `tab-bar-mode`, `frame-terminal`, `terminal-{list,live-p}`,
+  `track-mouse`, `mouse-{position,pixel-position}`, `set-mouse-position`,
+  `handle-switch-frame`, `make-frame-visible`.
+
+**Files touched:**
+
+- 12 new modules under `crates/elisp/src/primitives/core/`:
+  `abbrevs.rs`, `obarrays.rs`, `selections.rs`, `faces.rs`,
+  `terminal.rs`, `processes.rs`, `threads.rs`, `timers.rs`,
+  `sqlite.rs`, `minibuf.rs`, `misc_system.rs` (plus `coding_systems.rs`,
+  `key_descriptions.rs`, `base64.rs` from the prior Tier A session).
+- `primitives/core.rs`: 12 new mod decls, 12 `add_primitives` calls,
+  12 `call` dispatches; large reductions in the alias_to_ignore array
+  and the Phase-1 stub list.
+- `primitives/core/stubs.rs`: ~80 dead match arms removed.
+- `eval/functions/functions.rs`: hook + advice dispatch.
+- `eval/functions/functions_2.rs`: hook implementations.
+- `eval/bootstrap/functions_2.rs`: removed `primitive("ignore")`
+  aliases that were silently overriding real impls.
+- `primitives/buffer.rs`: `kill-all-local-variables`, `buffer-hash`,
+  `buffer-line-statistics`, `lock-buffer`, `unlock-buffer`.
+
+**Validation:**
+
+- Lib tests: `546` passed, `3` ignored.
+- Integration tests: `776` passed, `1` pre-existing failure
+  (`test_char_named_unicode_unknown_yields_null`).
+- Stub inventory gate passed at `424` records.
+- Clippy: `6` warnings (all pre-existing).
+
+**Next leverage targets:**
+
+1. Run `ert-progress/refresh.sh` to see how many ERT tests this batch
+   unblocked (expected: the runtime stub-hits list should shrink
+   substantially once void-function errors stop blocking entire files).
+2. Crypto deps: `md-5` / `sha1` / `sha2` for `secure-hash` / `md5`
+   / `buffer-hash` to match Emacs hex output exactly.
+3. Tree-sitter primitives are still nil-stubs (real parser needs
+   tree-sitter integration).
+
 ## 2026-05-01 - Tier A stub batch (markers / text-props / words / indent / sexp / json / bool-vec / base64 / key-desc / coding / char-table)
 
 **Commands run:**

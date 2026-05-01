@@ -693,7 +693,9 @@ fn test_batched_defun_stubs_resolve_round3() {
         ("(completing-read \"Prompt: \" nil nil nil \"x\")", "nil"),
         ("(yes-or-no-p \"ok?\")", "nil"),
         ("(y-or-n-p \"ok?\")", "nil"),
-        ("(color-values \"red\")", "nil"),
+        // color-values is now a real primitive (see primitives/core/faces.rs)
+        // backed by a small named-color palette.
+        ("(color-values \"red\")", "(65535 0 0)"),
         ("(face-bold-p 'default)", "nil"),
         ("(overlayp (make-overlay 1 1))", "t"),
         ("(overlays-at 9999)", "nil"),

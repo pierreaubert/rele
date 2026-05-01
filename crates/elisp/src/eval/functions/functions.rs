@@ -11,12 +11,14 @@ use crate::value::{Value, obj_to_value, value_to_obj};
 use std::sync::Arc;
 
 use super::functions_2::{
-    stateful_add_to_list, stateful_apply, stateful_cl_generic_define,
-    stateful_cl_generic_define_method, stateful_cl_generic_generalizers,
-    stateful_def_edebug_elem_spec, stateful_defvar_1, stateful_eval, stateful_featurep,
-    stateful_funcall, stateful_function_get, stateful_function_put, stateful_get, stateful_provide,
-    stateful_put, stateful_require, stateful_setplist, symbol_id_including_constants,
-    symbol_name_including_constants,
+    stateful_add_hook, stateful_add_to_list, stateful_advice_add, stateful_advice_remove,
+    stateful_apply, stateful_cl_generic_define, stateful_cl_generic_define_method,
+    stateful_cl_generic_generalizers, stateful_def_edebug_elem_spec, stateful_defvar_1,
+    stateful_eval, stateful_featurep, stateful_funcall, stateful_function_get,
+    stateful_function_put, stateful_get, stateful_provide, stateful_put, stateful_remove_hook,
+    stateful_require, stateful_run_hook_with_args, stateful_run_hook_with_args_until_failure,
+    stateful_run_hook_with_args_until_success, stateful_run_hook_wrapped, stateful_run_hooks,
+    stateful_setplist, symbol_id_including_constants, symbol_name_including_constants,
 };
 use super::functions_3::{apply_lambda, call_function};
 use super::functions_5::{
@@ -69,6 +71,19 @@ pub(crate) fn call_stateful_primitive(
         "cl-generic-define" => Some(stateful_cl_generic_define(args)),
         "cl-generic-define-method" => Some(stateful_cl_generic_define_method(args, state)),
         "add-to-list" | "add-to-ordered-list" => Some(stateful_add_to_list(args, env, state)),
+        "add-hook" => Some(stateful_add_hook(args, state)),
+        "remove-hook" => Some(stateful_remove_hook(args, state)),
+        "run-hooks" => Some(stateful_run_hooks(args, env, editor, macros, state)),
+        "run-hook-with-args" => Some(stateful_run_hook_with_args(args, env, editor, macros, state)),
+        "run-hook-with-args-until-success" => Some(stateful_run_hook_with_args_until_success(
+            args, env, editor, macros, state,
+        )),
+        "run-hook-with-args-until-failure" => Some(stateful_run_hook_with_args_until_failure(
+            args, env, editor, macros, state,
+        )),
+        "run-hook-wrapped" => Some(stateful_run_hook_wrapped(args, env, editor, macros, state)),
+        "advice-add" => Some(stateful_advice_add(args)),
+        "advice-remove" => Some(stateful_advice_remove(args)),
         "boundp" => Some(stateful_boundp(args, env, state)),
         "char-equal" => Some(stateful_char_equal(args, env, state)),
         "fboundp" => Some(stateful_fboundp(args, env, state, macros)),

@@ -29,38 +29,21 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "backtrace-frame--internal" => Ok(LispObject::nil()),
         "add-minor-mode" => Ok(LispObject::nil()),
 
-        "make-network-process" => Err(ElispError::EvalError(
-            "make-network-process: no network in test env".to_string(),
-        )),
-        "make-process"
-        | "make-serial-process"
-        | "make-pipe-process"
-        | "call-process"
-        | "call-process-region"
-        | "start-process"
-        | "open-network-stream"
-        | "process-list"
-        | "get-process"
-        | "process-status"
-        | "process-attributes" => Ok(LispObject::nil()),
-        "execute-kbd-macro" | "current-input-mode" => Ok(LispObject::nil()),
+        // Process / network primitives are real, see
+        // primitives/core/processes.rs (and stateful_make_process in
+        // eval/functions/functions.rs for the make-process /
+        // start-process / process-* family).
         "make-indirect-buffer" => Ok(LispObject::nil()),
         // `easy-menu-do-define` is now a stateful primitive that
         // populates the menu symbol's value cell — see
         // `crates/elisp/src/eval/functions/functions.rs`.
         "tool-bar-local-item" | "tool-bar-local-item-from-menu" => Ok(LispObject::nil()),
-        "minibufferp" | "minibuffer-depth" | "recursion-depth" => Ok(LispObject::nil()),
-        "current-message" | "input-pending-p" => Ok(LispObject::nil()),
-        "this-command-keys" | "this-command-keys-vector" | "recent-keys" => Ok(LispObject::nil()),
 
-        // Reading stubs
-        "read-key-sequence" | "read-key-sequence-vector" | "read-key" => Ok(LispObject::nil()),
-        "read-char" | "read-char-exclusive" | "read-event" => Ok(LispObject::nil()),
+        // Reader / minibuffer primitives are real, see
+        // primitives/core/minibuf.rs.
 
         // Font/charset stubs
-        "font-family-list" | "font-info" | "font-face-attributes" => Ok(LispObject::nil()),
         "bidi-resolved-levels" => Ok(LispObject::nil()),
-        "network-lookup-address-info" => Ok(LispObject::nil()),
 
         // File/path pass-through stubs
         "file-truename" | "expand-file-name" | "abbreviate-file-name" => {
@@ -77,35 +60,18 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
                 | LispObject::Nil
         ))),
 
-        // Variable/binding stubs
-        "default-value" | "default-boundp" => Ok(LispObject::nil()),
-        "set-default" => Ok(args.nth(1).unwrap_or(LispObject::nil())),
-        "local-variable-p" | "local-variable-if-set-p" => Ok(LispObject::nil()),
-        "make-variable-buffer-local" | "kill-local-variable" => {
-            Ok(args.first().unwrap_or(LispObject::nil()))
-        }
+        // Variable/binding primitives are real stateful primitives,
+        // see eval/functions/functions.rs.
 
         // User ID stubs
         "user-uid" | "user-real-uid" => Ok(LispObject::integer(1000)),
         "group-gid" | "group-real-gid" => Ok(LispObject::integer(1000)),
 
-        "set-default-toplevel-value" => Ok(args.nth(1).unwrap_or(LispObject::nil())),
 
         // Coding-system primitives are real, see primitives/core/coding_systems.rs.
-        "command-remapping" | "buffer-swap-text" => Ok(LispObject::nil()),
-        "color-values-from-color-spec" | "color-values" | "color-name-to-rgb" => {
-            Ok(LispObject::nil())
-        }
+        "command-remapping" => Ok(LispObject::nil()),
 
-        // Completion / minibuffer stubs
-        "completing-read"
-        | "read-from-minibuffer"
-        | "read-no-blanks-input"
-        | "read-number"
-        | "read-buffer"
-        | "read-file-name" => Ok(args.nth(2).unwrap_or(LispObject::nil())),
-        "yes-or-no-p" | "y-or-n-p" => Ok(LispObject::nil()),
-        "message-box" | "ding" | "beep" => Ok(LispObject::nil()),
+        // Completion / minibuffer prompts are real, see primitives/core/minibuf.rs.
 
         // Char/text utilities
         "char-displayable-p" => Ok(LispObject::t()),
@@ -127,17 +93,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
             "image-metadata: not a graphic display".to_string(),
         )),
         "image-flush" | "image-frame-cache-size" | "create-image" => Ok(LispObject::nil()),
-        "face-list"
-        | "face-attribute"
-        | "face-all-attributes"
-        | "face-bold-p"
-        | "face-italic-p"
-        | "face-font"
-        | "face-background"
-        | "face-foreground"
-        | "internal-lisp-face-p"
-        | "internal-lisp-face-equal-p" => Ok(LispObject::nil()),
-        "set-face-attribute" | "make-face" | "copy-face" => Ok(LispObject::nil()),
+        // Face / font / color primitives are real, see primitives/core/faces.rs.
 
         // Menu / tool-bar stubs
         "menu-bar-lines" | "menu-bar-mode" | "tool-bar-mode" | "tab-bar-mode" | "popup-menu"
@@ -149,12 +105,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "add-to-list" | "add-to-ordered-list" => Ok(LispObject::nil()),
         "remove-from-invisibility-spec" | "add-to-invisibility-spec" => Ok(LispObject::nil()),
 
-        // Buffer stubs
-        "buffer-list" | "buffer-base-buffer" => Ok(LispObject::nil()),
-        "buffer-chars-modified-tick" | "buffer-modified-tick" => Ok(LispObject::integer(0)),
-        "buffer-modified-p" | "set-buffer-modified-p" | "restore-buffer-modified-p" => {
-            Ok(LispObject::nil())
-        }
+        // Buffer ops are real, see primitives/buffer.rs.
         "set-face-underline" | "set-face-strike-through" => Ok(LispObject::nil()),
 
         // multibyte-char-to-unibyte: see helper.
@@ -173,40 +124,8 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "single-key-description" => Ok(super::key_descriptions::single_key_description(args)),
         "listify-key-sequence" => Ok(super::key_descriptions::listify_key_sequence(args)),
 
-        // Timer / thread — no-ops
-        "run-at-time"
-        | "run-with-timer"
-        | "run-with-idle-timer"
-        | "cancel-timer"
-        | "cancel-function-timers"
-        | "timer-list"
-        | "timer-activate"
-        | "timer-event-handler"
-        | "timerp"
-        | "current-idle-time" => Ok(LispObject::nil()),
-        "timer-set-time" | "timer-set-function" | "timer-set-idle-time" | "timer-inc-time" => {
-            Ok(LispObject::nil())
-        }
-        "make-thread"
-        | "current-thread"
-        | "thread-name"
-        | "thread-alive-p"
-        | "thread-join"
-        | "thread-signal"
-        | "thread-yield"
-        | "thread-last-error"
-        | "thread-live-p"
-        | "thread--blocker"
-        | "all-threads"
-        | "condition-mutex"
-        | "condition-name"
-        | "condition-notify"
-        | "condition-wait"
-        | "make-condition-variable"
-        | "make-mutex"
-        | "mutex-lock"
-        | "mutex-unlock"
-        | "mutex-name" => Ok(LispObject::nil()),
+        // Timer / thread / mutex primitives are real, see
+        // primitives/core/timers.rs and primitives/core/threads.rs.
 
         // Event machinery stubs
         "event-end"
@@ -231,10 +150,9 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "posn-object-width-height" => Ok(LispObject::nil()),
 
         // Keymap-adjacent headless stubs.
-        "keyboard-quit" | "abort-minibuffers" | "minibuffer-message" => Ok(LispObject::nil()),
+        "keyboard-quit" => Ok(LispObject::nil()),
 
         // Buffer-local stubs
-        "kill-all-local-variables" | "buffer-local-variables" => Ok(LispObject::nil()),
         "generate-new-buffer" => Ok(args.first().unwrap_or(LispObject::nil())),
         "symbol-file" => Ok(LispObject::nil()),
 
@@ -247,41 +165,13 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         // Sexp navigation primitives that still depend on a richer
         // syntax-table model than we ship headlessly.
         "backward-up-list" | "up-list" | "down-list" => Ok(LispObject::nil()),
-        "current-input-method" => Ok(LispObject::nil()),
-        "activate-input-method"
-        | "deactivate-input-method"
-        | "set-input-method"
-        | "toggle-input-method"
-        | "describe-input-method" => Ok(LispObject::nil()),
-        "recursive-edit"
-        | "top-level"
-        | "exit-recursive-edit"
-        | "abort-recursive-edit"
-        | "exit-minibuffer"
-        | "keyboard-escape-quit" => Ok(LispObject::nil()),
+        // Input-method / recursive-edit primitives live in primitives/core/minibuf.rs.
+        "keyboard-escape-quit" => Ok(LispObject::nil()),
         "translation-table-id" => Ok(LispObject::nil()),
 
-        // Hook stubs
-        "remove-hook"
-        | "run-hooks"
-        | "run-hook-with-args"
-        | "run-hook-with-args-until-success"
-        | "run-hook-with-args-until-failure"
-        | "run-hook-wrapped" => Ok(LispObject::nil()),
+        // Hook primitives are real, see eval/functions/functions_2.rs.
 
-        // Abbrev stubs
-        "make-abbrev-table"
-        | "clear-abbrev-table"
-        | "abbrev-table-empty-p"
-        | "abbrev-expansion"
-        | "abbrev-symbol"
-        | "abbrev-get"
-        | "abbrev-put"
-        | "abbrev-insert"
-        | "abbrev-table-get"
-        | "abbrev-table-put"
-        | "copy-abbrev-table"
-        | "define-abbrev" => Ok(LispObject::nil()),
+        // Abbrev primitives are real, see primitives/core/abbrevs.rs.
 
         // File visit stubs
         "set-visited-file-name"
@@ -289,8 +179,6 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "verify-visited-file-modtime"
         | "visited-file-modtime"
         | "file-locked-p"
-        | "lock-buffer"
-        | "unlock-buffer"
         | "ask-user-about-lock"
         | "ask-user-about-supersession-threat" => Ok(LispObject::nil()),
         "set-buffer-multibyte" => Ok(args.first().unwrap_or(LispObject::nil())),
@@ -313,27 +201,13 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
             Ok(LispObject::nil())
         }
 
-        // Selection stubs
-        "x-selection-owner-p"
-        | "x-selection-exists-p"
-        | "x-get-selection"
-        | "x-set-selection"
-        | "x-own-selection"
-        | "x-disown-selection"
-        | "x-selection-value"
-        | "gui-get-selection"
-        | "gui-set-selection"
-        | "gui-selection-exists-p"
-        | "gui-selection-owner-p" => Ok(LispObject::nil()),
-        "clipboard-yank" | "clipboard-kill-ring-save" | "clipboard-kill-region" => {
-            Ok(LispObject::nil())
-        }
+        // GUI/X selection primitives are real, see primitives/core/selections.rs.
 
-        // Advice stubs
+        // Advice family — `advice-add` / `advice-remove` are now real
+        // (no-op) primitives in eval/functions/functions_2.rs. The
+        // remaining low-level advice helpers stay as nil-returning.
         "add-function"
         | "remove-function"
-        | "advice-add"
-        | "advice-remove"
         | "advice-function-mapc"
         | "advice-function-member-p"
         | "advice--p"
@@ -352,34 +226,8 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "debug"
         | "mapbacktrace" => Ok(LispObject::nil()),
 
-        // Process stubs
-        "signal-process"
-        | "process-send-string"
-        | "process-send-region"
-        | "process-send-eof"
-        | "process-kill-without-query"
-        | "process-running-child-p"
-        | "process-live-p"
-        | "process-exit-status"
-        | "process-id"
-        | "process-name"
-        | "process-command"
-        | "process-tty-name"
-        | "process-coding-system"
-        | "process-filter"
-        | "process-sentinel"
-        | "set-process-filter"
-        | "set-process-sentinel"
-        | "set-process-query-on-exit-flag"
-        | "process-query-on-exit-flag"
-        | "delete-process"
-        | "continue-process"
-        | "stop-process"
-        | "interrupt-process"
-        | "quit-process"
-        | "accept-process-output"
-        | "process-buffer"
-        | "set-process-buffer" => Ok(LispObject::nil()),
+        // Process primitives are real, see primitives/core/processes.rs
+        // and stateful_process_* in eval/functions/functions.rs.
 
         // XML/JSON stubs
         "xml-parse-string"
@@ -389,18 +237,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "libxml-parse-html-region" => Ok(LispObject::nil()),
         // JSON primitives are real, see primitives/core/json.rs.
 
-        // SQLite stubs
-        "sqlite-open"
-        | "sqlite-close"
-        | "sqlite-execute"
-        | "sqlite-select"
-        | "sqlite-transaction"
-        | "sqlite-commit"
-        | "sqlite-rollback"
-        | "sqlitep"
-        | "sqlite-pragma"
-        | "sqlite-load-extension"
-        | "sqlite-version" => Ok(LispObject::nil()),
+        // SQLite primitives are real, see primitives/core/sqlite.rs.
 
         // Tree-sitter stubs
         "treesit-parser-create"
@@ -427,12 +264,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
             "apply must be called through eval dispatch".to_string(),
         )),
 
-        // Byteorder
-        "byteorder" => Ok(LispObject::integer(if cfg!(target_endian = "little") {
-            108
-        } else {
-            66
-        })),
+        // byteorder lives in primitives/core/misc_system.rs.
 
         // --- Phase-1 C-level primitive stubs ---
 
@@ -532,8 +364,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "hash-table-contains-p" => Ok(LispObject::nil()),
 
         // Obarray
-        "obarray-clear" => Ok(LispObject::nil()),
-        "internal--obarray-buckets" => Ok(LispObject::nil()),
+        // obarray primitives are real, see primitives/core/obarrays.rs.
 
         // Process-related
         "set-process-plist" | "process-contact" | "kill-process" | "kill-emacs" => {

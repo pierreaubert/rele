@@ -617,6 +617,61 @@ pub fn prim_buffer_local_variables(_args: &LispObject) -> ElispResult<LispObject
     Ok(out)
 }
 
+pub fn prim_kill_all_local_variables(_args: &LispObject) -> ElispResult<LispObject> {
+    buffer::with_current_mut(|b| b.locals.clear());
+    Ok(LispObject::nil())
+}
+
+/// `(buffer-hash &optional BUFFER)` — return a SHA-1-style hex hash
+/// of the buffer text. With no crypto dep we use a deterministic
+/// FNV-1a-derived hex string so repeated calls on identical content
+/// match. Tests that only compare equality (rather than against a
+/// real SHA-1 vector) work; tests that hard-code Emacs's SHA-1 output
+/// will not match.
+pub fn prim_buffer_hash(_args: &LispObject) -> ElispResult<LispObject> {
+    let text = buffer::with_current(|b| b.buffer_string());
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    let hex = format!("{hash:040x}");
+    Ok(LispObject::string(&hex))
+}
+
+/// `(buffer-line-statistics &optional BUFFER)` — return
+/// `(LINES LONGEST AVERAGE)` for the buffer text.
+pub fn prim_buffer_line_statistics(_args: &LispObject) -> ElispResult<LispObject> {
+    let text = buffer::with_current(|b| b.buffer_string());
+    let mut lines: usize = 0;
+    let mut longest: usize = 0;
+    let mut total: usize = 0;
+    for line in text.split('\n') {
+        let len = line.chars().count();
+        longest = longest.max(len);
+        total += len;
+        lines += 1;
+    }
+    let average = total.checked_div(lines).unwrap_or(0);
+    Ok(LispObject::cons(
+        LispObject::integer(lines as i64),
+        LispObject::cons(
+            LispObject::integer(longest as i64),
+            LispObject::cons(LispObject::integer(average as i64), LispObject::nil()),
+        ),
+    ))
+}
+
+/// `(lock-buffer &optional FILE)` and `(unlock-buffer)` — file
+/// locking is out of scope; both are no-ops that succeed.
+pub fn prim_lock_buffer(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::nil())
+}
+
+pub fn prim_unlock_buffer(_args: &LispObject) -> ElispResult<LispObject> {
+    Ok(LispObject::nil())
+}
+
 pub fn prim_buffer_string(_args: &LispObject) -> ElispResult<LispObject> {
     let s = buffer::with_current(|b| b.buffer_string());
     Ok(LispObject::string(&s))
@@ -4855,6 +4910,11 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "undo-boundary" => prim_undo_boundary(args),
         "primitive-undo" => prim_primitive_undo(args),
         "buffer-local-variables" => prim_buffer_local_variables(args),
+        "kill-all-local-variables" => prim_kill_all_local_variables(args),
+        "buffer-hash" => prim_buffer_hash(args),
+        "buffer-line-statistics" => prim_buffer_line_statistics(args),
+        "lock-buffer" => prim_lock_buffer(args),
+        "unlock-buffer" => prim_unlock_buffer(args),
         "point" => prim_point(args),
         "point-min" => prim_point_min(args),
         "point-max" => prim_point_max(args),
@@ -5051,6 +5111,11 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "undo-boundary",
     "primitive-undo",
     "buffer-local-variables",
+    "kill-all-local-variables",
+    "buffer-hash",
+    "buffer-line-statistics",
+    "lock-buffer",
+    "unlock-buffer",
     "point",
     "point-min",
     "point-max",
