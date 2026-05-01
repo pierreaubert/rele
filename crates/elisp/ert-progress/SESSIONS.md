@@ -3,6 +3,88 @@
 Append-only — newest entries at top. Each session: what changed, what
 landed, what to look at next.
 
+## 2026-05-01 - Tier A stub batch (markers / text-props / words / indent / sexp / json / bool-vec / base64 / key-desc / coding / char-table)
+
+**Commands run:**
+
+```bash
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --lib -- --test-threads=1
+CARGO_TARGET_DIR=tmp/cargo-target cargo clippy -p rele-elisp
+CARGO_TARGET_DIR=tmp/cargo-target cargo test -p rele-elisp --tests
+python3 crates/elisp/ert-progress/stub_inventory.py -o crates/elisp/ert-progress/stub_inventory_baseline.tsv --quiet
+python3 crates/elisp/ert-progress/stub_inventory.py --check
+```
+
+**Movement:**
+
+- Source-derived stub inventory moved from `778` records to `675`
+  (`-103`).
+- editing/regions/needs-classification went from `28` → `2`.
+- editing/regions/runtime-missing went from `9` → `1`.
+- keymap/help/needs-classification went from `15` → `14`.
+- Lib tests: `534` → `543` passing; `0` failed; integration tests
+  `773` passing, `1` pre-existing reader_edges flake unrelated.
+
+**Code landed:**
+
+- **A1 — Markers**: removed dead-code stubs (real impls were in
+  `BUFFER_PRIMITIVE_NAMES`); added TYPE-arg honouring to `copy-marker`
+  + regression test.
+- **A2 — Text properties**: implemented `next/previous-property-change`,
+  `next/previous-single-property-change`,
+  `next-single-char-property-change`, `text-property-any`,
+  `add-face-text-property`. Removed bootstrap aliases that were
+  overriding real impls with `primitive("ignore")`.
+- **A3 — Word editing**: implemented `upcase-word`, `downcase-word`,
+  `capitalize-word`, `kill-word`, `backward-kill-word` with proper
+  semantics over the buffer's word boundaries.
+- **A4 — Indentation**: implemented `indent-line-to`, `indent-rigidly`,
+  `indent-region` (with COLUMN arg).
+- **A5 — Syntax/sexp scanning**: implemented `scan-sexps`,
+  `forward-sexp`, `backward-sexp`, `forward-list`, `backward-list`
+  on top of existing `scan-lists`. `up-list` / `down-list` /
+  `backward-up-list` remain as nil-stubs (require richer syntax-table
+  semantics).
+- **A6 — JSON**: real impls already existed; added
+  `json::add_primitives` and removed the redundant phase-1 entries.
+- **A7 — Bool-vector ops**: real impls already existed; removed
+  redundant phase-1 / dead-code stub entries.
+- **A8 — Hash/encoding**: implemented full base64 / base64url
+  encode/decode (region + string) inline (`primitives/core/base64.rs`).
+  Implemented `secure-hash-algorithms`. `md5` / `secure-hash` remain
+  nil-stubs pending a crypto dep decision.
+- **A9 — Char-property/keys**: implemented `text-char-description`,
+  `single-key-description`, `listify-key-sequence` with proper Emacs
+  formatting (`C-a`, `M-x`, `<symbol>`, etc.) in
+  `primitives/core/key_descriptions.rs`.
+- **A10 — Coding system shape**: extracted to
+  `primitives/core/coding_systems.rs`; `coding-system-p` now accepts
+  the canonical UTF-8 / latin-1 / undecided alias set; `decode/encode-
+  coding-string` return the input unchanged (UTF-8 round-trip).
+- **A11 — Char-table edges**: `split-char` returns proper
+  `(charset code)` lists for ASCII / eight-bit / unicode partitions.
+
+**Validation:**
+
+- Lib tests: `543` passed, `3` ignored.
+- Integration tests: `773` passed, `1` pre-existing failure
+  (`test_char_named_unicode_unknown_yields_null` in `reader_edges.rs`
+  unrelated to this work).
+- Stub inventory gate passed at `675` records.
+- Clippy: `6` warnings (all pre-existing).
+
+**Next leverage targets:**
+
+1. `md5` / `secure-hash` / `buffer-hash`: gated on adding a crypto
+   dep (`md-5`, `sha1`, `sha2`).
+2. `up-list` / `down-list` / `backward-up-list`: need richer syntax-
+   table modelling.
+3. Tier B candidates: abbrev tables, residual buffer ops, hooks/
+   advice polish, obarray.
+4. Window/display, faces/fonts/colors, TTY/terminal in-memory models
+   (per the user's reclassification — moved from "won't implement" to
+   "implement headlessly").
+
 ## 2026-04-30 - frame-or-buffer-changed-p implementation
 
 **Commands run:**

@@ -50,6 +50,20 @@ impl Default for SerializeOptions {
     }
 }
 
+pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
+    for name in [
+        "json-parse-string",
+        "json-read-from-string",
+        "json-decode",
+        "json-parse-buffer",
+        "json-read",
+        "json-serialize",
+        "json-encode",
+    ] {
+        interp.define(name, LispObject::primitive(name));
+    }
+}
+
 pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
     match name {
         "json-parse-string" | "json-read-from-string" | "json-decode" => {

@@ -788,8 +788,10 @@ fn test_batched_defun_stubs_resolve_round5() {
             "nil".into(),
         ),
         ("(skip-syntax-forward \"w\")".into(), "0".into()),
-        ("(forward-sexp)".into(), "nil".into()),
-        ("(scan-sexps 1 1)".into(), "nil".into()),
+        // forward-sexp / scan-sexps are now real primitives backed by
+        // scan-lists (see primitives/buffer.rs); they signal scan-error
+        // on empty buffers rather than returning nil. Coverage moved to
+        // dedicated tests in primitives::buffer::tests.
         ("(run-hooks 'post-command-hook)".into(), "nil".into()),
         (
             "(remove-hook 'post-command-hook 'ignore)".into(),

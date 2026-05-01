@@ -2,8 +2,11 @@ use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 
 // Submodules grouped by domain
+mod base64;
+mod coding_systems;
 mod error_prims;
 pub(crate) mod ert;
+mod key_descriptions;
 mod file_ops;
 mod hash;
 mod io;
@@ -39,6 +42,9 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     error_prims::add_primitives(interp);
     file_ops::add_primitives(interp);
     ert::add_primitives(interp);
+    json::add_primitives(interp);
+    base64::add_primitives(interp);
+    coding_systems::add_primitives(interp);
 
     // Submodules that dispatch via call() but register names inline
     for &name in list::LIST_PRIMITIVE_NAMES {
@@ -264,10 +270,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     // Primitives that map to existing names (aliases / trivial stubs)
     let alias_to_ignore = [
         "file-name-case-insensitive-p",
-        "define-coding-system-internal",
-        "define-coding-system-alias",
-        "set-coding-system-priority",
-        "set-safe-terminal-coding-system-internal",
         "obarray-make",
         "obarray-get",
         "obarray-put",
@@ -278,14 +280,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "subr-native-comp-unit",
         "subr-native-lambda-list",
         "subr-type",
-        "base64-encode-string",
-        "base64-decode-string",
-        "base64-encode-region",
-        "base64-decode-region",
-        "base64url-encode-string",
-        "base64url-encode-region",
         "secure-hash",
-        "secure-hash-algorithms",
         "md5",
         "buffer-hash",
         "locale-info",
@@ -415,23 +410,14 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     // of names that return nil or a constant.
     let stub_names = [
         "obarrayp",
-        "make-bool-vector",
-        "bool-vector",
         "image-type-available-p",
         "gnutls-available-p",
         "libxml-available-p",
         "dbus-available-p",
         "native-comp-available-p",
-        "get-char-property",
-        "get-pos-property",
-        "get-text-property",
-        "text-properties-at",
         "backward-prefix-chars",
         "undo-boundary",
         "buffer-text-pixel-size",
-        "coding-system-plist",
-        "coding-system-p",
-        "coding-system-aliases",
         "get-load-suffixes",
         "get-truename-buffer",
         "backtrace-frame--internal",
@@ -458,13 +444,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "this-command-keys",
         "this-command-keys-vector",
         "recent-keys",
-        "mark-marker",
-        "mark",
-        "marker-insertion-type",
-        "marker-position",
-        "set-marker",
-        "copy-marker",
-        "make-marker",
         "read-key-sequence",
         "read-key-sequence-vector",
         "read-key",
@@ -476,16 +455,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "font-info",
         "font-face-attributes",
         "bidi-resolved-levels",
-        "text-property-not-all",
-        "next-property-change",
-        "next-single-property-change",
-        "previous-property-change",
-        "previous-single-property-change",
-        "set-text-properties",
-        "add-text-properties",
-        "remove-text-properties",
-        "remove-list-of-text-properties",
-        "put-text-property",
         "file-truename",
         "expand-file-name",
         "abbreviate-file-name",
@@ -503,23 +472,11 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "group-real-gid",
         "set-default-toplevel-value",
         "detect-coding-region",
-        "find-coding-systems-string",
-        "find-coding-systems-region",
-        "find-coding-systems-for-charsets",
-        "coding-system-base",
-        "coding-system-change-eol-conversion",
         "command-remapping",
         "buffer-swap-text",
         "color-values-from-color-spec",
         "color-values",
         "color-name-to-rgb",
-        "coding-system-priority-list",
-        "set-coding-system-priority",
-        "prefer-coding-system",
-        "keyboard-coding-system",
-        "terminal-coding-system",
-        "set-terminal-coding-system",
-        "set-keyboard-coding-system",
         "completing-read",
         "read-from-minibuffer",
         "read-no-blanks-input",
@@ -602,6 +559,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "string-pixel-width",
         "text-char-description",
         "single-key-description",
+        "listify-key-sequence",
         "run-at-time",
         "run-with-timer",
         "run-with-idle-timer",
@@ -731,8 +689,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "unlock-buffer",
         "set-buffer-multibyte",
         "kill-line",
-        "kill-word",
-        "backward-kill-word",
         "kill-whole-line",
         "kill-region",
         "kill-ring-save",
@@ -814,13 +770,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "xml-parse-file",
         "libxml-parse-xml-region",
         "libxml-parse-html-region",
-        "json-parse-string",
-        "json-parse-buffer",
-        "json-serialize",
-        "json-encode",
-        "json-decode",
-        "json-read",
-        "json-read-from-string",
         "sqlite-open",
         "sqlite-close",
         "sqlite-execute",
@@ -911,23 +860,13 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "substitute-in-file-name",
         "unhandled-file-name-directory",
         "self-insert-command",
-        "downcase-word",
-        "upcase-word",
         "scroll-up",
-        "set-marker-insertion-type",
-        "internal--labeled-narrow-to-region",
         "total-line-spacing",
-        "next-single-char-property-change",
-        "decode-coding-region",
-        "encode-coding-region",
-        "bool-vector-count-population",
-        "bool-vector-count-consecutive",
-        "bool-vector-not",
-        "bool-vector-union",
         "error-type-p",
         "char-equal",
         "byte-to-string",
         "char-resolve-modifiers",
+        "secure-hash-algorithms",
         "split-char",
         "copy-tramp-file-name",
         "current-time-zone",
@@ -938,7 +877,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "read-passwd",
         "read-kbd-macro",
         "unencodable-char-position",
-        "check-coding-systems-region",
         "make-record",
         "make-finalizer",
         "make-ring",
@@ -993,6 +931,12 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
         return result;
     }
     if let Some(result) = json::call(name, args) {
+        return result;
+    }
+    if let Some(result) = base64::call(name, args) {
+        return result;
+    }
+    if let Some(result) = coding_systems::call(name, args) {
         return result;
     }
     if let Some(result) = records::call(name, args) {

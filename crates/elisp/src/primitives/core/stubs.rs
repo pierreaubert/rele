@@ -16,20 +16,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "dbus-available-p"
         | "native-comp-available-p" => Ok(LispObject::nil()),
 
-        // Text-property stubs
-        "get-char-property" | "get-pos-property" | "get-text-property" | "text-properties-at" => {
-            Ok(LispObject::nil())
-        }
-        "text-property-not-all" => Ok(LispObject::nil()),
-        "next-property-change"
-        | "next-single-property-change"
-        | "previous-property-change"
-        | "previous-single-property-change" => Ok(LispObject::nil()),
-        "set-text-properties"
-        | "add-text-properties"
-        | "remove-text-properties"
-        | "remove-list-of-text-properties"
-        | "put-text-property" => Ok(LispObject::nil()),
+        // Text-property primitives are real, see primitives/buffer.rs.
 
         // Buffer/editing stubs
         "backward-prefix-chars" | "undo-boundary" => Ok(LispObject::nil()),
@@ -37,9 +24,6 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
             LispObject::integer(0),
             LispObject::integer(0),
         )),
-        "coding-system-p" | "coding-system-aliases" | "coding-system-plist" => {
-            Ok(LispObject::nil())
-        }
         "get-load-suffixes" => Ok(LispObject::nil()),
         "get-truename-buffer" => Ok(LispObject::nil()),
         "backtrace-frame--internal" => Ok(LispObject::nil()),
@@ -68,14 +52,6 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "minibufferp" | "minibuffer-depth" | "recursion-depth" => Ok(LispObject::nil()),
         "current-message" | "input-pending-p" => Ok(LispObject::nil()),
         "this-command-keys" | "this-command-keys-vector" | "recent-keys" => Ok(LispObject::nil()),
-        // Marker stubs
-        "mark-marker"
-        | "mark"
-        | "marker-insertion-type"
-        | "marker-position"
-        | "set-marker"
-        | "copy-marker"
-        | "make-marker" => Ok(LispObject::nil()),
 
         // Reading stubs
         "read-key-sequence" | "read-key-sequence-vector" | "read-key" => Ok(LispObject::nil()),
@@ -115,26 +91,11 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 
         "set-default-toplevel-value" => Ok(args.nth(1).unwrap_or(LispObject::nil())),
 
-        // Coding system stubs
-        "detect-coding-region" => Ok(LispObject::symbol("utf-8")),
-        "find-coding-systems-string" | "find-coding-systems-region" => Ok(LispObject::cons(
-            LispObject::symbol("utf-8"),
-            LispObject::nil(),
-        )),
-        "coding-system-base" | "coding-system-change-eol-conversion" => {
-            Ok(args.first().unwrap_or(LispObject::nil()))
-        }
+        // Coding-system primitives are real, see primitives/core/coding_systems.rs.
         "command-remapping" | "buffer-swap-text" => Ok(LispObject::nil()),
         "color-values-from-color-spec" | "color-values" | "color-name-to-rgb" => {
             Ok(LispObject::nil())
         }
-        "coding-system-priority-list" => Ok(LispObject::cons(
-            LispObject::symbol("utf-8"),
-            LispObject::nil(),
-        )),
-        "set-coding-system-priority" | "prefer-coding-system" => Ok(LispObject::nil()),
-        "keyboard-coding-system" | "terminal-coding-system" => Ok(LispObject::symbol("utf-8")),
-        "set-terminal-coding-system" | "set-keyboard-coding-system" => Ok(LispObject::nil()),
 
         // Completion / minibuffer stubs
         "completing-read"
@@ -208,9 +169,9 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
             Ok(args.first().unwrap_or(LispObject::nil()))
         }
         "string-pixel-width" => Ok(LispObject::integer(0)),
-        "text-char-description" | "single-key-description" => super::io::prim_prin1_to_string(args)
-            .ok()
-            .map_or(Ok(LispObject::string("")), Ok),
+        "text-char-description" => Ok(super::key_descriptions::text_char_description(args)),
+        "single-key-description" => Ok(super::key_descriptions::single_key_description(args)),
+        "listify-key-sequence" => Ok(super::key_descriptions::listify_key_sequence(args)),
 
         // Timer / thread — no-ops
         "run-at-time"
@@ -279,21 +240,13 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
 
         // Indentation stubs
         "current-column" | "current-indentation" => Ok(LispObject::integer(0)),
-        "indent-line-to"
-        | "indent-to"
-        | "indent-according-to-mode"
-        | "indent-for-tab-command"
-        | "indent-rigidly"
-        | "indent-region" => Ok(LispObject::nil()),
+        // Mode-dependent indentation (no major-mode infrastructure
+        // headlessly). The basic ops live in primitives/buffer.rs.
+        "indent-according-to-mode" | "indent-for-tab-command" => Ok(LispObject::nil()),
 
-        // Syntax / sexp stubs
-        "skip-syntax-forward"
-        | "skip-syntax-backward"
-        | "skip-chars-forward"
-        | "skip-chars-backward" => Ok(LispObject::integer(0)),
-        "parse-partial-sexp" | "scan-sexps" | "scan-lists" | "backward-up-list"
-        | "forward-sexp" | "backward-sexp" | "up-list" | "down-list" | "forward-list"
-        | "backward-list" => Ok(LispObject::nil()),
+        // Sexp navigation primitives that still depend on a richer
+        // syntax-table model than we ship headlessly.
+        "backward-up-list" | "up-list" | "down-list" => Ok(LispObject::nil()),
         "current-input-method" => Ok(LispObject::nil()),
         "activate-input-method"
         | "deactivate-input-method"
@@ -342,8 +295,9 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "ask-user-about-supersession-threat" => Ok(LispObject::nil()),
         "set-buffer-multibyte" => Ok(args.first().unwrap_or(LispObject::nil())),
 
-        // Kill ring stubs
-        "kill-line" | "kill-word" | "backward-kill-word" | "kill-whole-line" | "kill-region"
+        // Kill ring stubs (kill-word/backward-kill-word are real, see
+        // primitives/buffer.rs).
+        "kill-line" | "kill-whole-line" | "kill-region"
         | "kill-ring-save" | "kill-new" | "kill-append" | "yank" | "yank-pop" | "current-kill" => {
             Ok(LispObject::nil())
         }
@@ -433,13 +387,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "xml-parse-file"
         | "libxml-parse-xml-region"
         | "libxml-parse-html-region" => Ok(LispObject::nil()),
-        "json-parse-string"
-        | "json-parse-buffer"
-        | "json-serialize"
-        | "json-encode"
-        | "json-decode"
-        | "json-read"
-        | "json-read-from-string" => Ok(LispObject::nil()),
+        // JSON primitives are real, see primitives/core/json.rs.
 
         // SQLite stubs
         "sqlite-open"
@@ -509,18 +457,10 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
             _ => Ok(LispObject::nil()),
         },
         // Buffer/editing stubs
-        "downcase-word" | "upcase-word" | "scroll-up" => Ok(LispObject::nil()),
-        "set-marker-insertion-type" => Ok(LispObject::nil()),
-        "internal--labeled-narrow-to-region" => Ok(LispObject::nil()),
+        "scroll-up" => Ok(LispObject::nil()),
         "total-line-spacing" => Ok(LispObject::integer(0)),
-        "next-single-char-property-change" => Ok(LispObject::nil()),
-        "decode-coding-region" | "encode-coding-region" => Ok(LispObject::nil()),
 
-        // Bool-vector operations
-        "bool-vector-count-population" | "bool-vector-count-consecutive" => {
-            Ok(LispObject::integer(0))
-        }
-        "bool-vector-not" | "bool-vector-union" => Ok(LispObject::nil()),
+        // Bool-vector ops are real, see primitives/core/vector.rs.
 
         // Type predicates (Emacs 30+)
         "bare-symbol-p" => {
@@ -545,7 +485,8 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         }
         "byte-to-string" => byte_to_string_impl(args),
         "char-resolve-modifiers" => char_resolve_modifiers_impl(args),
-        "split-char" => Ok(LispObject::nil()),
+        "secure-hash-algorithms" => Ok(super::key_descriptions::secure_hash_algorithms()),
+        "split-char" => Ok(super::key_descriptions::split_char(args)),
         "copy-tramp-file-name" => Ok(args.first().unwrap_or(LispObject::nil())),
 
         // Time
@@ -570,8 +511,9 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "read-kbd-macro" => Ok(LispObject::nil()),
 
         // Encoding / charset
+        // UTF-8 encodes every Unicode codepoint — there are no
+        // unencodable chars in our buffer model.
         "unencodable-char-position" => Ok(LispObject::nil()),
-        "check-coding-systems-region" => Ok(LispObject::nil()),
         // Records / finalizers
         "make-record" => make_record_impl(args),
         "make-finalizer" => {

@@ -765,21 +765,8 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("system-name", LispObject::primitive("ignore"));
     interp.define("setenv-internal", LispObject::primitive("ignore"));
     interp.define("set-buffer-major-mode", LispObject::primitive("ignore"));
-    interp.define("text-properties-at", LispObject::primitive("ignore"));
-    interp.define("get-text-property", LispObject::primitive("ignore"));
-    interp.define("put-text-property", LispObject::primitive("ignore"));
-    interp.define("remove-text-properties", LispObject::primitive("ignore"));
-    interp.define("add-text-properties", LispObject::primitive("ignore"));
-    interp.define(
-        "next-single-property-change",
-        LispObject::primitive("ignore"),
-    );
-    interp.define(
-        "previous-single-property-change",
-        LispObject::primitive("ignore"),
-    );
-    interp.define("next-property-change", LispObject::primitive("ignore"));
-    interp.define("text-property-any", LispObject::primitive("ignore"));
+    // text-property primitives are registered via BUFFER_PRIMITIVE_NAMES
+    // and dispatched in `call_buffer_primitive`. No bootstrap override.
     interp.define(
         "compare-buffer-substrings",
         LispObject::primitive("compare-buffer-substrings"),
@@ -993,7 +980,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("syntax-ppss", LispObject::primitive("syntax-ppss"));
     interp.define("syntax-ppss-flush-cache", LispObject::primitive("ignore"));
     interp.define("syntax-propertize", LispObject::primitive("ignore"));
-    interp.define("add-face-text-property", LispObject::primitive("ignore"));
+    // add-face-text-property is registered via BUFFER_PRIMITIVE_NAMES.
     interp.define("define-fringe-bitmap", LispObject::primitive("ignore"));
     interp.define("set-face-background", LispObject::primitive("ignore"));
     interp.define("set-face-foreground", LispObject::primitive("ignore"));

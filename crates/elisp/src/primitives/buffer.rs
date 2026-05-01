@@ -1336,6 +1336,121 @@ pub fn prim_indent_to(args: &LispObject) -> ElispResult<LispObject> {
     }
 }
 
+/// Replace the leading whitespace of the current line so it spans
+/// exactly COLUMN columns of spaces, matching Emacs's `indent-line-to`.
+/// Leaves point at the end of the indentation.
+pub fn prim_indent_line_to(args: &LispObject) -> ElispResult<LispObject> {
+    let col = int_arg(args, 0, 0).max(0) as usize;
+    buffer::with_current_mut(|b| {
+        let bol = b.line_beginning_position(b.point);
+        let mut end_ws = bol;
+        while end_ws < b.point_max() {
+            match b.char_at(end_ws) {
+                Some(' ') | Some('\t') => end_ws += 1,
+                _ => break,
+            }
+        }
+        if end_ws > bol {
+            b.delete_region(bol, end_ws);
+        }
+        b.goto_char(bol);
+    });
+    if col > 0 {
+        buffer::with_registry_mut(|r| r.insert_current(&" ".repeat(col), false));
+    }
+    Ok(LispObject::integer(col as i64))
+}
+
+/// Shift each line in [START, END] by N columns. Positive N inserts
+/// spaces at BOL; negative N removes leading spaces (capped at the
+/// available leading whitespace). Matches the non-interactive form
+/// of Emacs's `indent-rigidly`.
+pub fn prim_indent_rigidly(args: &LispObject) -> ElispResult<LispObject> {
+    let start = required_pos_arg(args, 0)?;
+    let end = required_pos_arg(args, 1)?;
+    let n = args.nth(2).and_then(|v| v.as_integer()).unwrap_or(0);
+    if n == 0 {
+        return Ok(LispObject::nil());
+    }
+    let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+    let line_starts: Vec<usize> = buffer::with_current(|b| {
+        let mut starts = vec![b.line_beginning_position(lo)];
+        let mut p = b.line_beginning_position(lo);
+        while p < hi {
+            let next = b.line_end_position(p) + 1;
+            if next >= b.point_max() || next > hi {
+                break;
+            }
+            starts.push(next);
+            p = next;
+        }
+        starts
+    });
+    if n > 0 {
+        let pad = " ".repeat(n as usize);
+        // Insert at each line start, walking backward to keep earlier
+        // positions valid.
+        for &start in line_starts.iter().rev() {
+            buffer::with_current_mut(|b| {
+                b.goto_char(start);
+            });
+            buffer::with_registry_mut(|r| r.insert_current(&pad, false));
+        }
+    } else {
+        let to_remove = (-n) as usize;
+        for &start in line_starts.iter().rev() {
+            buffer::with_current_mut(|b| {
+                let mut q = start;
+                let limit = (start + to_remove).min(b.point_max());
+                while q < limit && b.char_at(q) == Some(' ') {
+                    q += 1;
+                }
+                if q > start {
+                    b.delete_region(start, q);
+                }
+            });
+        }
+    }
+    Ok(LispObject::nil())
+}
+
+/// `(indent-region START END &optional COLUMN)`. Without a major-mode
+/// indent function we can only honor the COLUMN argument: each line
+/// in the region is indented to that column. With no COLUMN argument
+/// this is a no-op (the real behavior is mode-dependent and out of
+/// scope headlessly).
+pub fn prim_indent_region(args: &LispObject) -> ElispResult<LispObject> {
+    let start = required_pos_arg(args, 0)?;
+    let end = required_pos_arg(args, 1)?;
+    let Some(col_arg) = args.nth(2).and_then(|v| v.as_integer()) else {
+        return Ok(LispObject::nil());
+    };
+    let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+    let line_starts: Vec<usize> = buffer::with_current(|b| {
+        let mut starts = vec![b.line_beginning_position(lo)];
+        let mut p = b.line_beginning_position(lo);
+        while p < hi {
+            let next = b.line_end_position(p) + 1;
+            if next >= b.point_max() || next > hi {
+                break;
+            }
+            starts.push(next);
+            p = next;
+        }
+        starts
+    });
+    let saved_point = buffer::with_current(|b| b.point);
+    for &line_start in line_starts.iter().rev() {
+        buffer::with_current_mut(|b| b.goto_char(line_start));
+        prim_indent_line_to(&LispObject::cons(
+            LispObject::integer(col_arg),
+            LispObject::nil(),
+        ))?;
+    }
+    buffer::with_current_mut(|b| b.goto_char(saved_point));
+    Ok(LispObject::nil())
+}
+
 // ---- Narrowing --------------------------------------------------------
 
 pub fn prim_narrow_to_region(args: &LispObject) -> ElispResult<LispObject> {
@@ -2017,9 +2132,11 @@ pub fn prim_copy_marker(args: &LispObject) -> ElispResult<LispObject> {
     } else {
         return Ok(LispObject::nil());
     };
+    let insertion_type = args.nth(1).is_some_and(|v| !v.is_nil());
     let new_id = buffer::with_registry_mut(|r| {
         let id = r.make_marker(buf);
         r.marker_set(id, buf, pos);
+        r.set_marker_insertion_type(id, insertion_type);
         id
     });
     Ok(make_marker_object(new_id))
@@ -2936,6 +3053,257 @@ pub fn prim_text_properties_at(args: &LispObject) -> ElispResult<LispObject> {
     Ok(list_from_pairs(&props))
 }
 
+/// Two property sets are equal as sets of (key, value) pairs regardless
+/// of insertion order. The Vec returned by `properties_at` does
+/// last-write-wins per key, so two positions with the same effective
+/// merged plist may produce Vecs with different ordering — we canonicalize
+/// for comparison by sorting on the key's printed form.
+fn props_equal(
+    a: &[(LispObject, LispObject)],
+    b: &[(LispObject, LispObject)],
+) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut a = a.to_vec();
+    let mut b = b.to_vec();
+    a.sort_by_cached_key(|(k, _)| k.princ_to_string());
+    b.sort_by_cached_key(|(k, _)| k.princ_to_string());
+    a == b
+}
+
+fn properties_at_target(
+    pos: usize,
+    object: &Option<LispObject>,
+) -> Vec<(LispObject, LispObject)> {
+    if let Some(LispObject::String(raw)) = object {
+        string_properties_at(raw, pos)
+    } else {
+        buffer::with_current(|b| b.properties_at(pos))
+    }
+}
+
+fn property_at_target(
+    pos: usize,
+    prop: &LispObject,
+    object: &Option<LispObject>,
+) -> LispObject {
+    if let Some(LispObject::String(raw)) = object {
+        string_property_at(raw, pos, prop)
+    } else {
+        buffer::with_current(|b| b.property_at(pos, prop).unwrap_or_else(LispObject::nil))
+    }
+}
+
+fn target_end(object: &Option<LispObject>) -> usize {
+    if let Some(LispObject::String(raw)) = object {
+        crate::object::current_string_value(raw).chars().count()
+    } else {
+        buffer::with_current(|b| b.point_max())
+    }
+}
+
+fn target_begin(object: &Option<LispObject>) -> usize {
+    if let Some(LispObject::String(_)) = object {
+        0
+    } else {
+        buffer::with_current(|b| b.point_min())
+    }
+}
+
+pub fn prim_next_property_change(args: &LispObject) -> ElispResult<LispObject> {
+    let pos = args
+        .first()
+        .and_then(|a| integer_or_marker_value(&a))
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer-or-marker".into()))?
+        .max(0) as usize;
+    let object = args.nth(1).filter(|o| !o.is_nil());
+    let limit = args
+        .nth(2)
+        .and_then(|a| integer_or_marker_value(&a))
+        .map(|n| n.max(0) as usize);
+    let end = limit.unwrap_or_else(|| target_end(&object));
+    let initial = properties_at_target(pos, &object);
+    let mut q = pos.saturating_add(1);
+    while q <= end {
+        let here = properties_at_target(q, &object);
+        if !props_equal(&here, &initial) {
+            return Ok(LispObject::integer(q as i64));
+        }
+        q += 1;
+    }
+    if matches!(&object, Some(LispObject::String(_))) {
+        Ok(LispObject::integer(end as i64))
+    } else {
+        // Buffer: nil if scan reached limit (or end) without change.
+        match limit {
+            Some(n) => Ok(LispObject::integer(n as i64)),
+            None => Ok(LispObject::nil()),
+        }
+    }
+}
+
+pub fn prim_previous_property_change(args: &LispObject) -> ElispResult<LispObject> {
+    let pos = args
+        .first()
+        .and_then(|a| integer_or_marker_value(&a))
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer-or-marker".into()))?
+        .max(0) as usize;
+    let object = args.nth(1).filter(|o| !o.is_nil());
+    let limit = args
+        .nth(2)
+        .and_then(|a| integer_or_marker_value(&a))
+        .map(|n| n.max(0) as usize);
+    let lower = limit.unwrap_or_else(|| target_begin(&object));
+    if pos <= lower + 1 {
+        return Ok(LispObject::nil());
+    }
+    let initial = properties_at_target(pos - 1, &object);
+    let mut q = pos - 1;
+    while q > lower {
+        q -= 1;
+        let here = properties_at_target(q, &object);
+        if !props_equal(&here, &initial) {
+            return Ok(LispObject::integer((q + 1) as i64));
+        }
+    }
+    if matches!(&object, Some(LispObject::String(_))) {
+        Ok(LispObject::integer(lower as i64))
+    } else {
+        match limit {
+            Some(n) => Ok(LispObject::integer(n as i64)),
+            None => Ok(LispObject::nil()),
+        }
+    }
+}
+
+pub fn prim_next_single_property_change(args: &LispObject) -> ElispResult<LispObject> {
+    let pos = args
+        .first()
+        .and_then(|a| integer_or_marker_value(&a))
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer-or-marker".into()))?
+        .max(0) as usize;
+    let prop = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let object = args.nth(2).filter(|o| !o.is_nil());
+    let limit = args
+        .nth(3)
+        .and_then(|a| integer_or_marker_value(&a))
+        .map(|n| n.max(0) as usize);
+    let end = limit.unwrap_or_else(|| target_end(&object));
+    let initial = property_at_target(pos, &prop, &object);
+    let mut q = pos.saturating_add(1);
+    while q <= end {
+        if property_at_target(q, &prop, &object) != initial {
+            return Ok(LispObject::integer(q as i64));
+        }
+        q += 1;
+    }
+    if matches!(&object, Some(LispObject::String(_))) {
+        Ok(LispObject::integer(end as i64))
+    } else {
+        match limit {
+            Some(n) => Ok(LispObject::integer(n as i64)),
+            None => Ok(LispObject::nil()),
+        }
+    }
+}
+
+pub fn prim_previous_single_property_change(args: &LispObject) -> ElispResult<LispObject> {
+    let pos = args
+        .first()
+        .and_then(|a| integer_or_marker_value(&a))
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer-or-marker".into()))?
+        .max(0) as usize;
+    let prop = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let object = args.nth(2).filter(|o| !o.is_nil());
+    let limit = args
+        .nth(3)
+        .and_then(|a| integer_or_marker_value(&a))
+        .map(|n| n.max(0) as usize);
+    let lower = limit.unwrap_or_else(|| target_begin(&object));
+    if pos <= lower + 1 {
+        return Ok(LispObject::nil());
+    }
+    let initial = property_at_target(pos - 1, &prop, &object);
+    let mut q = pos - 1;
+    while q > lower {
+        q -= 1;
+        if property_at_target(q, &prop, &object) != initial {
+            return Ok(LispObject::integer((q + 1) as i64));
+        }
+    }
+    if matches!(&object, Some(LispObject::String(_))) {
+        Ok(LispObject::integer(lower as i64))
+    } else {
+        match limit {
+            Some(n) => Ok(LispObject::integer(n as i64)),
+            None => Ok(LispObject::nil()),
+        }
+    }
+}
+
+/// Without overlay support, this is identical to
+/// `next-single-property-change`. Real Emacs also considers overlays
+/// at POS, but the headless model doesn't track overlay properties as a
+/// separate concept yet — they live on the same span structures.
+pub fn prim_next_single_char_property_change(args: &LispObject) -> ElispResult<LispObject> {
+    prim_next_single_property_change(args)
+}
+
+pub fn prim_text_property_any(args: &LispObject) -> ElispResult<LispObject> {
+    let start = args
+        .first()
+        .and_then(|a| integer_or_marker_value(&a))
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer-or-marker".into()))?
+        .max(0) as usize;
+    let end = args
+        .nth(1)
+        .and_then(|a| integer_or_marker_value(&a))
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer-or-marker".into()))?
+        .max(0) as usize;
+    let prop = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
+    let value = args.nth(3).ok_or(ElispError::WrongNumberOfArguments)?;
+    let object = args.nth(4).filter(|o| !o.is_nil());
+    for q in start..end {
+        if property_at_target(q, &prop, &object) == value {
+            return Ok(LispObject::integer(q as i64));
+        }
+    }
+    Ok(LispObject::nil())
+}
+
+pub fn prim_add_face_text_property(args: &LispObject) -> ElispResult<LispObject> {
+    let start = args
+        .first()
+        .and_then(|a| integer_or_marker_value(&a))
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer-or-marker".into()))?
+        .max(0) as usize;
+    let end = args
+        .nth(1)
+        .and_then(|a| integer_or_marker_value(&a))
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer-or-marker".into()))?
+        .max(0) as usize;
+    let face = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
+    let append = args.nth(3).is_some_and(|v| !v.is_nil());
+    let face_key = LispObject::symbol("face");
+    buffer::with_current_mut(|b| {
+        let existing = b.property_at(start, &face_key);
+        let combined = match existing {
+            None | Some(LispObject::Nil) => face.clone(),
+            Some(prev) => {
+                if append {
+                    LispObject::cons(prev, LispObject::cons(face.clone(), LispObject::nil()))
+                } else {
+                    LispObject::cons(face.clone(), LispObject::cons(prev, LispObject::nil()))
+                }
+            }
+        };
+        b.remove_text_properties(start, end, std::slice::from_ref(&face_key));
+        b.add_text_properties(start, end, vec![(face_key, combined)]);
+    });
+    Ok(LispObject::nil())
+}
+
 pub fn prim_get_char_property(args: &LispObject, include_empty: bool) -> ElispResult<LispObject> {
     let pos = args
         .first()
@@ -3541,6 +3909,57 @@ pub fn prim_backward_word(args: &LispObject) -> ElispResult<LispObject> {
     // backward-word(n) = forward-word(-n)
     let neg_args = LispObject::cons(LispObject::integer(-n), LispObject::nil());
     prim_forward_word(&neg_args)
+}
+
+/// Helper for word-casing primitives. Captures the position before
+/// `forward-word(N)` and the position after, then transforms the text
+/// in between with `transform`. Negative N transforms text behind point.
+fn case_word_region<F>(args: &LispObject, transform: F) -> ElispResult<LispObject>
+where
+    F: Fn(&str) -> String,
+{
+    let start = buffer::with_current(|b| b.point);
+    prim_forward_word(args)?;
+    let end = buffer::with_current(|b| b.point);
+    let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+    let replacement = buffer::with_current(|buf| transform(&buf.substring(lo, hi)));
+    replace_current_range(lo, hi, &replacement);
+    // Emacs leaves point at the far end of the transformed region.
+    buffer::with_current_mut(|buf| buf.goto_char(end));
+    Ok(LispObject::nil())
+}
+
+pub fn prim_upcase_word(args: &LispObject) -> ElispResult<LispObject> {
+    case_word_region(args, crate::emacs::casefiddle::upcase_string)
+}
+
+pub fn prim_downcase_word(args: &LispObject) -> ElispResult<LispObject> {
+    case_word_region(args, crate::emacs::casefiddle::downcase_string)
+}
+
+pub fn prim_capitalize_word(args: &LispObject) -> ElispResult<LispObject> {
+    case_word_region(args, crate::emacs::casefiddle::capitalize_string)
+}
+
+/// `(kill-word N)` deletes from point to the end of the next N words.
+/// The deleted text is returned as a string for callers that want to
+/// stash it in the kill-ring (the host wraps this primitive); the
+/// primitive itself doesn't push to a kill-ring since the elisp
+/// interpreter does not own one.
+pub fn prim_kill_word(args: &LispObject) -> ElispResult<LispObject> {
+    let start = buffer::with_current(|b| b.point);
+    prim_forward_word(args)?;
+    let end = buffer::with_current(|b| b.point);
+    let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+    let killed = buffer::with_current(|buf| buf.substring(lo, hi));
+    buffer::with_current_mut(|buf| buf.delete_region(lo, hi));
+    Ok(LispObject::string(&killed))
+}
+
+pub fn prim_backward_kill_word(args: &LispObject) -> ElispResult<LispObject> {
+    let n = args.first().and_then(|a| a.as_integer()).unwrap_or(1);
+    let neg = LispObject::cons(LispObject::integer(-n), LispObject::nil());
+    prim_kill_word(&neg)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4245,6 +4664,64 @@ pub fn prim_scan_lists(args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::integer(result as i64))
 }
 
+/// `(scan-sexps FROM COUNT)` — move forward (or backward) over COUNT
+/// balanced expressions starting at FROM. Implemented in terms of
+/// `scan-lists FROM COUNT 0`.
+pub fn prim_scan_sexps(args: &LispObject) -> ElispResult<LispObject> {
+    let from = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let count = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let depth = LispObject::integer(0);
+    let scan_args = LispObject::cons(
+        from,
+        LispObject::cons(count, LispObject::cons(depth, LispObject::nil())),
+    );
+    prim_scan_lists(&scan_args)
+}
+
+/// `(forward-sexp &optional N)` moves point forward across N sexps.
+pub fn prim_forward_sexp(args: &LispObject) -> ElispResult<LispObject> {
+    let n = args.first().and_then(|a| a.as_integer()).unwrap_or(1);
+    let from = buffer::with_current(|b| b.point);
+    let scan_args = LispObject::cons(
+        LispObject::integer(from as i64),
+        LispObject::cons(LispObject::integer(n), LispObject::nil()),
+    );
+    let result = prim_scan_sexps(&scan_args)?;
+    if let Some(target) = result.as_integer() {
+        buffer::with_current_mut(|b| b.goto_char(target as usize));
+    }
+    Ok(LispObject::nil())
+}
+
+pub fn prim_backward_sexp(args: &LispObject) -> ElispResult<LispObject> {
+    let n = args.first().and_then(|a| a.as_integer()).unwrap_or(1);
+    let neg = LispObject::cons(LispObject::integer(-n), LispObject::nil());
+    prim_forward_sexp(&neg)
+}
+
+pub fn prim_forward_list(args: &LispObject) -> ElispResult<LispObject> {
+    let n = args.first().and_then(|a| a.as_integer()).unwrap_or(1);
+    let from = buffer::with_current(|b| b.point);
+    let scan_args = LispObject::cons(
+        LispObject::integer(from as i64),
+        LispObject::cons(
+            LispObject::integer(n),
+            LispObject::cons(LispObject::integer(0), LispObject::nil()),
+        ),
+    );
+    let result = prim_scan_lists(&scan_args)?;
+    if let Some(target) = result.as_integer() {
+        buffer::with_current_mut(|b| b.goto_char(target as usize));
+    }
+    Ok(LispObject::nil())
+}
+
+pub fn prim_backward_list(args: &LispObject) -> ElispResult<LispObject> {
+    let n = args.first().and_then(|a| a.as_integer()).unwrap_or(1);
+    let neg = LispObject::cons(LispObject::integer(-n), LispObject::nil());
+    prim_forward_list(&neg)
+}
+
 pub fn prim_parse_partial_sexp(args: &LispObject) -> ElispResult<LispObject> {
     let from = args
         .first()
@@ -4407,6 +4884,9 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "line-end-position" | "pos-eol" => prim_line_end_position(args),
         "line-number-at-pos" => prim_line_number_at_pos(args),
         "current-column" => prim_current_column(args),
+        "indent-line-to" => prim_indent_line_to(args),
+        "indent-rigidly" => prim_indent_rigidly(args),
+        "indent-region" => prim_indent_region(args),
         "move-to-column" => prim_move_to_column(args),
         "indent-to" => prim_indent_to(args),
         "narrow-to-region" => prim_narrow_to_region(args),
@@ -4474,6 +4954,13 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
             prim_remove_text_properties(args)
         }
         "text-property-not-all" => prim_text_property_not_all(args),
+        "text-property-any" => prim_text_property_any(args),
+        "next-property-change" => prim_next_property_change(args),
+        "previous-property-change" => prim_previous_property_change(args),
+        "next-single-property-change" => prim_next_single_property_change(args),
+        "previous-single-property-change" => prim_previous_single_property_change(args),
+        "next-single-char-property-change" => prim_next_single_char_property_change(args),
+        "add-face-text-property" => prim_add_face_text_property(args),
         "get-char-property" => prim_get_char_property(args, false),
         "get-pos-property" => prim_get_char_property(args, true),
         "marker-insertion-type" => prim_marker_insertion_type(args),
@@ -4501,9 +4988,19 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "set-visited-file-name" => prim_set_visited_file_name(args),
         "forward-word" => prim_forward_word(args),
         "backward-word" => prim_backward_word(args),
+        "upcase-word" => prim_upcase_word(args),
+        "downcase-word" => prim_downcase_word(args),
+        "capitalize-word" => prim_capitalize_word(args),
+        "kill-word" => prim_kill_word(args),
+        "backward-kill-word" => prim_backward_kill_word(args),
         "forward-comment" => prim_forward_comment(args),
         "parse-partial-sexp" => prim_parse_partial_sexp(args),
         "scan-lists" => prim_scan_lists(args),
+        "scan-sexps" => prim_scan_sexps(args),
+        "forward-sexp" => prim_forward_sexp(args),
+        "backward-sexp" => prim_backward_sexp(args),
+        "forward-list" => prim_forward_list(args),
+        "backward-list" => prim_backward_list(args),
         "syntax-ppss" => prim_syntax_ppss(args),
         "current-indentation" => prim_current_indentation(args),
         "delete-all-overlays" => prim_delete_all_overlays(args),
@@ -4587,6 +5084,9 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "current-column",
     "move-to-column",
     "indent-to",
+    "indent-line-to",
+    "indent-rigidly",
+    "indent-region",
     "narrow-to-region",
     "widen",
     "buffer-narrowed-p",
@@ -4654,13 +5154,30 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "get-char-property",
     "get-pos-property",
     "text-property-not-all",
+    "text-property-any",
+    "next-property-change",
+    "previous-property-change",
+    "next-single-property-change",
+    "previous-single-property-change",
+    "next-single-char-property-change",
+    "add-face-text-property",
     "marker-insertion-type",
     "buffer-swap-text",
     "forward-word",
     "backward-word",
+    "upcase-word",
+    "downcase-word",
+    "capitalize-word",
+    "kill-word",
+    "backward-kill-word",
     "forward-comment",
     "parse-partial-sexp",
     "scan-lists",
+    "scan-sexps",
+    "forward-sexp",
+    "backward-sexp",
+    "forward-list",
+    "backward-list",
     "syntax-ppss",
     "current-indentation",
     "delete-all-overlays",
@@ -4721,6 +5238,142 @@ mod tests {
         let pos_args = LispObject::cons(marker, LispObject::nil());
         let pos = prim_marker_position(&pos_args).expect("marker-position ok");
         assert_eq!(pos.as_integer(), Some(1));
+    }
+
+    #[test]
+    fn forward_sexp_moves_over_balanced_group() {
+        buffer::reset();
+        buffer::with_current_mut(|b| {
+            b.insert("(abc) def");
+            b.goto_char(1);
+        });
+        prim_forward_sexp(&LispObject::nil()).expect("forward-sexp ok");
+        // After balanced (abc), point lands at position 6.
+        assert_eq!(buffer::with_current(|b| b.point), 6);
+    }
+
+    #[test]
+    fn indent_line_to_replaces_leading_whitespace() {
+        buffer::reset();
+        buffer::with_current_mut(|b| {
+            b.insert("    hello\n");
+            b.goto_char(1);
+        });
+        prim_indent_line_to(&list(vec![LispObject::integer(2)]))
+            .expect("indent-line-to ok");
+        assert_eq!(buffer::with_current(|b| b.buffer_string()), "  hello\n");
+        // Point at end of indentation (col 2 → pos 3).
+        assert_eq!(buffer::with_current(|b| b.point), 3);
+    }
+
+    #[test]
+    fn indent_rigidly_shifts_each_line() {
+        buffer::reset();
+        buffer::with_current_mut(|b| {
+            b.insert("a\nb\nc");
+            b.goto_char(1);
+        });
+        let pmax = buffer::with_current(|b| b.point_max());
+        prim_indent_rigidly(&list(vec![
+            LispObject::integer(1),
+            LispObject::integer(pmax as i64),
+            LispObject::integer(2),
+        ]))
+        .expect("indent-rigidly ok");
+        assert_eq!(buffer::with_current(|b| b.buffer_string()), "  a\n  b\n  c");
+    }
+
+    /// Word-casing primitives must transform exactly the chars between
+    /// the original point and the position after `forward-word(N)`,
+    /// leaving point at the end of the transformed region.
+    #[test]
+    fn upcase_word_transforms_next_word() {
+        buffer::reset();
+        buffer::with_current_mut(|b| {
+            b.insert("hello world");
+            b.goto_char(1);
+        });
+        prim_upcase_word(&list(vec![LispObject::integer(1)]))
+            .expect("upcase-word ok");
+        assert_eq!(buffer::with_current(|b| b.buffer_string()), "HELLO world");
+        assert_eq!(buffer::with_current(|b| b.point), 6);
+    }
+
+    #[test]
+    fn kill_word_returns_killed_text_and_deletes() {
+        buffer::reset();
+        buffer::with_current_mut(|b| {
+            b.insert("alpha beta gamma");
+            b.goto_char(1);
+        });
+        let killed = prim_kill_word(&list(vec![LispObject::integer(1)]))
+            .expect("kill-word ok");
+        assert_eq!(killed.as_string().map(String::as_str), Some("alpha"));
+        assert_eq!(buffer::with_current(|b| b.buffer_string()), " beta gamma");
+        assert_eq!(buffer::with_current(|b| b.point), 1);
+    }
+
+    /// `(next-property-change POS)` returns the position where the
+    /// effective property set changes. After putting (face . bold) on
+    /// chars 5..10, scanning from 5 must arrive at 10 (where the
+    /// region ends), and scanning from 1 must arrive at 5 (where it
+    /// starts).
+    #[test]
+    fn property_change_navigation() {
+        buffer::reset();
+        buffer::with_current_mut(|b| b.insert("0123456789abcde"));
+        let face = LispObject::symbol("face");
+        let bold = LispObject::symbol("bold");
+        prim_put_text_property(&list(vec![
+            LispObject::integer(5),
+            LispObject::integer(10),
+            face.clone(),
+            bold.clone(),
+        ]))
+        .expect("put-text-property ok");
+
+        let next_from_1 = prim_next_property_change(&list(vec![LispObject::integer(1)]))
+            .expect("next-property-change ok");
+        assert_eq!(next_from_1.as_integer(), Some(5));
+
+        let next_from_5 = prim_next_property_change(&list(vec![LispObject::integer(5)]))
+            .expect("next-property-change ok");
+        assert_eq!(next_from_5.as_integer(), Some(10));
+
+        let prev_from_12 = prim_previous_property_change(&list(vec![LispObject::integer(12)]))
+            .expect("previous-property-change ok");
+        assert_eq!(prev_from_12.as_integer(), Some(10));
+
+        let prev_from_10 = prim_previous_property_change(&list(vec![LispObject::integer(10)]))
+            .expect("previous-property-change ok");
+        assert_eq!(prev_from_10.as_integer(), Some(5));
+
+        let any = prim_text_property_any(&list(vec![
+            LispObject::integer(1),
+            LispObject::integer(15),
+            face,
+            bold,
+        ]))
+        .expect("text-property-any ok");
+        assert_eq!(any.as_integer(), Some(5));
+    }
+
+    /// `copy-marker POS TYPE` — when TYPE is non-nil, the new marker
+    /// must be after-insertion (its `marker-insertion-type` returns t).
+    #[test]
+    fn copy_marker_honors_type_arg() {
+        buffer::reset();
+        let with_type = list(vec![LispObject::integer(5), LispObject::t()]);
+        let after = prim_copy_marker(&with_type).expect("copy-marker t ok");
+        let it_args = LispObject::cons(after, LispObject::nil());
+        let it = prim_marker_insertion_type(&it_args).expect("marker-insertion-type ok");
+        assert_eq!(it, LispObject::t(), "TYPE=t should set after-insertion");
+
+        let without_type = LispObject::cons(LispObject::integer(5), LispObject::nil());
+        let before = prim_copy_marker(&without_type).expect("copy-marker nil ok");
+        let it2_args = LispObject::cons(before, LispObject::nil());
+        let it2 = prim_marker_insertion_type(&it2_args).expect("marker-insertion-type ok");
+        assert_eq!(it2, LispObject::nil(), "TYPE omitted should be before-insertion");
     }
 
     #[test]
