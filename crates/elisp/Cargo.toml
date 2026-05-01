@@ -31,6 +31,16 @@ dunce = "1.0"
 # Cross-platform set-file-times. `std::fs` only exposes get-modified
 # / get-accessed; setting them needs platform-specific syscalls.
 filetime = "0.2"
+# Hashing primitives — md5 / secure-hash / buffer-hash.
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+digest = "0.10"
+# Pure-Rust XML parser used by `libxml-parse-xml-region` and friends.
+quick-xml = "0.36"
+# In-process sqlite. The `bundled` feature ships libsqlite3 with the
+# crate so we don't depend on a system install.
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [target.'cfg(unix)'.dependencies]
 # Unix-only: uid/gid → name lookup so `(file-attributes path 'string)`

@@ -3,6 +3,74 @@
 Append-only — newest entries at top. Each session: what changed, what
 landed, what to look at next.
 
+## 2026-05-01 - Tier 1+4: regression cleanup + crypto/xml/sqlite deps
+
+**Movement:**
+
+- ERT total: `895 pass / 118 fail / 24 err / 128 skip` (77%) →
+  `898 / 124 / 27 / 116` (77%). Gross delta: `+3 pass`, `+6 fail`,
+  `+3 err`, `-12 skip`. The skip→fail/err migration is sqlite-tests:
+  with `sqlite-available-p` now returning t, all 12 previously-skipped
+  tests run; 3 pass, 6 fail (semantic diffs vs Emacs), 3 err.
+- Source-derived stub inventory: `424` → `414` records.
+
+**Code landed (Tier 1):**
+
+- **T1.2 — kill-word undo**: `prim_kill_word` now goes through
+  `Registry::delete_current_region` so the deletion is recorded in
+  `buffer-undo-list` and markers/overlays reflow correctly. Direct
+  `buffer.delete_region` skipped both, breaking `(undo)` replay (see
+  undo-tests.el::undo-test1, fixed in unit test path).
+- **T1.3 — text-char-description**: real Emacs semantics — caret form
+  for control chars (`^A`..`^?`), empty unibyte string for the C1
+  control range (128..159), and char-as-printable for Latin-1 / BMP /
+  multibyte chars. Signals `wrong-type-argument` for non-character
+  inputs. Verified via standalone unit test against the canonical
+  Emacs assertion list. (The `keymap-text-char-description` ERT test
+  still reports a fail in `--full` mode despite the unit test passing
+  in isolation — under investigation.)
+
+**Code landed (Tier 4):**
+
+- **T4.1 — Hashing**: added `md-5`, `sha1`, `sha2`, `digest` deps.
+  New `primitives/core/hashing.rs` implements `md5`, `secure-hash`,
+  `buffer-hash` with proper lowercase-hex output matching Emacs's
+  digest format. Unit tests verify against published RFC vectors
+  (`abc` → md5 / sha1 / sha256).
+- **T4.2 — XML**: added `quick-xml` dep (pure-Rust, no system libxml2).
+  New `primitives/core/xml.rs` implements `libxml-parse-xml-region`,
+  `libxml-parse-html-region`, `xml-parse-{string,region,file}`,
+  `libxml-available-p` returning `t`. Output shape mirrors Emacs:
+  `<root attr="v">text<child/></root>` →
+  `(root ((attr . "v")) "text" (child nil))`. Comment-preserving
+  output (the libxml-tests assertion uses) is not yet implemented.
+- **T4.3 — SQLite**: added `rusqlite` dep with `bundled` feature
+  (ships libsqlite3, no system install). Replaced nil-stub
+  `primitives/core/sqlite.rs` with a real registry-backed impl:
+  `sqlite-available-p` returns `t`, `sqlite-version` returns the
+  bundled libsqlite3 version, `sqlite-open` (file path or `:memory:`),
+  `sqlite-execute` (parameter binding), `sqlite-select` (returns
+  `((col1 col2 ...) ...)`), `sqlite-transaction` / -commit / -rollback,
+  `sqlite-pragma`, `sqlite-close`. Unit test verifies a full
+  CREATE / INSERT / SELECT round-trip in-memory.
+- Removed bootstrap aliases that overrode real `sqlite-available-p`,
+  `json-available-p`, and selection / coding primitives.
+
+**Open follow-ups:**
+
+- **T1.1** (textprop WRONG_N_ARGS, 2 tests): chain involving
+  copy-sequence + put-text-property + font-lock-prepend +
+  font-lock--remove-face-from-text-property hits "wrong number of
+  arguments" only when iterated; direct call works. Reproduced in
+  Rust test, root cause not yet pinpointed.
+- **keymap-text-char-description** still fails ERT's full sweep
+  despite the underlying primitive being correct — likely a worker
+  state issue.
+- **xml-tests::libxml-tests**: my parser doesn't preserve `<!-- ... -->`
+  as `(comment nil "...")` nodes; the test's data alist requires this.
+- **sqlite semantic gaps**: 6 fails / 3 errs in sqlite-tests; mostly
+  result-shape differences (NULL handling, BLOB encoding).
+
 ## 2026-05-01 - Tier B + C stub batch (abbrevs / buffer-ops / hooks / obarray / defvar / selections / faces / tty / processes / threads / timers / sqlite / minibuf / misc)
 
 **Movement:**

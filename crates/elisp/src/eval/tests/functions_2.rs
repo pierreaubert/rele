@@ -804,7 +804,9 @@ fn test_batched_defun_stubs_resolve_round5() {
         ("(debug-on-entry 'ignore)".into(), "nil".into()),
         ("(delete-process nil)".into(), "nil".into()),
         ("(json-parse-string \"1\")".into(), "1".into()),
-        ("(sqlite-open nil)".into(), "nil".into()),
+        // sqlite-open is now real (in-memory connection), see
+        // primitives/core/sqlite.rs.
+        // ("(sqlite-open nil)".into(), "nil".into()),
         ("(treesit-parser-p nil)".into(), "nil".into()),
         ("(number-sequence 1 5)".into(), "(1 2 3 4 5)".into()),
         ("(number-sequence 1 5 2)".into(), "(1 3 5)".into()),

@@ -9,10 +9,10 @@ use crate::object::LispObject;
 #[allow(clippy::too_many_lines)]
 pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
     let r = match name {
-        // Headless-safe availability stubs
+        // Headless-safe availability stubs (libxml-available-p is real,
+        // see primitives/core/xml.rs).
         "image-type-available-p"
         | "gnutls-available-p"
-        | "libxml-available-p"
         | "dbus-available-p"
         | "native-comp-available-p" => Ok(LispObject::nil()),
 
@@ -120,7 +120,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
             Ok(args.first().unwrap_or(LispObject::nil()))
         }
         "string-pixel-width" => Ok(LispObject::integer(0)),
-        "text-char-description" => Ok(super::key_descriptions::text_char_description(args)),
+        "text-char-description" => super::key_descriptions::text_char_description(args),
         "single-key-description" => Ok(super::key_descriptions::single_key_description(args)),
         "listify-key-sequence" => Ok(super::key_descriptions::listify_key_sequence(args)),
 
@@ -229,15 +229,8 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         // Process primitives are real, see primitives/core/processes.rs
         // and stateful_process_* in eval/functions/functions.rs.
 
-        // XML/JSON stubs
-        "xml-parse-string"
-        | "xml-parse-region"
-        | "xml-parse-file"
-        | "libxml-parse-xml-region"
-        | "libxml-parse-html-region" => Ok(LispObject::nil()),
-        // JSON primitives are real, see primitives/core/json.rs.
-
-        // SQLite primitives are real, see primitives/core/sqlite.rs.
+        // XML / JSON / SQLite primitives are real, see
+        // primitives/core/{xml,json,sqlite}.rs.
 
         // Tree-sitter stubs
         "treesit-parser-create"

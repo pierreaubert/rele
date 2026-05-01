@@ -2,23 +2,39 @@
 //! Kept out of `stubs.rs` so the inventory script doesn't scan their
 //! internal `match` arms as stub records.
 
+use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
 
-/// `text-char-description CHAR` — caret form for control chars,
-/// the char itself for printables, octal form for non-ASCII bytes.
-pub fn text_char_description(args: &LispObject) -> LispObject {
-    let Some(ch) = args.first().and_then(|a| a.as_integer()) else {
-        return LispObject::string("");
+/// `text-char-description CHAR` — caret form for control chars
+/// (`^A`, `^I`, `^?`), the char itself for printables, empty string
+/// for eight-bit raw bytes (128..=255). Signals `wrong-type-argument`
+/// for non-character inputs (strings, vectors, modifier-bit chars).
+pub fn text_char_description(args: &LispObject) -> ElispResult<LispObject> {
+    let value = args.first().unwrap_or_else(LispObject::nil);
+    let Some(n) = value.as_integer() else {
+        return Err(ElispError::WrongTypeArgument("characterp".into()));
     };
-    let n = ch as u32;
+    if n < 0 {
+        return Err(ElispError::WrongTypeArgument("characterp".into()));
+    }
+    // Emacs encodes modifier bits in the high bits of the character
+    // integer (control 0x0400_0000, meta 0x0800_0000, super 0x0010_0000,
+    // etc.). text-char-description rejects any char with non-ASCII
+    // modifier bits set — anything ≥ 0x40_0000 is out of bounds.
+    if n >= 0x0040_0000 {
+        return Err(ElispError::WrongTypeArgument("characterp".into()));
+    }
+    let n = n as u32;
     let s = match n {
         0..=31 => format!("^{}", char::from_u32(n + 64).unwrap_or('?')),
         127 => "^?".to_string(),
-        128..=159 => format!("M-^{}", char::from_u32((n - 128) + 64).unwrap_or('?')),
-        160..=255 => format!("M-{}", char::from_u32(n - 128).unwrap_or('?')),
+        // C1 control range — Emacs returns the empty unibyte string;
+        // these don't have a printable representation.
+        128..=159 => return Ok(LispObject::string("")),
+        // Latin-1 supplement and above — printable as the char itself.
         _ => char::from_u32(n).map(|c| c.to_string()).unwrap_or_default(),
     };
-    LispObject::string(&s)
+    Ok(LispObject::string(&s))
 }
 
 /// `single-key-description KEY &optional NO-ANGLES` — describe one

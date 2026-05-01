@@ -59,6 +59,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "json-read",
         "json-serialize",
         "json-encode",
+        "json-available-p",
     ] {
         interp.define(name, LispObject::primitive(name));
     }
@@ -66,6 +67,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
 
 pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
     match name {
+        "json-available-p" => Some(Ok(LispObject::t())),
         "json-parse-string" | "json-read-from-string" | "json-decode" => {
             Some(prim_json_parse_string(args))
         }

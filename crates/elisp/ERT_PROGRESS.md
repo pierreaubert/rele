@@ -29,8 +29,8 @@ that a single fix will close.
 
 ## Per-file snapshot
 
-Last refreshed: **2026-04-30**, target: `ert-progress/tractable.list`.
-Current total: **892 pass / 120 fail / 23 err / 128 skip** (`76%`).
+Last refreshed: **2026-05-01** (post Tier 1+4), target: `ert-progress/tractable.list`.
+Current total: **898 pass / 124 fail / 27 err / 116 skip** (`77%`).
 
 | File                       | Pass | Fail | Err | Skip | Pct  | Notes |
 |----------------------------|-----:|-----:|----:|-----:|-----:|-------|
@@ -40,14 +40,14 @@ Current total: **892 pass / 120 fail / 23 err / 128 skip** (`76%`).
 | casefiddle-tests.el        |    1 |    7 |   2 |    1 |   9% | case tables |
 | category-tests.el          |    4 |    2 |   0 |    0 |  67% | lightweight category tables |
 | character-tests.el         |    3 |    0 |   0 |    0 | 100% | |
-| charset-tests.el           |   14 |    6 |   1 |    0 |  67% | lightweight charset tables |
+| charset-tests.el           |   15 |    5 |   1 |    0 |  71% | charset priority list (split-char improved) |
 | chartab-tests.el           |    6 |    0 |   0 |    0 | 100% | |
 | cmds-tests.el              |    2 |    0 |   0 |    0 | 100% | |
 | coding-tests.el            |   14 |   13 |   0 |    1 |  50% | coding systems |
 | data-tests.el              |   74 |    3 |   0 |    2 |  94% | format edge cases |
 | decompress-tests.el        |    0 |    0 |   0 |    1 |   0% | needs zlib |
 | doc-tests.el               |    2 |    3 |   0 |    0 |  40% | documentation semantics need follow-up |
-| editfns-tests.el           |   36 |   18 |   3 |    0 |  63% | field/text properties improved; format remains |
+| editfns-tests.el           |   37 |   17 |   3 |    0 |  65% | text-property pass landed |
 | eval-tests.el              |    ? |    ? |   ? |    ? |    ? | no results emitted in last sweep |
 | floatfns-tests.el          |   28 |    2 |   3 |    0 |  85% | bignum edge cases |
 | font-tests.el              |    2 |    0 |   0 |    0 | 100% | headless font parsing complete |
@@ -59,23 +59,23 @@ Current total: **892 pass / 120 fail / 23 err / 128 skip** (`76%`).
 | keymap-tests.el            |   22 |   25 |   0 |    0 |  47% | cyclic keymap traversal no longer aborts |
 | lcms-tests.el              |    0 |    0 |   0 |    6 |   0% | needs lcms |
 | lread-tests.el             |   42 |   12 |   4 |    0 |  72% | reader edge cases |
-| marker-tests.el            |    3 |    5 |   4 |    0 |  25% | marker semantics |
+| marker-tests.el            |    4 |    4 |   4 |    0 |  33% | copy-marker honors TYPE arg |
 | minibuf-tests.el           |   62 |    4 |   0 |    0 |  94% | obarray-predicate, ignore-case |
 | process-tests.el           |   12 |    0 |   0 |   27 |  31% | supportable headless cases pass |
 | profiler-tests.el          |    0 |    0 |   1 |    1 |   0% | |
 | search-tests.el            |    0 |    1 |   0 |    0 |   0% | |
-| sqlite-tests.el            |    0 |    0 |   0 |   12 |   0% | needs sqlite |
+| sqlite-tests.el            |    3 |    6 |   3 |    0 |  25% | rusqlite (bundled) backend |
 | syntax-tests.el            |   98 |    0 |   2 |    0 |  98% | char-syntax edge cases |
 | terminal-tests.el          |    1 |    0 |   0 |    0 | 100% | |
-| textprop-tests.el          |    1 |    1 |   0 |    0 |  50% | |
+| textprop-tests.el          |    1 |    1 |   1 |    0 |  33% | font-lock removes face hit WRONG_N_ARGS once real text-prop primitives ran |
 | thread-tests.el            |    0 |    0 |   1 |   36 |   0% | needs threads |
 | treesit-tests.el           |    1 |    2 |   0 |   35 |   3% | needs tree-sitter |
-| undo-tests.el              |   16 |    0 |   1 |    0 |  94% | one new error after text-property pass |
+| undo-tests.el              |   16 |    1 |   1 |    0 |  89% | undo-test1 now exercises real kill-word; undo replay drift |
 | xdisp-tests.el             |    9 |    1 |   0 |    0 |  90% | bidi/display-property paths improved |
 | xfaces-tests.el            |    2 |    1 |   0 |    0 |  67% | faces |
 | xml-tests.el               |    0 |    1 |   0 |    0 |   0% | needs libxml |
 
-## Top leverage targets (2026-04-30)
+## Top leverage targets (2026-05-01)
 
 These are the failure patterns ranked by impact. A single fix at any of
 these unblocks the listed count of tests at once. Verify the count is still
@@ -90,29 +90,36 @@ current by running `./ert-progress/refresh.sh` before tackling.
 |  2 | `ASSERT: keymap make-keymap` in keymap-tests.el | menu-vector table shape |
 |  2 | `ASSERT: keymap lookup mixed case` in keymap-tests.el | menu-vector and key normalization |
 |  2 | `ASSERT: keymap help describe-vector` in keymap-tests.el | shadow range description formatting |
-|  2 | `ASSERT: marker buffer/window semantics` in marker-tests.el | marker/window-buffer compatibility |
+|  2 | `ASSERT: marker-buffer m` in marker-tests.el | marker buffer/window semantics |
+|  2 | `ASSERT: marker-set-window-start-from-other-buffer` | marker/window-buffer interplay |
+|  2 | `WRONG_N_ARGS` in textprop-tests.el | font-lock-prepend / remove-face calling pattern (revealed once real text-prop primitives ran) |
 
-## Runtime stub hits (2026-04-30)
+## Runtime stub hits (2026-05-01)
 
 `refresh.sh` records stub/no-op primitive calls per ERT test and ranks them
 by failing/erroring tests affected. The source-derived inventory currently
-classifies `778` records:
-`editing/regions=37`, `window/display=83`, `keymap/help=26`, `other=632`.
-By status: `needs-classification=555`, `runtime-missing=218`,
-`compat-identity=5`.
+classifies `424` records (down from `778` before this session) — the
+catch-all `other` bucket dropped from `632` to `~228`, and 14 dedicated
+modules under `crates/elisp/src/primitives/core/` now host
+markers / text-props / words / sexp / json / base64 / coding / abbrevs /
+obarrays / selections / faces / terminal / processes / threads / timers /
+sqlite / minibuf / misc-system / key-descriptions.
 
 Top runtime stub hits from the latest full refresh:
 
 | Bad tests | Hits | Bucket | Stub | Example |
 |----------:|-----:|--------|------|---------|
-| 2 | 2 | other | `make-thread` | `thread-tests.el::threads-test-bug33073` |
-| 1 | 2035957 | other | `thread-yield` | `thread-tests.el::threads-test-bug48990` |
+| 1 | 6 | other | `text-char-description` | `keymap-tests.el::keymap-text-char-description` |
 | 1 | 2 | other | `lossage-size` | `keyboard-tests.el::keyboard-lossage-size` |
-| 1 | 2 | other | `check-coding-systems-region` | `coding-tests.el::coding-check-coding-systems-region` |
-| 1 | 1 | other | `upcase-word` | `casefiddle-tests.el::casefiddle-tests-casing-word` |
-| 1 | 1 | other | `text-char-description` | `keymap-tests.el::keymap-text-char-description` |
-| 1 | 1 | other | `split-char` | `charset-tests.el::charset-tests--split-char` |
 | 1 | 1 | other | `libxml-parse-xml-region` | `xml-tests.el::libxml-tests` |
+| 1 | 1 | other | `get-load-suffixes` | `lread-tests.el::lread-tests--get-load-suffixes` |
+| 1 | 1 | unknown | `find-operation-coding-system` | `coding-tests.el::coding-tests--find-operation-coding-system` |
+
+The `text-char-description` hit is interesting: the source-derived
+inventory thinks it's still a stub, but the primitive itself was
+upgraded to a real impl in this session — re-check whether the test
+hits the bytecode VM path which still lacks the C-equivalent
+formatting.
 
 Removed from the source inventory in the latest stub pass:
 `describe-buffer-bindings`, `detect-coding-string`, `delete-file-internal`,

@@ -5,6 +5,7 @@ use crate::object::LispObject;
 mod abbrevs;
 mod base64;
 mod faces;
+mod hashing;
 mod minibuf;
 mod misc_system;
 mod obarrays;
@@ -14,6 +15,7 @@ mod sqlite;
 mod terminal;
 mod threads;
 mod timers;
+mod xml;
 mod coding_systems;
 mod error_prims;
 pub(crate) mod ert;
@@ -67,6 +69,8 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     sqlite::add_primitives(interp);
     minibuf::add_primitives(interp);
     misc_system::add_primitives(interp);
+    hashing::add_primitives(interp);
+    xml::add_primitives(interp);
 
     // Submodules that dispatch via call() but register names inline
     for &name in list::LIST_PRIMITIVE_NAMES {
@@ -299,8 +303,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "subr-native-comp-unit",
         "subr-native-lambda-list",
         "subr-type",
-        "secure-hash",
-        "md5",
         "locale-info",
         "load-average",
         "clear-string",
@@ -429,7 +431,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "obarrayp",
         "image-type-available-p",
         "gnutls-available-p",
-        "libxml-available-p",
         "dbus-available-p",
         "native-comp-available-p",
         "backward-prefix-chars",
@@ -811,6 +812,12 @@ pub fn call_primitive(name: &str, args: &LispObject) -> ElispResult<LispObject> 
         return result;
     }
     if let Some(result) = misc_system::call(name, args) {
+        return result;
+    }
+    if let Some(result) = hashing::call(name, args) {
+        return result;
+    }
+    if let Some(result) = xml::call(name, args) {
         return result;
     }
     if let Some(result) = records::call(name, args) {

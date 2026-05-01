@@ -4007,7 +4007,11 @@ pub fn prim_kill_word(args: &LispObject) -> ElispResult<LispObject> {
     let end = buffer::with_current(|b| b.point);
     let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
     let killed = buffer::with_current(|buf| buf.substring(lo, hi));
-    buffer::with_current_mut(|buf| buf.delete_region(lo, hi));
+    // Use the registry path so the deletion is recorded in
+    // buffer-undo-list and markers/overlays in the family are
+    // adjusted; bypassing this (calling buffer.delete_region directly)
+    // breaks `(undo)` replay — see undo-tests.el::undo-test1.
+    buffer::with_registry_mut(|r| r.delete_current_region(lo, hi));
     Ok(LispObject::string(&killed))
 }
 

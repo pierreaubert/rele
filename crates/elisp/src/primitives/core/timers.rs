@@ -13,7 +13,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "run-with-idle-timer",
         "cancel-timer",
         "cancel-function-timers",
-        "timer-list",
         "timer-activate",
         "timer-activate-when-idle",
         "timer-event-handler",
@@ -27,6 +26,10 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     ] {
         interp.define(name, LispObject::primitive(name));
     }
+    // `timer-list` is a defvar in Emacs (lisp/emacs-lisp/timer.el),
+    // not a function. Initialize the value cell so `(let ((timer-list
+    // ...)) ...)` and `(symbol-value 'timer-list)` resolve.
+    interp.define("timer-list", LispObject::nil());
 }
 
 pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
@@ -36,7 +39,6 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         | "run-with-idle-timer"
         | "cancel-timer"
         | "cancel-function-timers"
-        | "timer-list"
         | "timer-activate"
         | "timer-activate-when-idle"
         | "timer-event-handler"

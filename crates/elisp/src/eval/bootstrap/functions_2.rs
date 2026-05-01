@@ -1076,8 +1076,10 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("native-compile", LispObject::primitive("ignore"));
     interp.define("module-load", LispObject::primitive("ignore"));
     interp.define("dbus-ping", LispObject::primitive("ignore"));
-    interp.define("sqlite-available-p", LispObject::primitive("ignore"));
-    interp.define("json-available-p", LispObject::primitive("ignore"));
+    // sqlite-available-p / json-available-p are real primitives now,
+    // see primitives/core/{sqlite,json}.rs.
+    interp.define("sqlite-available-p", LispObject::primitive("sqlite-available-p"));
+    interp.define("json-available-p", LispObject::primitive("json-available-p"));
     interp.define("treesit-available-p", LispObject::primitive("ignore"));
     interp.define("daemonp", LispObject::primitive("ignore"));
     interp.define("subword-mode", LispObject::primitive("ignore"));
