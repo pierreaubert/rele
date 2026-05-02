@@ -29,18 +29,18 @@ that a single fix will close.
 
 ## Per-file snapshot
 
-Last refreshed: **2026-05-02** (post bignum numeric edge cases), target: `ert-progress/tractable.list`.
-Current total: **905 pass / 121 fail / 23 err / 116 skip** (`77%`).
+Last refreshed: **2026-05-02** (post keymap / sqlite / textprop cleanup), target: `ert-progress/tractable.list`.
+Current total: **930 pass / 104 fail / 15 err / 116 skip** (`80%`).
 
 | File                       | Pass | Fail | Err | Skip | Pct  | Notes |
 |----------------------------|-----:|-----:|----:|-----:|-----:|-------|
 | alloc-tests.el             |    4 |    0 |   0 |    0 | 100% | |
 | buffer-tests.el            |  408 |    1 |   0 |    1 | 100% | |
 | callint-tests.el           |    4 |    0 |   0 |    0 | 100% | call-interactively complete |
-| casefiddle-tests.el        |    1 |    7 |   2 |    1 |   9% | case tables |
+| casefiddle-tests.el        |    3 |    7 |   0 |    1 |  27% | char-valued casing fixed; case tables remain |
 | category-tests.el          |    4 |    2 |   0 |    0 |  67% | lightweight category tables |
 | character-tests.el         |    3 |    0 |   0 |    0 | 100% | |
-| charset-tests.el           |   15 |    5 |   1 |    0 |  71% | charset priority list (split-char improved) |
+| charset-tests.el           |   20 |    1 |   0 |    0 |  95% | priority/ISO/sort fixed; map-charset-chars remains |
 | chartab-tests.el           |    6 |    0 |   0 |    0 | 100% | |
 | cmds-tests.el              |    2 |    0 |   0 |    0 | 100% | |
 | coding-tests.el            |   14 |   13 |   0 |    1 |  50% | coding systems |
@@ -54,23 +54,23 @@ Current total: **905 pass / 121 fail / 23 err / 116 skip** (`77%`).
 | image-tests.el             |    3 |    0 |   0 |    2 |  60% | |
 | indent-tests.el            |    0 |    3 |   0 |    0 |   0% | |
 | inotify-tests.el           |    0 |    0 |   0 |    3 |   0% | needs inotify |
-| json-tests.el              |   17 |    7 |   1 |    0 |  68% | JSON encode/decode |
+| json-tests.el              |   17 |    6 |   2 |    0 |  68% | JSON encode/decode |
 | keyboard-tests.el          |    1 |    2 |   0 |    0 |  33% | |
-| keymap-tests.el            |   22 |   25 |   0 |    0 |  47% | cyclic keymap traversal no longer aborts |
+| keymap-tests.el            |   29 |   18 |   0 |    0 |  62% | prompt + menu case normalization fixed |
 | lcms-tests.el              |    0 |    0 |   0 |    6 |   0% | needs lcms |
 | lread-tests.el             |   42 |   12 |   4 |    0 |  72% | reader edge cases |
-| marker-tests.el            |    4 |    4 |   4 |    0 |  33% | copy-marker honors TYPE arg |
+| marker-tests.el            |   12 |    0 |   0 |    0 | 100% | detached/copy/window marker semantics complete |
 | minibuf-tests.el           |   62 |    4 |   0 |    0 |  94% | obarray-predicate, ignore-case |
 | process-tests.el           |   12 |    0 |   0 |   27 |  31% | supportable headless cases pass |
 | profiler-tests.el          |    0 |    0 |   1 |    1 |   0% | |
 | search-tests.el            |    0 |    1 |   0 |    0 |   0% | |
-| sqlite-tests.el            |    8 |    3 |   1 |    0 |  67% | rusqlite backend; BLOB/multibyte semantics remain |
+| sqlite-tests.el            |   10 |    1 |   1 |    0 |  83% | BLOB/unibyte round trips fixed; set/load-extension remain |
 | syntax-tests.el            |   98 |    0 |   2 |    0 |  98% | char-syntax edge cases |
 | terminal-tests.el          |    1 |    0 |   0 |    0 | 100% | |
-| textprop-tests.el          |    1 |    1 |   1 |    0 |  33% | font-lock removes face hit WRONG_N_ARGS once real text-prop primitives ran |
+| textprop-tests.el          |    2 |    1 |   0 |    0 |  67% | font-lock face-removal path fixed |
 | thread-tests.el            |    0 |    0 |   1 |   36 |   0% | needs threads |
 | treesit-tests.el           |    1 |    2 |   0 |   35 |   3% | needs tree-sitter |
-| undo-tests.el              |   16 |    1 |   1 |    0 |  89% | undo-test1 now exercises real kill-word; undo replay drift |
+| undo-tests.el              |   16 |    2 |   0 |    0 |  89% | undo replay drift |
 | xdisp-tests.el             |    9 |    1 |   0 |    0 |  90% | bidi/display-property paths improved |
 | xfaces-tests.el            |    2 |    1 |   0 |    0 |  67% | faces |
 | xml-tests.el               |    0 |    1 |   0 |    0 |   0% | needs libxml |
@@ -83,17 +83,11 @@ current by running `./ert-progress/refresh.sh` before tackling.
 
 | Tests | Pattern | Likely cause |
 |------:|---------|--------------|
-|  2 | `WRONG_TYPE_STRING` in casefiddle tests | string-vs-char validation |
-|  2 | `ASSERT: symbolp highest` in charset-tests.el | charset priority-list shape |
-|  2 | `ASSERT: iso-charset ascii` in charset-tests.el | charset equivalence/declaration model |
-|  2 | `ASSERT: keymap make-keymap` in keymap-tests.el | menu-vector table shape |
-|  2 | `ASSERT: keymap lookup mixed case` in keymap-tests.el | menu-vector and key normalization |
-|  2 | `ASSERT: keymap lookup mixed case multibyte` in keymap-tests.el | menu-vector and multibyte key normalization |
+|  2 | `SIGNAL: json-parse-error` in json-tests.el | JSON serialize/parse scalar round-trip |
 |  2 | `ASSERT: keymap help describe-vector` in keymap-tests.el | shadow range description formatting |
-|  2 | `ASSERT: marker-buffer m` in marker-tests.el | marker buffer/window semantics |
-|  2 | `ASSERT: marker-set-window-start-from-other-buffer` | marker/window-buffer interplay |
-|  2 | `ASSERT: multibyte-string-p string` in sqlite-tests.el | SQLite BLOB/string encoding |
-|  2 | `WRONG_N_ARGS` in textprop-tests.el | font-lock-prepend / remove-face calling pattern (revealed once real text-prop primitives ran) |
+|  1 | `overlay-modification-hooks` in buffer-tests.el | overlay change hook ordering |
+|  1 | `casefiddle-tests-char-properties` and related case-table asserts | case-table property model |
+|  1 | `charset-tests--map-charset-chars` | map-charset-chars range enumeration |
 
 ## Runtime stub hits (2026-05-02)
 

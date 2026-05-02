@@ -3,6 +3,117 @@
 Append-only — newest entries at top. Each session: what changed, what
 landed, what to look at next.
 
+## 2026-05-02 - keymap / sqlite / textprop cleanup
+
+**Movement:**
+
+- ERT total: `920 pass / 113 fail / 16 err / 116 skip` (79%) →
+  `930 / 104 / 15 / 116` (80%).
+- `keymap-tests.el`: `22 pass / 25 fail` → `29 pass / 18 fail`.
+  Fixed the `make-keymap` prompt shape and menu-bar mixed-case /
+  multibyte / space-normalized lookup buckets.
+- `sqlite-tests.el`: `8 pass / 3 fail / 1 err` →
+  `10 pass / 1 fail / 1 err`. Fixed `sqlite-binary` and `sqlite-blob`.
+- `textprop-tests.el`: `1 pass / 1 fail / 1 err` →
+  `2 pass / 1 fail / 0 err`. The `WRONG_N_ARGS` bucket is gone.
+
+**Code landed:**
+
+- `make-keymap` and `make-sparse-keymap` now preserve an optional prompt
+  as the final list element, matching the upstream shape assertions.
+- Menu-bar vector keys normalize later symbol components by lowercasing
+  and mapping spaces to hyphens, so `[menu-bar Foo Bar]`,
+  `[menu-bar Åäö Bar]`, and escaped-space variants resolve to existing
+  lower-case menu bindings.
+- Synthetic strings can carry explicit multibyte flags without changing
+  literal-string defaults. Unibyte `buffer-string` decodes the internal
+  private-use byte representation and returns a string marked unibyte.
+- SQLite parameter binding now treats only strings explicitly
+  propertized with `coding-system` `binary` as BLOBs; plain strings bind
+  as TEXT. SQLite TEXT results are marked multibyte and BLOB results are
+  marked unibyte.
+- `remove-list-of-text-properties` now accepts a list of property names,
+  distinct from the plist accepted by `remove-text-properties`.
+
+**Verification:**
+
+- `cargo test -p rele-elisp keymap --lib` passes.
+- `cargo test -p rele-elisp sqlite --lib` passes.
+- Focused ERT: `keymap-tests.el` = `29 / 18 / 0 / 0`;
+  `sqlite-tests.el` = `10 / 1 / 1 / 0`;
+  `textprop-tests.el` = `2 / 1 / 0 / 0`.
+- Full `./ert-progress/refresh.sh` completed with `930 / 104 / 15 /
+  116`.
+- Full `cargo test -p rele-elisp` was not rerun; the prior known
+  unrelated failure remains
+  `reader_edges::test_char_named_unicode_unknown_yields_null`.
+
+**Open follow-ups:**
+
+- Top repeated buckets are now JSON scalar round-trip parse errors and
+  keymap `help--describe-vector` shadow formatting.
+- SQLite residuals: result-set handles (`sqlite-select ... 'set`) and
+  extension-load behavior.
+- Textprop residual: read-only interval deletion semantics.
+
+## 2026-05-02 - casefiddle / charset / marker cleanup
+
+**Movement:**
+
+- ERT total: `905 pass / 121 fail / 23 err / 116 skip` (77%) →
+  `920 / 113 / 16 / 116` (79%).
+- `casefiddle-tests.el`: `1 pass / 7 fail / 2 err / 1 skip` →
+  `3 pass / 7 fail / 0 err / 1 skip`. The `WRONG_TYPE_STRING`
+  bucket disappeared; char-valued casing tests now run to assertion.
+- `charset-tests.el`: `15 pass / 5 fail / 1 err` →
+  `20 pass / 1 fail / 0 err`. Remaining failure is
+  `charset-tests--map-charset-chars`.
+- `marker-tests.el`: `4 pass / 4 fail / 4 err` →
+  `12 pass / 0 fail / 0 err`.
+
+**Code landed:**
+
+- Character casing primitives now accept Emacs-style character arguments
+  for `capitalize` and `upcase-initials`, and share `casefiddle`
+  titlecase helpers for integer and string paths. This covers sharp-s
+  and titlecase digraph edge cases while preserving multi-character
+  uppercase expansion behavior.
+- Charset primitives now maintain a mutable priority list, report ASCII
+  for the ISO `(1 94 ?B)` designation, and implement `sort-charsets`.
+  `set-charset-priority` merges explicit priorities with the built-in
+  charset list so bootstrap calls do not drop `ascii`.
+- Marker primitives now model detached markers and last live positions:
+  `copy-marker nil` returns a detached marker, `set-marker` accepts
+  nil and marker-valued positions, killed buffers detach their markers,
+  `marker-last-position` is available, and `set-marker-insertion-type`
+  returns the new insertion type. `equal` compares live markers by
+  buffer/position, ignoring insertion type like Emacs.
+- Window and editor point setters now accept marker-valued positions.
+  The `describe-function` stub also creates a `*Help*` buffer so tests
+  that copy markers from help buffers can exercise the window path.
+
+**Verification:**
+
+- `cargo test -p rele-elisp casefiddle --lib` passes.
+- `cargo test -p rele-elisp primitives::category::tests --lib` passes.
+- `cargo test -p rele-elisp marker --lib` passes.
+- Focused ERT: `casefiddle-tests.el` = `3 / 7 / 0 / 1`;
+  `charset-tests.el` = `20 / 1 / 0 / 0`;
+  `marker-tests.el` = `12 / 0 / 0 / 0`.
+- Full `./ert-progress/refresh.sh` completed with `920 / 113 / 16 /
+  116`.
+- Full `cargo test -p rele-elisp` was not rerun this pass; the prior
+  known unrelated failure was
+  `reader_edges::test_char_named_unicode_unknown_yields_null`.
+
+**Open follow-ups:**
+
+- Highest repeated buckets are now keymap menu/vector normalization,
+  SQLite BLOB/multibyte handling, and textprop `WRONG_N_ARGS`.
+- Single-file semantic follow-ups: case-table behavior in
+  `casefiddle-tests.el` and range enumeration in
+  `charset-tests--map-charset-chars`.
+
 ## 2026-05-02 - floatfns bignum expt/mod cleanup
 
 **Movement:**

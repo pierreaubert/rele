@@ -13,6 +13,7 @@ use std::sync::Arc;
 const STANDARD_CASE_TABLE: &str = "rele--standard-case-table";
 const STANDARD_CATEGORY_TABLE: &str = "rele--standard-category-table";
 const STANDARD_SYNTAX_TABLE: &str = "rele--standard-syntax-table";
+const CHARSET_PRIORITY_LIST: &str = "rele--charset-priority-list";
 
 const BUILTIN_CHARSETS: &[&str] = &[
     "ascii",
@@ -91,6 +92,7 @@ pub const CATEGORY_PRIMITIVE_NAMES: &[&str] = &[
     "find-coding-systems-for-charsets",
     "get-unused-iso-final-char",
     "iso-charset",
+    "sort-charsets",
     "w32-add-charset-info",
 ];
 
@@ -169,13 +171,14 @@ pub fn call_category_primitive(
         "charsetp" => prim_charsetp(args, state),
         "char-charset" => prim_char_charset(args),
         "charset-after" => prim_charset_after(args),
-        "charset-list" | "charset-priority-list" => Ok(list_symbols(BUILTIN_CHARSETS)),
+        "charset-list" => Ok(list_symbols(BUILTIN_CHARSETS)),
+        "charset-priority-list" => prim_charset_priority_list(args, state),
         "charset-plist" => prim_charset_plist(args, state),
         "set-charset-plist" => prim_set_charset_plist(args, state),
         "charset-id-internal" => prim_charset_id(args),
         "charset-dimension" => prim_charset_dimension(args),
-        "set-charset-priority"
-        | "clear-charset-maps"
+        "set-charset-priority" => prim_set_charset_priority(args, state),
+        "clear-charset-maps"
         | "declare-equiv-charset"
         | "map-charset-chars"
         | "w32-add-charset-info" => Ok(LispObject::nil()),
@@ -187,7 +190,9 @@ pub fn call_category_primitive(
         "find-charset-string" => prim_find_charset_string(args),
         "find-charset-region" => prim_find_charset_region(args),
         "find-coding-systems-for-charsets" => Ok(list_symbols(&["utf-8-unix"])),
-        "get-unused-iso-final-char" | "iso-charset" => Ok(LispObject::nil()),
+        "get-unused-iso-final-char" => Ok(LispObject::nil()),
+        "iso-charset" => prim_iso_charset(args),
+        "sort-charsets" => prim_sort_charsets(args, state),
         _ => return None,
     })
 }
@@ -690,6 +695,54 @@ fn known_charset(name: &str, state: Option<&InterpreterState>) -> bool {
         })
 }
 
+fn default_charset_priority_list() -> LispObject {
+    list_symbols(BUILTIN_CHARSETS)
+}
+
+fn charset_priority_list(state: Option<&InterpreterState>) -> LispObject {
+    state
+        .and_then(|state| state.get_value_cell(crate::obarray::intern(CHARSET_PRIORITY_LIST)))
+        .unwrap_or_else(default_charset_priority_list)
+}
+
+fn prim_charset_priority_list(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
+    let priority = charset_priority_list(state);
+    if args.first().is_some_and(|arg| !arg.is_nil()) {
+        Ok(priority.first().unwrap_or_else(LispObject::nil))
+    } else {
+        Ok(priority)
+    }
+}
+
+fn prim_set_charset_priority(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
+    if let Some(state) = state {
+        let priority = if args.is_nil() {
+            default_charset_priority_list()
+        } else {
+            merged_charset_priority(args.clone())
+        };
+        state.set_value_cell(crate::obarray::intern(CHARSET_PRIORITY_LIST), priority);
+    }
+    Ok(LispObject::nil())
+}
+
+fn merged_charset_priority(priority: LispObject) -> LispObject {
+    let mut items = list_to_vec(priority);
+    for name in BUILTIN_CHARSETS {
+        let charset = LispObject::symbol(name);
+        if !items.iter().any(|item| item == &charset) {
+            items.push(charset);
+        }
+    }
+    list_from_vec(items)
+}
+
 fn prim_charsetp(args: &LispObject, state: Option<&InterpreterState>) -> ElispResult<LispObject> {
     let charset = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     Ok(LispObject::from(
@@ -867,6 +920,7 @@ where
             has_unicode = true;
         }
     }
+
     let mut names = Vec::new();
     if has_ascii {
         names.push("ascii");
@@ -875,6 +929,42 @@ where
         names.push("unicode");
     }
     list_symbols(&names)
+}
+
+fn prim_iso_charset(args: &LispObject) -> ElispResult<LispObject> {
+    let dimension = args
+        .first()
+        .and_then(|arg| arg.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
+    let chars = args
+        .nth(1)
+        .and_then(|arg| arg.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
+    let final_char = args
+        .nth(2)
+        .and_then(|arg| arg.as_integer())
+        .ok_or(ElispError::WrongNumberOfArguments)?;
+    if dimension == 1 && chars == 94 && final_char == i64::from(b'B') {
+        Ok(LispObject::symbol("ascii"))
+    } else {
+        Ok(LispObject::nil())
+    }
+}
+
+fn prim_sort_charsets(
+    args: &LispObject,
+    state: Option<&InterpreterState>,
+) -> ElispResult<LispObject> {
+    let charsets = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let priority = list_to_vec(charset_priority_list(state));
+    let mut items = list_to_vec(charsets);
+    items.sort_by_key(|item| {
+        priority
+            .iter()
+            .position(|priority_item| priority_item == item)
+            .unwrap_or(usize::MAX)
+    });
+    Ok(list_from_vec(items))
 }
 
 fn plist_get(plist: &LispObject, key: &LispObject) -> Option<LispObject> {
@@ -922,9 +1012,76 @@ fn list_symbols(names: &[&str]) -> LispObject {
     })
 }
 
+fn list_to_vec(list: LispObject) -> Vec<LispObject> {
+    let mut items = Vec::new();
+    let mut cur = list;
+    while let Some((item, rest)) = cur.destructure_cons() {
+        items.push(item);
+        cur = rest;
+    }
+    items
+}
+
 fn list_from_vec(items: Vec<LispObject>) -> LispObject {
     items
         .into_iter()
         .rev()
         .fold(LispObject::nil(), |tail, item| LispObject::cons(item, tail))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn list(items: Vec<LispObject>) -> LispObject {
+        list_from_vec(items)
+    }
+
+    #[test]
+    fn charset_priority_highest_tracks_set_charset_priority() {
+        let interp = crate::Interpreter::new();
+        let args = list(vec![LispObject::symbol("unicode")]);
+
+        prim_set_charset_priority(&args, Some(&interp.state)).unwrap();
+
+        assert_eq!(
+            prim_charset_priority_list(&list(vec![LispObject::t()]), Some(&interp.state)).unwrap(),
+            LispObject::symbol("unicode"),
+        );
+        assert_eq!(
+            prim_charset_priority_list(&LispObject::nil(), Some(&interp.state))
+                .unwrap()
+                .first(),
+            Some(LispObject::symbol("unicode")),
+        );
+    }
+
+    #[test]
+    fn iso_charset_reports_ascii_designation() {
+        assert_eq!(
+            prim_iso_charset(&list(vec![
+                LispObject::integer(1),
+                LispObject::integer(94),
+                LispObject::integer(i64::from(b'B')),
+            ]))
+            .unwrap(),
+            LispObject::symbol("ascii"),
+        );
+    }
+
+    #[test]
+    fn sort_charsets_uses_priority_order() {
+        let input = list(vec![
+            LispObject::symbol("unicode"),
+            LispObject::symbol("ascii"),
+        ]);
+        let result = prim_sort_charsets(&list(vec![input]), None).unwrap();
+        assert_eq!(
+            result,
+            list(vec![
+                LispObject::symbol("ascii"),
+                LispObject::symbol("unicode"),
+            ]),
+        );
+    }
 }

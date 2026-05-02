@@ -39,15 +39,26 @@ fn parent_marker() -> LispObject {
     LispObject::symbol(":parent")
 }
 
-fn make_sparse_keymap() -> LispObject {
-    LispObject::cons(LispObject::symbol("keymap"), LispObject::nil())
+fn prompt_tail(prompt: Option<LispObject>) -> LispObject {
+    match prompt {
+        Some(prompt) if !prompt.is_nil() => LispObject::cons(prompt, LispObject::nil()),
+        _ => LispObject::nil(),
+    }
 }
 
-fn make_full_keymap() -> LispObject {
+fn make_sparse_keymap_with_prompt(prompt: Option<LispObject>) -> LispObject {
+    LispObject::cons(LispObject::symbol("keymap"), prompt_tail(prompt))
+}
+
+fn make_sparse_keymap() -> LispObject {
+    make_sparse_keymap_with_prompt(None)
+}
+
+fn make_full_keymap_with_prompt(prompt: Option<LispObject>) -> LispObject {
     let char_table = super::make_char_table(LispObject::symbol("keymap"), LispObject::nil());
     LispObject::cons(
         LispObject::symbol("keymap"),
-        LispObject::cons(char_table, LispObject::nil()),
+        LispObject::cons(char_table, prompt_tail(prompt)),
     )
 }
 
@@ -166,8 +177,22 @@ pub fn canonical_key_object(key: &LispObject) -> LispObject {
     match key {
         LispObject::String(s) => LispObject::string(&canonical_key_string(s)),
         LispObject::Vector(items) => {
-            let normalized: Vec<LispObject> =
-                items.lock().iter().map(canonical_key_object).collect();
+            let guard = items.lock();
+            let menu_bar =
+                guard.first().and_then(|item| item.as_symbol()).as_deref() == Some("menu-bar");
+            let normalized: Vec<LispObject> = guard
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    if menu_bar
+                        && index > 0
+                        && let Some(name) = item.as_symbol()
+                    {
+                        return LispObject::symbol(&name.replace(' ', "-").to_lowercase());
+                    }
+                    canonical_key_object(item)
+                })
+                .collect();
             vector(normalized)
         }
         _ => key.clone(),
@@ -477,13 +502,11 @@ fn deep_copy(obj: &LispObject) -> LispObject {
 }
 
 pub fn prim_make_sparse_keymap(args: &LispObject) -> ElispResult<LispObject> {
-    let _ = args;
-    Ok(make_sparse_keymap())
+    Ok(make_sparse_keymap_with_prompt(args.first()))
 }
 
 pub fn prim_make_keymap(args: &LispObject) -> ElispResult<LispObject> {
-    let _ = args;
-    Ok(make_full_keymap())
+    Ok(make_full_keymap_with_prompt(args.first()))
 }
 
 pub fn prim_keymapp(args: &LispObject) -> ElispResult<LispObject> {

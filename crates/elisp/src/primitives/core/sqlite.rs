@@ -112,13 +112,9 @@ fn lisp_to_sql(value: &LispObject) -> SqlValue {
         LispObject::T => SqlValue::Integer(1),
         other => {
             if let Some(s) = other.as_string() {
-                // Heuristic: if every char is in 0..=255, treat as a
-                // unibyte byte sequence (BLOB). Otherwise text.
-                let raw = s.to_string();
-                if raw.chars().all(|c| (c as u32) <= 0xFF)
-                    && raw.chars().any(|c| (c as u32) < 0x20 || (c as u32) >= 0x80)
-                {
-                    SqlValue::Blob(raw.chars().map(|c| c as u8).collect())
+                let raw = crate::object::current_string_value(s);
+                if string_has_binary_coding_property(other) {
+                    SqlValue::Blob(string_bytes(&raw))
                 } else {
                     SqlValue::Text(raw)
                 }
@@ -127,6 +123,34 @@ fn lisp_to_sql(value: &LispObject) -> SqlValue {
             }
         }
     }
+}
+
+fn string_bytes(s: &str) -> Vec<u8> {
+    s.chars()
+        .map(|ch| {
+            let code = ch as u32;
+            if (0xE000..=0xE0FF).contains(&code) {
+                (code - 0xE000) as u8
+            } else {
+                code as u8
+            }
+        })
+        .collect()
+}
+
+fn string_has_binary_coding_property(value: &LispObject) -> bool {
+    let args = LispObject::cons(
+        LispObject::integer(0),
+        LispObject::cons(
+            LispObject::symbol("coding-system"),
+            LispObject::cons(value.clone(), LispObject::nil()),
+        ),
+    );
+    crate::primitives_buffer::prim_get_text_property(&args)
+        .ok()
+        .and_then(|value| value.as_symbol())
+        .as_deref()
+        == Some("binary")
 }
 
 /// Lisp parameter lists for sqlite primitives accept either a list or
@@ -149,13 +173,13 @@ fn sql_to_lisp(value: &SqlValue) -> LispObject {
         SqlValue::Null => LispObject::nil(),
         SqlValue::Integer(n) => LispObject::integer(*n),
         SqlValue::Real(f) => LispObject::Float(*f),
-        SqlValue::Text(s) => LispObject::string(s),
+        SqlValue::Text(s) => LispObject::String(crate::object::string_with_multibyte_flag(s, true)),
         SqlValue::Blob(b) => {
             // BLOBs round-trip as unibyte strings — chars 0x00..=0xFF
             // map directly to bytes. Use the latin-1 view so we don't
             // mojibake binary data through utf-8.
             let s: String = b.iter().map(|byte| char::from(*byte)).collect();
-            LispObject::string(&s)
+            LispObject::String(crate::object::string_with_multibyte_flag(&s, false))
         }
     }
 }

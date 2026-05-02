@@ -115,6 +115,16 @@ fn plist_keys(plist: &LispObject) -> ElispResult<Vec<LispObject>> {
         .collect())
 }
 
+fn list_items(list: &LispObject) -> Vec<LispObject> {
+    let mut out = Vec::new();
+    let mut current = list.clone();
+    while let Some((item, rest)) = current.destructure_cons() {
+        out.push(item);
+        current = rest;
+    }
+    out
+}
+
 fn make_propertized_string(text: &str, spans: Vec<buffer::TextPropertySpan>) -> LispObject {
     if spans.is_empty() {
         return LispObject::string(text);
@@ -673,8 +683,32 @@ pub fn prim_unlock_buffer(_args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_buffer_string(_args: &LispObject) -> ElispResult<LispObject> {
-    let s = buffer::with_current(|b| b.buffer_string());
-    Ok(LispObject::string(&s))
+    let (s, multibyte) = buffer::with_current(|b| {
+        let raw = b.buffer_string();
+        if b.multibyte {
+            (raw, true)
+        } else {
+            let decoded = raw
+                .chars()
+                .map(|ch| {
+                    let code = ch as u32;
+                    if (0xE000..=0xE0FF).contains(&code) {
+                        char::from_u32(code - 0xE000).unwrap_or(ch)
+                    } else {
+                        ch
+                    }
+                })
+                .collect();
+            (decoded, false)
+        }
+    });
+    if multibyte {
+        Ok(LispObject::string(&s))
+    } else {
+        Ok(LispObject::String(
+            crate::object::string_with_multibyte_flag(&s, false),
+        ))
+    }
 }
 
 pub fn prim_buffer_substring(args: &LispObject) -> ElispResult<LispObject> {
@@ -1427,7 +1461,11 @@ pub fn prim_indent_rigidly(args: &LispObject) -> ElispResult<LispObject> {
     if n == 0 {
         return Ok(LispObject::nil());
     }
-    let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+    let (lo, hi) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
     let line_starts: Vec<usize> = buffer::with_current(|b| {
         let mut starts = vec![b.line_beginning_position(lo)];
         let mut p = b.line_beginning_position(lo);
@@ -1480,7 +1518,11 @@ pub fn prim_indent_region(args: &LispObject) -> ElispResult<LispObject> {
     let Some(col_arg) = args.nth(2).and_then(|v| v.as_integer()) else {
         return Ok(LispObject::nil());
     };
-    let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+    let (lo, hi) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
     let line_starts: Vec<usize> = buffer::with_current(|b| {
         let mut starts = vec![b.line_beginning_position(lo)];
         let mut p = b.line_beginning_position(lo);
@@ -2184,8 +2226,11 @@ pub fn prim_copy_marker(args: &LispObject) -> ElispResult<LispObject> {
                 .map(|m| (m.buffer, m.position))
                 .unwrap_or((r.current_id(), None))
         })
+    } else if a.is_nil() {
+        let cur = buffer::with_registry(|r| r.current_id());
+        (cur, None)
     } else {
-        return Ok(LispObject::nil());
+        return Err(ElispError::WrongTypeArgument("integer-or-marker".into()));
     };
     let insertion_type = args.nth(1).is_some_and(|v| !v.is_nil());
     let new_id = buffer::with_registry_mut(|r| {
@@ -2216,9 +2261,13 @@ pub fn prim_marker_buffer(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().unwrap_or(LispObject::nil());
     if let Some(id) = marker_id(&a) {
         let buffer_id = buffer::with_registry(|r| {
-            r.markers
-                .get(&id)
-                .and_then(|m| r.get(m.buffer).map(|_| m.buffer))
+            r.markers.get(&id).and_then(|m| {
+                if m.position.is_some() {
+                    r.get(m.buffer).map(|_| m.buffer)
+                } else {
+                    None
+                }
+            })
         });
         return Ok(buffer_id
             .map(make_buffer_object)
@@ -2230,17 +2279,46 @@ pub fn prim_marker_buffer(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_set_marker(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let id = marker_id(&a).ok_or_else(|| ElispError::WrongTypeArgument("marker".into()))?;
-    // Clamp negative positions to 1 — same reason as `copy-marker`.
-    let pos = args
-        .nth(1)
-        .and_then(|v| v.as_integer())
-        .map(|n| n.max(1) as usize);
-    let buffer_id = match args.nth(2) {
-        Some(v) => resolve_buffer(&v).unwrap_or_else(|| buffer::with_registry(|r| r.current_id())),
-        None => buffer::with_registry(|r| r.current_id()),
+    let position_arg = args.nth(1).unwrap_or_else(LispObject::nil);
+    let (buffer_id, pos) = if position_arg.is_nil() {
+        let current = buffer::with_registry(|r| r.current_id());
+        (current, None)
+    } else if let Some(source_id) = marker_id(&position_arg) {
+        buffer::with_registry(|r| {
+            r.markers
+                .get(&source_id)
+                .map(|m| (m.buffer, m.position))
+                .unwrap_or((r.current_id(), None))
+        })
+    } else if let Some(n) = position_arg.as_integer() {
+        // Clamp negative positions to 1 — same reason as `copy-marker`.
+        let buffer_id = match args.nth(2) {
+            Some(v) => {
+                resolve_buffer(&v).unwrap_or_else(|| buffer::with_registry(|r| r.current_id()))
+            }
+            None => buffer::with_registry(|r| r.current_id()),
+        };
+        (buffer_id, Some(n.max(1) as usize))
+    } else {
+        return Err(ElispError::WrongTypeArgument("integer-or-marker".into()));
     };
     buffer::with_registry_mut(|r| r.marker_set(id, buffer_id, pos));
     Ok(a)
+}
+
+pub fn prim_marker_last_position(args: &LispObject) -> ElispResult<LispObject> {
+    let a = args.first().unwrap_or(LispObject::nil());
+    if let Some(id) = marker_id(&a) {
+        let pos = buffer::with_registry(|r| {
+            r.markers
+                .get(&id)
+                .and_then(|m| m.position.or(m.last_position))
+        });
+        return Ok(pos
+            .map(|p| LispObject::integer(p as i64))
+            .unwrap_or(LispObject::nil()));
+    }
+    Ok(LispObject::nil())
 }
 
 // ---- Match data -------------------------------------------------------
@@ -3033,7 +3111,26 @@ pub fn prim_remove_text_properties(args: &LispObject) -> ElispResult<LispObject>
     let end = int_arg(args, 1, 0).max(0) as usize;
     let plist = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
     let keys = plist_keys(&plist)?;
-    if let Some(LispObject::String(raw)) = args.nth(3) {
+    remove_text_property_keys(start, end, &keys, args.nth(3));
+    Ok(LispObject::t())
+}
+
+pub fn prim_remove_list_of_text_properties(args: &LispObject) -> ElispResult<LispObject> {
+    let start = int_arg(args, 0, 0).max(0) as usize;
+    let end = int_arg(args, 1, 0).max(0) as usize;
+    let list = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
+    let keys = list_items(&list);
+    remove_text_property_keys(start, end, &keys, args.nth(3));
+    Ok(LispObject::t())
+}
+
+fn remove_text_property_keys(
+    start: usize,
+    end: usize,
+    keys: &[LispObject],
+    object: Option<LispObject>,
+) {
+    if let Some(LispObject::String(raw)) = object {
         STRING_PROPERTIES.with(|string_props| {
             if let Some(spans) = string_props.borrow_mut().get_mut(&raw) {
                 for span in spans.iter_mut() {
@@ -3045,9 +3142,8 @@ pub fn prim_remove_text_properties(args: &LispObject) -> ElispResult<LispObject>
             }
         });
     } else {
-        buffer::with_current_mut(|b| b.remove_text_properties(start, end, &keys));
+        buffer::with_current_mut(|b| b.remove_text_properties(start, end, keys));
     }
-    Ok(LispObject::t())
 }
 
 pub fn prim_get_text_property(args: &LispObject) -> ElispResult<LispObject> {
@@ -3113,10 +3209,7 @@ pub fn prim_text_properties_at(args: &LispObject) -> ElispResult<LispObject> {
 /// last-write-wins per key, so two positions with the same effective
 /// merged plist may produce Vecs with different ordering — we canonicalize
 /// for comparison by sorting on the key's printed form.
-fn props_equal(
-    a: &[(LispObject, LispObject)],
-    b: &[(LispObject, LispObject)],
-) -> bool {
+fn props_equal(a: &[(LispObject, LispObject)], b: &[(LispObject, LispObject)]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -3127,10 +3220,7 @@ fn props_equal(
     a == b
 }
 
-fn properties_at_target(
-    pos: usize,
-    object: &Option<LispObject>,
-) -> Vec<(LispObject, LispObject)> {
+fn properties_at_target(pos: usize, object: &Option<LispObject>) -> Vec<(LispObject, LispObject)> {
     if let Some(LispObject::String(raw)) = object {
         string_properties_at(raw, pos)
     } else {
@@ -3138,11 +3228,7 @@ fn properties_at_target(
     }
 }
 
-fn property_at_target(
-    pos: usize,
-    prop: &LispObject,
-    object: &Option<LispObject>,
-) -> LispObject {
+fn property_at_target(pos: usize, prop: &LispObject, object: &Option<LispObject>) -> LispObject {
     if let Some(LispObject::String(raw)) = object {
         string_property_at(raw, pos, prop)
     } else {
@@ -3421,7 +3507,7 @@ pub fn prim_set_marker_insertion_type(args: &LispObject) -> ElispResult<LispObje
     let id = marker_id(&marker).ok_or_else(|| ElispError::WrongTypeArgument("marker".into()))?;
     let insertion_type = args.nth(1).is_some_and(|value| !value.is_nil());
     buffer::with_registry_mut(|r| r.set_marker_insertion_type(id, insertion_type));
-    Ok(LispObject::nil())
+    Ok(LispObject::from(insertion_type))
 }
 
 pub fn prim_buffer_swap_text(args: &LispObject) -> ElispResult<LispObject> {
@@ -3976,7 +4062,11 @@ where
     let start = buffer::with_current(|b| b.point);
     prim_forward_word(args)?;
     let end = buffer::with_current(|b| b.point);
-    let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+    let (lo, hi) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
     let replacement = buffer::with_current(|buf| transform(&buf.substring(lo, hi)));
     replace_current_range(lo, hi, &replacement);
     // Emacs leaves point at the far end of the transformed region.
@@ -4005,7 +4095,11 @@ pub fn prim_kill_word(args: &LispObject) -> ElispResult<LispObject> {
     let start = buffer::with_current(|b| b.point);
     prim_forward_word(args)?;
     let end = buffer::with_current(|b| b.point);
-    let (lo, hi) = if start <= end { (start, end) } else { (end, start) };
+    let (lo, hi) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
     let killed = buffer::with_current(|buf| buf.substring(lo, hi));
     // Use the registry path so the deletion is recorded in
     // buffer-undo-list and markers/overlays in the family are
@@ -4989,6 +5083,7 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "copy-marker" => prim_copy_marker(args),
         "marker-position" => prim_marker_position(args),
         "marker-buffer" => prim_marker_buffer(args),
+        "marker-last-position" => prim_marker_last_position(args),
         "set-marker" => prim_set_marker(args),
         "set-marker-insertion-type" => prim_set_marker_insertion_type(args),
         "match-data" => prim_match_data(args),
@@ -5014,9 +5109,8 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "put-text-property" => prim_put_text_property(args),
         "add-text-properties" => prim_add_text_properties(args),
         "set-text-properties" => prim_set_text_properties(args),
-        "remove-text-properties" | "remove-list-of-text-properties" => {
-            prim_remove_text_properties(args)
-        }
+        "remove-text-properties" => prim_remove_text_properties(args),
+        "remove-list-of-text-properties" => prim_remove_list_of_text_properties(args),
         "text-property-not-all" => prim_text_property_not_all(args),
         "text-property-any" => prim_text_property_any(args),
         "next-property-change" => prim_next_property_change(args),
@@ -5193,6 +5287,7 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "copy-marker",
     "marker-position",
     "marker-buffer",
+    "marker-last-position",
     "set-marker",
     "set-marker-insertion-type",
     "match-data",
@@ -5328,8 +5423,7 @@ mod tests {
             b.insert("    hello\n");
             b.goto_char(1);
         });
-        prim_indent_line_to(&list(vec![LispObject::integer(2)]))
-            .expect("indent-line-to ok");
+        prim_indent_line_to(&list(vec![LispObject::integer(2)])).expect("indent-line-to ok");
         assert_eq!(buffer::with_current(|b| b.buffer_string()), "  hello\n");
         // Point at end of indentation (col 2 → pos 3).
         assert_eq!(buffer::with_current(|b| b.point), 3);
@@ -5362,8 +5456,7 @@ mod tests {
             b.insert("hello world");
             b.goto_char(1);
         });
-        prim_upcase_word(&list(vec![LispObject::integer(1)]))
-            .expect("upcase-word ok");
+        prim_upcase_word(&list(vec![LispObject::integer(1)])).expect("upcase-word ok");
         assert_eq!(buffer::with_current(|b| b.buffer_string()), "HELLO world");
         assert_eq!(buffer::with_current(|b| b.point), 6);
     }
@@ -5375,8 +5468,7 @@ mod tests {
             b.insert("alpha beta gamma");
             b.goto_char(1);
         });
-        let killed = prim_kill_word(&list(vec![LispObject::integer(1)]))
-            .expect("kill-word ok");
+        let killed = prim_kill_word(&list(vec![LispObject::integer(1)])).expect("kill-word ok");
         assert_eq!(killed.as_string().map(String::as_str), Some("alpha"));
         assert_eq!(buffer::with_current(|b| b.buffer_string()), " beta gamma");
         assert_eq!(buffer::with_current(|b| b.point), 1);
@@ -5442,7 +5534,11 @@ mod tests {
         let before = prim_copy_marker(&without_type).expect("copy-marker nil ok");
         let it2_args = LispObject::cons(before, LispObject::nil());
         let it2 = prim_marker_insertion_type(&it2_args).expect("marker-insertion-type ok");
-        assert_eq!(it2, LispObject::nil(), "TYPE omitted should be before-insertion");
+        assert_eq!(
+            it2,
+            LispObject::nil(),
+            "TYPE omitted should be before-insertion"
+        );
     }
 
     #[test]
@@ -5845,5 +5941,67 @@ mod tests {
         prim_set_marker(&args).unwrap();
         let pos = prim_marker_position(&LispObject::cons(marker, LispObject::nil())).unwrap();
         assert_eq!(pos.as_integer(), Some(1));
+    }
+
+    #[test]
+    fn copy_marker_nil_returns_detached_marker() {
+        buffer::reset();
+        let marker =
+            prim_copy_marker(&LispObject::cons(LispObject::nil(), LispObject::nil())).unwrap();
+        assert_eq!(
+            prim_marker_buffer(&LispObject::cons(marker.clone(), LispObject::nil())).unwrap(),
+            LispObject::nil()
+        );
+        assert_eq!(
+            prim_marker_position(&LispObject::cons(marker, LispObject::nil())).unwrap(),
+            LispObject::nil()
+        );
+    }
+
+    #[test]
+    fn set_marker_from_detached_marker_detaches_target() {
+        buffer::reset();
+        let current = prim_current_buffer(&LispObject::nil()).unwrap();
+        let source = prim_make_marker(&LispObject::nil()).unwrap();
+        let target = prim_make_marker(&LispObject::nil()).unwrap();
+        prim_set_marker(&list(vec![target.clone(), LispObject::integer(2), current])).unwrap();
+        prim_set_marker(&list(vec![source.clone(), LispObject::nil()])).unwrap();
+        prim_set_marker(&list(vec![target.clone(), source])).unwrap();
+        assert_eq!(
+            prim_marker_buffer(&LispObject::cons(target.clone(), LispObject::nil())).unwrap(),
+            LispObject::nil()
+        );
+        assert_eq!(
+            prim_marker_position(&LispObject::cons(target, LispObject::nil())).unwrap(),
+            LispObject::nil()
+        );
+    }
+
+    #[test]
+    fn marker_last_position_survives_buffer_kill() {
+        buffer::reset();
+        let current = prim_current_buffer(&LispObject::nil()).unwrap();
+        let marker = prim_make_marker(&LispObject::nil()).unwrap();
+        prim_set_marker(&list(vec![
+            marker.clone(),
+            LispObject::integer(3),
+            current.clone(),
+        ]))
+        .unwrap();
+        prim_kill_buffer(&LispObject::cons(current, LispObject::nil())).unwrap();
+        assert_eq!(
+            prim_marker_buffer(&LispObject::cons(marker.clone(), LispObject::nil())).unwrap(),
+            LispObject::nil()
+        );
+        assert_eq!(
+            prim_marker_position(&LispObject::cons(marker.clone(), LispObject::nil())).unwrap(),
+            LispObject::nil()
+        );
+        assert_eq!(
+            prim_marker_last_position(&LispObject::cons(marker, LispObject::nil()))
+                .unwrap()
+                .as_integer(),
+            Some(3)
+        );
     }
 }

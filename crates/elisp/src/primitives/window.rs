@@ -201,9 +201,26 @@ pub fn prim_window_point(_args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::integer(p as i64))
 }
 
+fn integer_or_marker_position(value: &LispObject) -> Option<usize> {
+    value
+        .as_integer()
+        .or_else(|| {
+            crate::primitives_buffer::prim_marker_position(&LispObject::cons(
+                value.clone(),
+                LispObject::nil(),
+            ))
+            .ok()
+            .and_then(|position| position.as_integer())
+        })
+        .map(|position| position.max(1) as usize)
+}
+
 pub fn prim_set_window_point(args: &LispObject) -> ElispResult<LispObject> {
     // (set-window-point WINDOW POS)
-    let pos = args.nth(1).and_then(|a| a.as_integer()).unwrap_or(1) as usize;
+    let pos = args
+        .nth(1)
+        .and_then(|a| integer_or_marker_position(&a))
+        .unwrap_or(1);
     buffer::with_current_mut(|b| b.goto_char(pos));
     Ok(LispObject::integer(pos as i64))
 }
@@ -631,8 +648,7 @@ pub fn prim_save_window_excursion(_args: &LispObject) -> ElispResult<LispObject>
 pub fn prim_set_window_start(args: &LispObject) -> ElispResult<LispObject> {
     let pos = args
         .nth(1)
-        .and_then(|a| a.as_integer())
-        .map(|pos| pos.max(1) as usize)
+        .and_then(|a| integer_or_marker_position(&a))
         .unwrap_or_else(|| buffer::with_current(|b| b.point_min()));
     WINDOW_START.with(|start| *start.borrow_mut() = Some(pos));
     Ok(LispObject::integer(pos as i64))

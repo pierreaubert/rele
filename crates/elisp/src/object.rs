@@ -13,6 +13,7 @@ static STRING_MUTATIONS: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static STRING_MULTIBYTE_FLAGS: LazyLock<Mutex<HashMap<String, bool>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static NEXT_SYNTHETIC_STRING_ID: AtomicU64 = AtomicU64::new(1);
 const BOOL_VECTOR_MARKER: i64 = -10_000;
 const BOOL_VECTOR_LENGTH: i64 = -10_001;
 
@@ -47,6 +48,14 @@ pub fn string_is_multibyte(s: &str) -> bool {
         .ok()
         .and_then(|flags| flags.get(s).copied())
         .unwrap_or_else(|| !s.is_ascii())
+}
+
+pub fn string_with_multibyte_flag(value: &str, multibyte: bool) -> String {
+    let id = NEXT_SYNTHETIC_STRING_ID.fetch_add(1, Ordering::Relaxed);
+    let key = format!("\x1frele-string:{id}:{value}");
+    mutate_string_value(&key, value.to_string());
+    mark_string_multibyte(&key, multibyte);
+    key
 }
 
 /// Shared mutable cell used for cons, vector, and hash table mutation semantics.
@@ -547,7 +556,8 @@ impl LispObject {
                 }
             }
             LispObject::String(s) => {
-                let escaped = s
+                let visible = current_string_value(s);
+                let escaped = visible
                     .replace('\\', "\\\\")
                     .replace('"', "\\\"")
                     .replace('\n', "\\n")

@@ -93,9 +93,9 @@ pub(super) fn eval_buffer_string(
     match e.as_ref() {
         Some(cb) => Ok(obj_to_value(LispObject::string(&cb.buffer_string()))),
         // Fall back to thread-local StubBuffer (used by tests).
-        None => Ok(obj_to_value(LispObject::string(
-            &crate::buffer::with_current(|b| b.buffer_string()),
-        ))),
+        None => Ok(obj_to_value(crate::primitives_buffer::prim_buffer_string(
+            &LispObject::nil(),
+        )?)),
     }
 }
 pub(super) fn eval_buffer_size(
@@ -198,7 +198,13 @@ pub(super) fn eval_goto_char(
     let pos = value_to_obj(eval(obj_to_value(pos_arg), env, editor, macros, state)?);
     let pos_i = match pos {
         LispObject::Integer(i) => i,
-        _ => return Err(ElispError::WrongTypeArgument("integer".to_string())),
+        _ => crate::primitives_buffer::prim_marker_position(&LispObject::cons(
+            pos,
+            LispObject::nil(),
+        ))
+        .ok()
+        .and_then(|position| position.as_integer())
+        .ok_or_else(|| ElispError::WrongTypeArgument("integer-or-marker".to_string()))?,
     };
     let mut e = editor.write();
     if let Some(cb) = e.as_mut() {

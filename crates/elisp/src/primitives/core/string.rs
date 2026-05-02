@@ -271,7 +271,7 @@ pub fn prim_upcase(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::Integer(c) => {
             let ch = char::from_u32(*c as u32).unwrap_or('?');
             Ok(LispObject::integer(
-                ch.to_uppercase().next().unwrap_or(ch) as i64
+                crate::emacs::casefiddle::upcase_char(ch) as i64,
             ))
         }
         _ => Err(ElispError::WrongTypeArgument("string".to_string())),
@@ -285,7 +285,7 @@ pub fn prim_downcase(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::Integer(c) => {
             let ch = char::from_u32(*c as u32).unwrap_or('?');
             Ok(LispObject::integer(
-                ch.to_lowercase().next().unwrap_or(ch) as i64
+                crate::emacs::casefiddle::downcase_char(ch) as i64,
             ))
         }
         _ => Err(ElispError::WrongTypeArgument("string".to_string())),
@@ -298,6 +298,12 @@ pub fn prim_capitalize(args: &LispObject) -> ElispResult<LispObject> {
         LispObject::String(s) => Ok(LispObject::string(
             &crate::emacs::casefiddle::capitalize_string(s),
         )),
+        LispObject::Integer(i) => {
+            let ch = char::from_u32(*i as u32).unwrap_or('?');
+            Ok(LispObject::integer(
+                crate::emacs::casefiddle::titlecase_char(ch) as i64,
+            ))
+        }
         _ => Err(ElispError::WrongTypeArgument("string".to_string())),
     }
 }
@@ -724,8 +730,9 @@ pub fn prim_upcase_initials(args: &LispObject) -> ElispResult<LispObject> {
         )),
         LispObject::Integer(i) => {
             if let Some(c) = char::from_u32(i as u32) {
-                let up = c.to_uppercase().next().unwrap_or(c);
-                Ok(LispObject::integer(up as i64))
+                Ok(LispObject::integer(
+                    crate::emacs::casefiddle::titlecase_char(c) as i64,
+                ))
             } else {
                 Ok(LispObject::integer(i))
             }

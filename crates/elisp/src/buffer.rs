@@ -114,6 +114,8 @@ pub struct Marker {
     /// 1-based char offset. `None` means this marker points nowhere
     /// (e.g. after kill-buffer).
     pub position: Option<usize>,
+    /// Last live position before the marker became detached.
+    pub last_position: Option<usize>,
     /// If true, insertion exactly at the marker advances it past the
     /// inserted text.
     pub insertion_type: bool,
@@ -841,6 +843,14 @@ impl Registry {
             Some(b) => b.name,
             None => return false,
         };
+        for marker in self.markers.values_mut() {
+            if marker.buffer == id {
+                if let Some(position) = marker.position {
+                    marker.last_position = Some(position);
+                }
+                marker.position = None;
+            }
+        }
         self.by_name.remove(&name);
         self.stack.retain(|&b| b != id);
         if self.stack.is_empty() {
@@ -912,6 +922,7 @@ impl Registry {
                 id,
                 buffer,
                 position: None,
+                last_position: None,
                 insertion_type: false,
             },
         );
@@ -924,11 +935,15 @@ impl Registry {
             .and_modify(|m| {
                 m.buffer = buffer;
                 m.position = pos;
+                if let Some(position) = pos {
+                    m.last_position = Some(position);
+                }
             })
             .or_insert(Marker {
                 id,
                 buffer,
                 position: pos,
+                last_position: pos,
                 insertion_type: false,
             });
     }
@@ -1230,7 +1245,9 @@ impl Registry {
                 continue;
             };
             if position > pos || (position == pos && (before_markers || marker.insertion_type)) {
-                marker.position = Some(position + len);
+                let position = position + len;
+                marker.position = Some(position);
+                marker.last_position = Some(position);
             }
         }
     }
@@ -1270,13 +1287,15 @@ impl Registry {
             let Some(position) = marker.position else {
                 continue;
             };
-            marker.position = Some(if position > end {
+            let position = if position > end {
                 position - len
             } else if position > start {
                 start
             } else {
                 position
-            });
+            };
+            marker.position = Some(position);
+            marker.last_position = Some(position);
         }
     }
 

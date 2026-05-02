@@ -6,12 +6,24 @@
 
 /// `(upcase CHAR-OR-STRING)` for a single character.
 pub fn upcase_char(c: char) -> char {
+    if c == 'ß' {
+        return 'ẞ';
+    }
     c.to_uppercase().next().unwrap_or(c)
 }
 
 /// `(downcase CHAR-OR-STRING)` for a single character.
 pub fn downcase_char(c: char) -> char {
     c.to_lowercase().next().unwrap_or(c)
+}
+
+/// Emacs character titlecase used by `capitalize` and `upcase-initials`.
+pub fn titlecase_char(c: char) -> char {
+    match c {
+        'ß' => 'ẞ',
+        'Ǆ' | 'ǅ' | 'ǆ' => 'ǅ',
+        _ => upcase_char(c),
+    }
 }
 
 // ---- String-level ----
@@ -34,14 +46,7 @@ pub fn capitalize_string(s: &str) -> String {
     for c in s.chars() {
         if c.is_alphanumeric() {
             if word_start {
-                let upper = c.to_uppercase().collect::<String>();
-                let mut chars = upper.chars();
-                if let Some(first) = chars.next() {
-                    result.push(first);
-                }
-                for rest in chars {
-                    result.extend(rest.to_lowercase());
-                }
+                result.push_str(&titlecase_string(c));
                 word_start = false;
             } else {
                 result.extend(c.to_lowercase());
@@ -62,7 +67,7 @@ pub fn upcase_initials(s: &str) -> String {
     for c in s.chars() {
         if c.is_alphanumeric() {
             if word_start {
-                result.extend(c.to_uppercase());
+                result.push_str(&titlecase_string(c));
                 word_start = false;
             } else {
                 result.push(c);
@@ -75,6 +80,24 @@ pub fn upcase_initials(s: &str) -> String {
     result
 }
 
+fn titlecase_string(c: char) -> String {
+    match c {
+        'Ǆ' | 'ǅ' | 'ǆ' => "ǅ".to_string(),
+        _ => {
+            let upper = c.to_uppercase().collect::<String>();
+            let mut chars = upper.chars();
+            let mut result = String::new();
+            if let Some(first) = chars.next() {
+                result.push(first);
+            }
+            for rest in chars {
+                result.extend(rest.to_lowercase());
+            }
+            result
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,6 +107,7 @@ mod tests {
         assert_eq!(upcase_char('a'), 'A');
         assert_eq!(upcase_char('A'), 'A');
         assert_eq!(upcase_char('1'), '1');
+        assert_eq!(upcase_char('ß'), 'ẞ');
     }
 
     #[test]
@@ -96,10 +120,21 @@ mod tests {
     fn capitalize_string_basic() {
         assert_eq!(capitalize_string("hello world"), "Hello World");
         assert_eq!(capitalize_string("HELLO WORLD"), "Hello World");
+        assert_eq!(capitalize_string("ǆungla"), "ǅungla");
     }
 
     #[test]
     fn upcase_initials_preserves_case() {
         assert_eq!(upcase_initials("hello WORLD"), "Hello WORLD");
+        assert_eq!(upcase_initials("ǄUNGLA"), "ǅUNGLA");
+    }
+
+    #[test]
+    fn titlecase_char_basic() {
+        assert_eq!(titlecase_char('a'), 'A');
+        assert_eq!(titlecase_char('ß'), 'ẞ');
+        assert_eq!(titlecase_char('Ǆ'), 'ǅ');
+        assert_eq!(titlecase_char('ǅ'), 'ǅ');
+        assert_eq!(titlecase_char('ǆ'), 'ǅ');
     }
 }

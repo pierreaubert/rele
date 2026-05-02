@@ -121,6 +121,9 @@ pub fn prim_equal(args: &LispObject) -> ElispResult<LispObject> {
     if let Some(equal) = overlays_equal(&a, &b) {
         return Ok(LispObject::from(equal));
     }
+    if let Some(equal) = markers_equal(&a, &b) {
+        return Ok(LispObject::from(equal));
+    }
     let mut seen = HashSet::new();
     Ok(LispObject::from(lisp_equal_seen(&a, &b, &mut seen)))
 }
@@ -225,6 +228,27 @@ fn overlays_equal(a: &LispObject, b: &LispObject) -> Option<bool> {
         match (a, b) {
             (Some(a), Some(b)) => {
                 a.buffer == b.buffer && a.start == b.start && a.end == b.end && a.plist == b.plist
+            }
+            _ => false,
+        }
+    }))
+}
+
+fn markers_equal(a: &LispObject, b: &LispObject) -> Option<bool> {
+    let (a_tag, a_id) = tagged_runtime_object(a)?;
+    let (b_tag, b_id) = tagged_runtime_object(b)?;
+    if a_tag != "marker" || b_tag != "marker" {
+        return None;
+    }
+    if a_id == b_id {
+        return Some(true);
+    }
+    Some(crate::buffer::with_registry(|r| {
+        let a = r.markers.get(&(a_id as usize));
+        let b = r.markers.get(&(b_id as usize));
+        match (a, b) {
+            (Some(a), Some(b)) => {
+                a.position.is_some() && a.buffer == b.buffer && a.position == b.position
             }
             _ => false,
         }

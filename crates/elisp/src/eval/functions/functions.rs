@@ -318,6 +318,14 @@ fn stateful_describe_function(
     {
         return Ok(LispObject::nil());
     }
+    crate::buffer::with_registry_mut(|registry| {
+        let id = registry.create("*Help*");
+        if let Some(buffer) = registry.get_mut(id) {
+            buffer.erase();
+            buffer.insert("Help buffer\n");
+            buffer.goto_char(buffer.point_min());
+        }
+    });
     Ok(LispObject::nil())
 }
 
