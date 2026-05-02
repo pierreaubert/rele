@@ -176,7 +176,7 @@ fn main() {
     // Run everything on a thread with a large stack to avoid
     // stack overflow from deep macro expansion in .el files.
     let handle = std::thread::Builder::new()
-        .stack_size(256 * 1024 * 1024)
+        .stack_size(1536 * 1024 * 1024)
         .spawn(move || worker_main(cfg))
         .expect("spawn worker thread");
     handle.join().unwrap_or_else(|_| std::process::exit(1));

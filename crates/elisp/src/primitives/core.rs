@@ -134,6 +134,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "string-to-list",
         "char-to-string",
         "string-to-char",
+        "char-from-name",
         "string-width",
         "multibyte-string-p",
         "string-search",

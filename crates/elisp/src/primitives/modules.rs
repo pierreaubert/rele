@@ -1199,7 +1199,27 @@ pub fn register(interp: &mut Interpreter) {
 (defun debugger-trap () nil)
 (defun backtrace--frames-from-thread (&rest _args) nil)
 (defun backtrace--locals (&rest _args) nil)
-(defun profiler-memory-stop (&rest _args) nil)
+(defvar rele--profiler-memory-running nil)
+(defvar rele--profiler-memory-log-cleared nil)
+(defun profiler-memory-start (&rest _args)
+  (if rele--profiler-memory-running
+      (error "Memory profiler is already running")
+    (setq rele--profiler-memory-running t)
+    (setq rele--profiler-memory-log-cleared nil)
+    t))
+(defun profiler-memory-stop (&rest _args)
+  (let ((was rele--profiler-memory-running))
+    (setq rele--profiler-memory-running nil)
+    was))
+(defun profiler-memory-log (&rest _args)
+  (cond
+   (rele--profiler-memory-running
+    (make-hash-table :test 'eql))
+   (rele--profiler-memory-log-cleared
+    nil)
+   (t
+    (setq rele--profiler-memory-log-cleared t)
+    (make-hash-table :test 'eql))))
 (defun translate-region-internal (from to table)
   "Replace each char in the region [FROM, TO) with TABLE[char] when set."
   (save-excursion
@@ -1817,7 +1837,7 @@ variables, with BODY as its body.  Calling (NAME ...) re-runs the loop."
 (defun pp-fill (&rest _args) nil)
 (defun printify-region (&rest _args) nil)
 (defun proced (&rest _args) nil)
-(defun profiler-memory-running-p (&rest _args) nil)
+(defun profiler-memory-running-p (&rest _args) rele--profiler-memory-running)
 (defun prolog-mode (&rest _args) nil)
 (defun ps-mode (&rest _args) nil)
 (defun ps-mode-octal-region (&rest _args) nil)

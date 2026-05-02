@@ -274,11 +274,17 @@ pub(super) fn eval_defun(
         rest.first().unwrap_or(LispObject::nil()),
         rest.rest().unwrap_or(LispObject::nil()),
     );
-    // defun writes the function cell directly.
+    if matches!(state.get_function_cell(id), Some(LispObject::Primitive(ref n)) if PRESERVED_PRIMITIVES.contains(&n.as_str()))
+    {
+        record_defun_declarations(id, rest.rest().unwrap_or(LispObject::nil()), state);
+        return Ok(obj_to_value(LispObject::Symbol(id)));
+    }
     state.set_function_cell(id, lambda);
     record_defun_declarations(id, rest.rest().unwrap_or(LispObject::nil()), state);
     Ok(obj_to_value(LispObject::Symbol(id)))
 }
+
+const PRESERVED_PRIMITIVES: &[&str] = &["char-from-name"];
 pub(super) fn eval_defmacro(args: Value, macros: &MacroTable) -> ElispResult<Value> {
     let args_obj = value_to_obj(args);
     let name = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;

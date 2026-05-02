@@ -571,19 +571,95 @@ fn round_number(args: &LispObject, mode: RoundingMode) -> ElispResult<LispObject
         if let (Some(a), Some(b)) = (get_integer(&n), get_integer(&d)) {
             return round_integer_ratio(&a, &b, mode);
         }
-        let a = number_as_f64(&n)?;
-        let b = number_as_f64(&d)?;
-        if b == 0.0 {
-            return Err(ElispError::DivisionByZero);
+        let a = number_as_rational(&n)?;
+        let b = number_as_rational(&d)?;
+        match (a, b) {
+            (NumRational::NaN, _)
+            | (_, NumRational::NaN)
+            | (NumRational::Infinite, _) => {
+                Err(ElispError::InvalidOperation("non-finite number".into()))
+            }
+            (NumRational::Finite(_, _), NumRational::Infinite) => {
+                Ok(LispObject::integer(0))
+            }
+            (NumRational::Finite(an, ad), NumRational::Finite(bn, bd)) => {
+                if bn.is_zero() {
+                    return Err(ElispError::DivisionByZero);
+                }
+                // a/b = (an/ad) / (bn/bd) = (an * bd) / (ad * bn).
+                // ad and bd are always positive; normalize so denominator > 0.
+                let mut num = an * bd;
+                let mut den = ad * bn;
+                if den.is_negative() {
+                    num = -num;
+                    den = -den;
+                }
+                round_integer_ratio(&num, &den, mode)
+            }
         }
-        return round_float(a / b, mode);
+    } else {
+        match n {
+            LispObject::Integer(_) | LispObject::BigInt(_) => Ok(n),
+            LispObject::Float(f) => round_float(f, mode),
+            _ => marker_position_integer(&n)
+                .map(normalize_integer)
+                .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
+        }
     }
-    match n {
-        LispObject::Integer(_) | LispObject::BigInt(_) => Ok(n),
-        LispObject::Float(f) => round_float(f, mode),
-        _ => marker_position_integer(&n)
-            .map(normalize_integer)
-            .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string())),
+}
+
+enum NumRational {
+    /// Finite value `numerator / denominator` (denominator > 0).
+    Finite(BigInt, BigInt),
+    /// ±Infinity.
+    Infinite,
+    /// NaN.
+    NaN,
+}
+
+fn number_as_rational(obj: &LispObject) -> ElispResult<NumRational> {
+    if let Some(i) = get_integer(obj) {
+        return Ok(NumRational::Finite(i, BigInt::one()));
+    }
+    if let LispObject::Float(f) = *obj {
+        if f.is_nan() {
+            return Ok(NumRational::NaN);
+        }
+        if f.is_infinite() {
+            return Ok(NumRational::Infinite);
+        }
+        let (num, den) = float_to_rational(f);
+        return Ok(NumRational::Finite(num, den));
+    }
+    Err(ElispError::WrongTypeArgument("number".to_string()))
+}
+
+/// Convert a finite `f64` to its exact rational form `(numerator, denominator)`,
+/// with a positive denominator that is always a power of two.
+fn float_to_rational(value: f64) -> (BigInt, BigInt) {
+    debug_assert!(value.is_finite());
+    if value == 0.0 {
+        return (BigInt::zero(), BigInt::one());
+    }
+    let bits = value.to_bits();
+    let sign_negative = (bits >> 63) & 1 == 1;
+    let raw_exp = ((bits >> 52) & 0x7ff) as i64;
+    let raw_mantissa = bits & ((1u64 << 52) - 1);
+    let (mantissa_u, exp): (u64, i64) = if raw_exp == 0 {
+        // Subnormal: value = (-1)^s * mantissa * 2^(-1074).
+        (raw_mantissa, -1074)
+    } else {
+        // Normal: value = (-1)^s * (2^52 + mantissa) * 2^(raw_exp - 1075).
+        (raw_mantissa | (1u64 << 52), raw_exp - 1075)
+    };
+    let mut m = BigInt::from(mantissa_u);
+    if sign_negative {
+        m = -m;
+    }
+    if exp >= 0 {
+        (m << (exp as usize), BigInt::one())
+    } else {
+        (m, BigInt::one() << ((-exp) as usize))
     }
 }
 

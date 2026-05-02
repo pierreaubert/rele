@@ -544,6 +544,84 @@ fn expand_emacs_posix_classes(regex: &str) -> String {
     out = out.replace("[å-\u{e0d3}]", r"(?!)");
     out
 }
+fn format_signed_decimal(n: i64, plus_sign: bool) -> String {
+    if n >= 0 && plus_sign {
+        format!("+{n}")
+    } else {
+        n.to_string()
+    }
+}
+
+fn format_signed_bigint_decimal(n: &num_bigint::BigInt, plus_sign: bool) -> String {
+    let s = n.to_string();
+    if plus_sign && !s.starts_with('-') {
+        format!("+{s}")
+    } else {
+        s
+    }
+}
+
+fn float_to_bigint(f: f64) -> Option<num_bigint::BigInt> {
+    use num_traits::FromPrimitive;
+    if f.is_finite() {
+        num_bigint::BigInt::from_f64(f.trunc())
+    } else {
+        None
+    }
+}
+
+fn format_decimal_arg(arg: &LispObject, plus_sign: bool) -> Option<String> {
+    match arg {
+        LispObject::Integer(n) => Some(format_signed_decimal(*n, plus_sign)),
+        LispObject::BigInt(n) => Some(format_signed_bigint_decimal(n, plus_sign)),
+        LispObject::Float(f) => float_to_bigint(*f).map(|b| format_signed_bigint_decimal(&b, plus_sign)),
+        _ => None,
+    }
+}
+
+fn format_radix(arg: &LispObject, radix: u32) -> Option<String> {
+    match arg {
+        LispObject::Integer(n) => Some(format_i64_radix(*n, radix)),
+        LispObject::BigInt(n) => Some(format_bigint_radix(n, radix)),
+        LispObject::Float(f) => float_to_bigint(*f).map(|b| format_bigint_radix(&b, radix)),
+        _ => None,
+    }
+}
+
+fn format_i64_radix(n: i64, radix: u32) -> String {
+    if n < 0 {
+        let mag = (n as i128).unsigned_abs();
+        let body = format_u128_radix(mag, radix);
+        format!("-{body}")
+    } else {
+        format_u128_radix(n as u128, radix)
+    }
+}
+
+fn format_u128_radix(mut n: u128, radix: u32) -> String {
+    if n == 0 {
+        return "0".to_string();
+    }
+    let mut digits = Vec::new();
+    let r = u128::from(radix);
+    while n > 0 {
+        let d = (n % r) as u32;
+        digits.push(char::from_digit(d, radix).unwrap_or('?'));
+        n /= r;
+    }
+    digits.iter().rev().collect()
+}
+
+fn format_bigint_radix(n: &num_bigint::BigInt, radix: u32) -> String {
+    let (sign, mag) = (n.sign(), n.magnitude());
+    let body = mag.to_str_radix(radix);
+    if sign == num_bigint::Sign::Minus {
+        format!("-{body}")
+    } else {
+        body
+    }
+}
+
 pub(super) fn eval_format(
     args: Value,
     env: &Arc<RwLock<Environment>>,
@@ -580,10 +658,12 @@ pub(super) fn eval_format(
             i += 1;
             let mut left_align = false;
             let mut zero_pad = false;
+            let mut plus_sign = false;
             while i < chars.len() && (chars[i] == '-' || chars[i] == '+' || chars[i] == '0') {
                 match chars[i] {
                     '-' => left_align = true,
                     '0' => zero_pad = true,
+                    '+' => plus_sign = true,
                     _ => {}
                 }
                 i += 1;
@@ -631,11 +711,8 @@ pub(super) fn eval_format(
                 }
                 'd' => {
                     if arg_idx < format_args.len() {
-                        let s = match &format_args[arg_idx] {
-                            LispObject::Integer(n) => n.to_string(),
-                            LispObject::Float(f) => (*f as i64).to_string(),
-                            _ => format_args[arg_idx].princ_to_string(),
-                        };
+                        let s = format_decimal_arg(&format_args[arg_idx], plus_sign)
+                            .unwrap_or_else(|| format_args[arg_idx].princ_to_string());
                         result.push_str(&apply_width(s));
                         arg_idx += 1;
                     }
@@ -667,17 +744,31 @@ pub(super) fn eval_format(
                 }
                 'x' => {
                     if arg_idx < format_args.len() {
-                        if let LispObject::Integer(n) = &format_args[arg_idx] {
-                            let s = format!("{:x}", n);
+                        if let Some(s) = format_radix(&format_args[arg_idx], 16) {
                             result.push_str(&apply_width(s));
+                        }
+                        arg_idx += 1;
+                    }
+                }
+                'X' => {
+                    if arg_idx < format_args.len() {
+                        if let Some(s) = format_radix(&format_args[arg_idx], 16) {
+                            result.push_str(&apply_width(s.to_ascii_uppercase()));
                         }
                         arg_idx += 1;
                     }
                 }
                 'o' => {
                     if arg_idx < format_args.len() {
-                        if let LispObject::Integer(n) = &format_args[arg_idx] {
-                            let s = format!("{:o}", n);
+                        if let Some(s) = format_radix(&format_args[arg_idx], 8) {
+                            result.push_str(&apply_width(s));
+                        }
+                        arg_idx += 1;
+                    }
+                }
+                'b' => {
+                    if arg_idx < format_args.len() {
+                        if let Some(s) = format_radix(&format_args[arg_idx], 2) {
                             result.push_str(&apply_width(s));
                         }
                         arg_idx += 1;
@@ -898,7 +989,25 @@ pub(super) fn eval_load(
         };
         if let Some(source) = source {
             log::debug!("load: reading {path} ({} bytes)", source.len());
-            let forms = crate::read_all(&source).map_err(|_| ElispError::FileError {
+            // Make `#$` resolve to this path during the read, and honour
+            // `load-force-doc-strings` to eagerly resolve `(file . offset)`
+            // lazy docstring references in byte-code literals. The flag is
+            // typically set via dynamic `let`, so we consult the caller's
+            // environment (which sees the let-binding) before falling back
+            // to the symbol's value cell.
+            let force_doc_sym = crate::obarray::intern("load-force-doc-strings");
+            let force_doc_val = env
+                .read()
+                .get_id(force_doc_sym)
+                .or_else(|| state.get_value_cell(force_doc_sym))
+                .unwrap_or_else(LispObject::nil);
+            let force_doc = !force_doc_val.is_nil();
+            let prev_load = crate::reader::set_current_load_file(Some(path.clone()));
+            let prev_force = crate::reader::set_force_doc_strings(force_doc);
+            let read_result = crate::read_all(&source);
+            crate::reader::set_current_load_file(prev_load);
+            crate::reader::set_force_doc_strings(prev_force);
+            let forms = read_result.map_err(|_| ElispError::FileError {
                 operation: "load".into(),
                 path: path.clone(),
                 message: "read error".into(),

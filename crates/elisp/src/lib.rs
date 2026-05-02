@@ -7,7 +7,7 @@ pub mod jit;
 pub mod obarray;
 mod object;
 pub mod primitives;
-mod reader;
+pub mod reader;
 pub mod value;
 pub mod vm;
 

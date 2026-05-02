@@ -394,6 +394,15 @@ fn call_function_inner(
                 Err(ElispError::VoidFunction(_)) => {
                     source_level_fallback(name, &args_obj, env, editor, macros, state)
                 }
+                Err(e @ ElispError::Signal(_)) => {
+                    // Give any active `handler-bind` frame a chance to
+                    // run its handler within the dynamic extent of the
+                    // signal. If a handler exits non-locally we
+                    // propagate that exit; otherwise propagate the
+                    // original signal so a `condition-case` can catch.
+                    crate::eval::error_forms::dispatch_signal(&e, editor, macros, state)?;
+                    Err(e)
+                }
                 Err(e) => Err(e),
             }
         }

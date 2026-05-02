@@ -3856,10 +3856,20 @@ pub(super) fn eval_inner(
                     }
                     result
                 }
-                "handler-bind" | "handler-bind-1" => {
-                    let body = cdr.rest().unwrap_or(LispObject::nil());
-                    eval_progn(obj_to_value(body), env, editor, macros, state)
-                }
+                "handler-bind" => error_forms::eval_handler_bind(
+                    obj_to_value(cdr.clone()),
+                    env,
+                    editor,
+                    macros,
+                    state,
+                ),
+                "handler-bind-1" => error_forms::eval_handler_bind_1(
+                    obj_to_value(cdr.clone()),
+                    env,
+                    editor,
+                    macros,
+                    state,
+                ),
                 "text-quoting-style" => Ok(obj_to_value(LispObject::symbol("grave"))),
                 "let-alist" => {
                     let alist_expr = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
@@ -6778,13 +6788,56 @@ pub(super) fn eval_inner(
                         macros,
                         state,
                     )?;
+                    let mut coding_arg: Option<LispObject> = None;
                     if let Some(rest) = cdr.rest() {
                         let mut cur = rest;
+                        let mut idx = 0;
                         while let Some((arg, r)) = cur.destructure_cons() {
-                            let _ = eval(obj_to_value(arg), env, editor, macros, state)?;
+                            let v = eval(obj_to_value(arg), env, editor, macros, state)?;
+                            if idx == 0 {
+                                coding_arg = Some(value_to_obj(v));
+                            }
+                            idx += 1;
                             cur = r;
                         }
                     }
+                    // For encode-coding-string with a utf-8 family coding,
+                    // produce a unibyte representation: each utf-8 byte of
+                    // the source becomes a private-use char (\u{E000}+byte).
+                    // This is the same encoding our buffer layer uses for
+                    // unibyte content, so json-parse-string will treat the
+                    // result as raw bytes.
+                    let string_val_obj = value_to_obj(string_val);
+                    let result = if !is_decode {
+                        let coding = coding_arg
+                            .as_ref()
+                            .and_then(|c| c.as_symbol())
+                            .unwrap_or_default();
+                        if matches!(
+                            coding.as_str(),
+                            "utf-8" | "utf-8-unix" | "utf-8-dos" | "utf-8-mac"
+                                | "utf-8-emacs" | "utf-8-emacs-unix"
+                        ) {
+                            if let Some(s) = string_val_obj.as_string() {
+                                let encoded: String = s
+                                    .as_bytes()
+                                    .iter()
+                                    .map(|b| {
+                                        char::from_u32(0xE000 + u32::from(*b))
+                                            .unwrap_or('?')
+                                    })
+                                    .collect();
+                                LispObject::string(&encoded)
+                            } else {
+                                string_val_obj
+                            }
+                        } else {
+                            string_val_obj
+                        }
+                    } else {
+                        string_val_obj
+                    };
+                    let string_val = obj_to_value(result);
                     if is_decode {
                         let id = crate::obarray::intern("last-coding-system-used");
                         let name = crate::obarray::symbol_name(id);

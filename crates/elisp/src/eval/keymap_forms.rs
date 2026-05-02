@@ -530,7 +530,8 @@ fn apply_keymap_pairs(
                         LispObject::string("duplicate key definition"),
                         LispObject::nil(),
                     );
-                    if let Some(message_fn) = env.read().get_function("message") {
+                    let message_fn = env.read().get_function("message");
+                    if let Some(message_fn) = message_fn {
                         let _ = super::functions::call_function(
                             obj_to_value(message_fn),
                             obj_to_value(message_args),

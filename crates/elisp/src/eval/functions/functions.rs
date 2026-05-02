@@ -260,7 +260,10 @@ fn docstring_from_body(body: LispObject) -> Option<String> {
 
 fn docstring_from_function(def: &LispObject) -> Option<String> {
     match def {
-        LispObject::BytecodeFn(bytecode) => bytecode.docstring.clone(),
+        LispObject::BytecodeFn(bytecode) => bytecode
+            .docstring
+            .as_deref()
+            .and_then(|d| d.as_string().cloned()),
         LispObject::Primitive(_) => Some(String::new()),
         LispObject::Cons(_) => {
             let head = def.car()?.as_symbol()?;

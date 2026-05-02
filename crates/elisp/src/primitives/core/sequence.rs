@@ -1,5 +1,56 @@
-use crate::error::{ElispError, ElispResult};
+use crate::error::{ElispError, ElispResult, SignalData};
 use crate::object::LispObject;
+
+/// Raise the `circular-list` signal that list-walking primitives
+/// emit when Floyd's tortoise/hare detects a cycle. We deliberately
+/// pass `nil` as the signal data: putting the offending list in the
+/// data slot would corrupt any caller that tries to `prin1` the error
+/// (our printer doesn't yet detect cycles) — that bug is what made
+/// these signals appear to hang instead of reporting cleanly.
+fn signal_circular_list(_list: LispObject) -> ElispError {
+    ElispError::Signal(Box::new(SignalData {
+        symbol: LispObject::symbol("circular-list"),
+        data: LispObject::nil(),
+    }))
+}
+
+/// Walk LIST cdr-by-cdr with Floyd's cycle detection. For every cell
+/// encountered, calls `f(car, position)`. If `f` returns `Some(out)`,
+/// short-circuits with `Ok(out)`. On cycle, signals `circular-list`.
+/// On clean termination (nil tail or improper-list tail), returns
+/// `Ok(default(tail))`.
+fn walk_list_cycle_safe<T>(
+    list: &LispObject,
+    mut f: impl FnMut(&LispObject, &LispObject) -> Option<T>,
+    default: impl FnOnce(LispObject) -> T,
+) -> ElispResult<T> {
+    let mut slow = list.clone();
+    let mut fast_pos = list.clone();
+    loop {
+        let Some((car, cdr)) = fast_pos.destructure_cons() else {
+            return Ok(default(fast_pos));
+        };
+        if let Some(out) = f(&car, &fast_pos) {
+            return Ok(out);
+        }
+        let Some((car2, cdr2)) = cdr.destructure_cons() else {
+            return Ok(default(cdr));
+        };
+        if let Some(out) = f(&car2, &cdr) {
+            return Ok(out);
+        }
+        fast_pos = cdr2;
+        slow = slow
+            .destructure_cons()
+            .map(|(_, c)| c)
+            .unwrap_or_else(LispObject::nil);
+        if let (LispObject::Cons(a), LispObject::Cons(b)) = (&slow, &fast_pos)
+            && std::sync::Arc::ptr_eq(a, b)
+        {
+            return Err(signal_circular_list(list.clone()));
+        }
+    }
+}
 
 pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
     match name {
@@ -88,14 +139,34 @@ pub fn prim_copy_alist(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_plist_get(args: &LispObject) -> ElispResult<LispObject> {
     let plist = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let key = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-    let mut current = plist;
-
+    let mut slow = plist.clone();
+    let mut current = plist.clone();
+    let mut steps: u64 = 0;
     while let Some((k, cdr)) = current.destructure_cons() {
         if let Some((v, rest)) = cdr.destructure_cons() {
             if eq_test(&k, &key) {
                 return Ok(v);
             }
             current = rest;
+            steps += 1;
+            // Hare advances 2 cdrs per iteration; on every odd iter we
+            // advance the tortoise by 2 cdrs as well, keeping the
+            // 1-to-2 ratio Floyd's needs.
+            if steps.is_multiple_of(2) {
+                if let Some((_, slow_cdr)) = slow.destructure_cons()
+                    && let Some((_, slow_cdr2)) = slow_cdr.destructure_cons()
+                {
+                    slow = slow_cdr2;
+                }
+                if let (LispObject::Cons(a), LispObject::Cons(b)) = (&slow, &current)
+                    && std::sync::Arc::ptr_eq(a, b)
+                {
+                    return Err(signal_circular_list(LispObject::nil()));
+                }
+            }
+            if steps > MAX_PLIST_WALK {
+                return Err(signal_circular_list(LispObject::nil()));
+            }
         } else {
             break;
         }
@@ -103,13 +174,17 @@ pub fn prim_plist_get(args: &LispObject) -> ElispResult<LispObject> {
     Ok(LispObject::nil())
 }
 
+const MAX_PLIST_WALK: u64 = 1 << 18;
+
 pub fn prim_plist_put(args: &LispObject) -> ElispResult<LispObject> {
     let plist = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let prop = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
     let value = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
     let mut items = Vec::new();
+    let mut slow = plist.clone();
     let mut current = plist.clone();
     let mut found = false;
+    let mut step = 0u32;
     while let Some((key, rest)) = current.destructure_cons() {
         if let Some((val, next)) = rest.destructure_cons() {
             if eq_test(&key, &prop) {
@@ -119,6 +194,20 @@ pub fn prim_plist_put(args: &LispObject) -> ElispResult<LispObject> {
             } else {
                 items.push((key, val));
                 current = next;
+            }
+            step += 1;
+            if step >= 2 {
+                step = 0;
+                slow = slow
+                    .destructure_cons()
+                    .and_then(|(_, c)| c.destructure_cons())
+                    .map(|(_, c)| c)
+                    .unwrap_or_else(LispObject::nil);
+                if let (LispObject::Cons(a), LispObject::Cons(b)) = (&slow, &current)
+                    && std::sync::Arc::ptr_eq(a, b)
+                {
+                    return Err(signal_circular_list(slow));
+                }
             }
         } else {
             break;
@@ -138,14 +227,30 @@ pub fn prim_plist_put(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_plist_member(args: &LispObject) -> ElispResult<LispObject> {
     let plist = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let prop = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let mut slow = plist.clone();
     let mut current = plist;
-    while let Some((key, _rest)) = current.destructure_cons() {
+    let mut step = 0u32;
+    while let Some((key, after_key)) = current.destructure_cons() {
         if eq_test(&key, &prop) {
             return Ok(current);
         }
-        match _rest.destructure_cons() {
+        match after_key.destructure_cons() {
             Some((_, next)) => current = next,
             None => return Ok(LispObject::nil()),
+        }
+        step += 1;
+        if step >= 2 {
+            step = 0;
+            slow = slow
+                .destructure_cons()
+                .and_then(|(_, c)| c.destructure_cons())
+                .map(|(_, c)| c)
+                .unwrap_or_else(LispObject::nil);
+            if let (LispObject::Cons(a), LispObject::Cons(b)) = (&slow, &current)
+                && std::sync::Arc::ptr_eq(a, b)
+            {
+                return Err(signal_circular_list(slow));
+            }
         }
     }
     Ok(LispObject::nil())
@@ -263,16 +368,19 @@ pub fn prim_proper_list_p(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_delete(args: &LispObject) -> ElispResult<LispObject> {
     let elt = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let list = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-    let mut items = Vec::new();
-    let mut current = list;
-    while let Some((car, cdr)) = current.destructure_cons() {
-        if car != elt {
-            items.push(car);
-        }
-        current = cdr;
-    }
+    let items = std::cell::RefCell::new(Vec::new());
+    walk_list_cycle_safe(
+        &list,
+        |car, _| {
+            if *car != elt {
+                items.borrow_mut().push(car.clone());
+            }
+            None::<LispObject>
+        },
+        |_| LispObject::nil(),
+    )?;
     let mut result = LispObject::nil();
-    for item in items.into_iter().rev() {
+    for item in items.into_inner().into_iter().rev() {
         result = LispObject::cons(item, result);
     }
     Ok(result)
@@ -281,31 +389,37 @@ pub fn prim_delete(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_rassq(args: &LispObject) -> ElispResult<LispObject> {
     let key = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let alist = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-    let mut current = alist;
-    while let Some((entry, rest)) = current.destructure_cons() {
-        if let Some((_, val)) = entry.destructure_cons()
-            && eq_test(&val, &key)
-        {
-            return Ok(entry);
-        }
-        current = rest;
-    }
-    Ok(LispObject::nil())
+    walk_list_cycle_safe(
+        &alist,
+        |entry, _| {
+            if let Some((_, val)) = entry.destructure_cons()
+                && eq_test(&val, &key)
+            {
+                Some(entry.clone())
+            } else {
+                None
+            }
+        },
+        |_| LispObject::nil(),
+    )
 }
 
 pub fn prim_rassoc(args: &LispObject) -> ElispResult<LispObject> {
     let key = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let alist = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-    let mut current = alist;
-    while let Some((entry, rest)) = current.destructure_cons() {
-        if let Some((_, val)) = entry.destructure_cons()
-            && val == key
-        {
-            return Ok(entry);
-        }
-        current = rest;
-    }
-    Ok(LispObject::nil())
+    walk_list_cycle_safe(
+        &alist,
+        |entry, _| {
+            if let Some((_, val)) = entry.destructure_cons()
+                && val == key
+            {
+                Some(entry.clone())
+            } else {
+                None
+            }
+        },
+        |_| LispObject::nil(),
+    )
 }
 
 pub fn prim_take(args: &LispObject) -> ElispResult<LispObject> {
@@ -402,22 +516,27 @@ pub fn prim_fillarray(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_memql(args: &LispObject) -> ElispResult<LispObject> {
     let elt = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let list = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-    let mut current = list;
-    while let Some((car, cdr)) = current.destructure_cons() {
-        let equal = match (&elt, &car) {
+    let eql = |a: &LispObject, b: &LispObject| -> bool {
+        match (a, b) {
             (LispObject::Nil, LispObject::Nil) => true,
             (LispObject::T, LispObject::T) => true,
-            (LispObject::Symbol(a), LispObject::Symbol(b)) => a == b,
-            (LispObject::Integer(a), LispObject::Integer(b)) => a == b,
-            (LispObject::Float(a), LispObject::Float(b)) => a.to_bits() == b.to_bits(),
+            (LispObject::Symbol(x), LispObject::Symbol(y)) => x == y,
+            (LispObject::Integer(x), LispObject::Integer(y)) => x == y,
+            (LispObject::Float(x), LispObject::Float(y)) => x.to_bits() == y.to_bits(),
             _ => false,
-        };
-        if equal {
-            return Ok(current);
         }
-        current = cdr;
-    }
-    Ok(LispObject::nil())
+    };
+    walk_list_cycle_safe(
+        &list,
+        |car, pos| {
+            if eql(&elt, car) {
+                Some(pos.clone())
+            } else {
+                None
+            }
+        },
+        |_| LispObject::nil(),
+    )
 }
 
 fn eq_test(a: &LispObject, b: &LispObject) -> bool {

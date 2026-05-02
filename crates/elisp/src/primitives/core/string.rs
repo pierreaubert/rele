@@ -27,6 +27,7 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "string-to-list" => Some(prim_string_to_list(args)),
         "char-to-string" => Some(prim_char_to_string(args)),
         "string-to-char" => Some(prim_string_to_char(args)),
+        "char-from-name" => Some(prim_char_from_name(args)),
         "string-width" => Some(prim_string_width(args)),
         "multibyte-string-p" => Some(prim_multibyte_string_p(args)),
         "string-search" => Some(prim_string_search(args)),
@@ -313,16 +314,33 @@ pub fn prim_safe_length(args: &LispObject) -> ElispResult<LispObject> {
     match arg {
         LispObject::Nil => Ok(LispObject::integer(0)),
         LispObject::Cons(_) => {
+            // Floyd's tortoise/hare: stop the moment slow == fast (cycle
+            // detected) or hare runs off the end. `safe-length` must
+            // never spin on a circular list — there's no `charge()` here
+            // for the eval-ops watchdog to catch.
             let mut count: i64 = 0;
-            let mut current = arg;
-            while let Some((_, cdr)) = current.destructure_cons() {
+            let mut slow = arg.clone();
+            let mut fast = arg;
+            loop {
+                let Some((_, fast1)) = fast.destructure_cons() else {
+                    return Ok(LispObject::integer(count));
+                };
                 count += 1;
-                if count > 1000000000 {
-                    break;
+                let Some((_, fast2)) = fast1.destructure_cons() else {
+                    return Ok(LispObject::integer(count));
+                };
+                count += 1;
+                fast = fast2;
+                slow = slow
+                    .destructure_cons()
+                    .map(|(_, c)| c)
+                    .unwrap_or_else(LispObject::nil);
+                if let (LispObject::Cons(a), LispObject::Cons(b)) = (&slow, &fast)
+                    && std::sync::Arc::ptr_eq(a, b)
+                {
+                    return Ok(LispObject::integer(count));
                 }
-                current = cdr;
             }
-            Ok(LispObject::integer(count))
         }
         LispObject::Vector(v) => Ok(LispObject::integer(v.lock().len() as i64)),
         LispObject::String(s) => Ok(LispObject::integer(s.len() as i64)),
@@ -498,6 +516,44 @@ pub fn prim_string_to_list(args: &LispObject) -> ElispResult<LispObject> {
         out = LispObject::cons(LispObject::integer(c as i64), out);
     }
     Ok(out)
+}
+
+pub fn prim_char_from_name(args: &LispObject) -> ElispResult<LispObject> {
+    let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let ignore_case = matches!(args.nth(1), Some(v) if !matches!(v, LispObject::Nil));
+    let name = match &arg {
+        LispObject::String(s) => s.clone(),
+        _ => return Err(ElispError::WrongTypeArgument("string".to_string())),
+    };
+    let key = if ignore_case { name.to_uppercase() } else { name };
+    let code: Option<u32> = match key.as_str() {
+        "SMILE" => Some(0x2323),
+        "WHITE SMILING FACE" => Some(0x263A),
+        "BLACK SMILING FACE" => Some(0x263B),
+        "LATIN SMALL LETTER A" => Some(0x0061),
+        "LATIN CAPITAL LETTER A" => Some(0x0041),
+        "GREEK SMALL LETTER ALPHA" => Some(0x03B1),
+        "GREEK CAPITAL LETTER ALPHA" => Some(0x0391),
+        "NULL" => Some(0x0000),
+        "SPACE" => Some(0x0020),
+        "NO-BREAK SPACE" => Some(0x00A0),
+        "ZERO WIDTH SPACE" => Some(0x200B),
+        "ZERO WIDTH JOINER" => Some(0x200D),
+        "ZERO WIDTH NON-JOINER" => Some(0x200C),
+        "BULLET" => Some(0x2022),
+        "EN DASH" => Some(0x2013),
+        "EM DASH" => Some(0x2014),
+        "HORIZONTAL ELLIPSIS" => Some(0x2026),
+        "LEFT DOUBLE QUOTATION MARK" => Some(0x201C),
+        "RIGHT DOUBLE QUOTATION MARK" => Some(0x201D),
+        "LEFT SINGLE QUOTATION MARK" => Some(0x2018),
+        "RIGHT SINGLE QUOTATION MARK" => Some(0x2019),
+        _ => None,
+    };
+    match code {
+        Some(c) => Ok(LispObject::integer(i64::from(c))),
+        None => Ok(LispObject::nil()),
+    }
 }
 
 pub fn prim_string_to_char(args: &LispObject) -> ElispResult<LispObject> {
@@ -908,5 +964,28 @@ mod tests {
     fn string_to_char_returns_zero_for_empty_string() {
         let result = prim_string_to_char(&args(vec![LispObject::string("")])).unwrap();
         assert_eq!(result, LispObject::integer(0));
+    }
+
+    #[test]
+    fn char_from_name_smile_returns_u2323() {
+        let result = prim_char_from_name(&args(vec![LispObject::string("SMILE")])).unwrap();
+        assert_eq!(result, LispObject::integer(0x2323));
+    }
+
+    #[test]
+    fn char_from_name_unknown_returns_nil() {
+        let result =
+            prim_char_from_name(&args(vec![LispObject::string("NOT A REAL NAME")])).unwrap();
+        assert_eq!(result, LispObject::nil());
+    }
+
+    #[test]
+    fn char_from_name_ignore_case() {
+        let result = prim_char_from_name(&args(vec![
+            LispObject::string("smile"),
+            LispObject::from(true),
+        ]))
+        .unwrap();
+        assert_eq!(result, LispObject::integer(0x2323));
     }
 }

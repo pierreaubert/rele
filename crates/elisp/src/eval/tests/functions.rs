@@ -700,6 +700,81 @@ fn test_signal() {
     );
 }
 #[test]
+fn test_handler_bind_no_error() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let res = interp
+        .eval(
+            read(
+                "(catch 'tag (handler-bind ((error (lambda (_err) (throw 'tag 'wow)))) 'noerror))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(res, LispObject::symbol("noerror"));
+}
+#[test]
+fn test_handler_bind_throws_to_outer_catch() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let res = interp
+        .eval(
+            read(
+                "(catch 'tag (handler-bind ((error (lambda (_err) (throw 'tag 'err)))) \
+                 (list 'inner-catch (catch 'tag (user-error \"hello\")))))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        res,
+        LispObject::cons(
+            LispObject::symbol("inner-catch"),
+            LispObject::cons(LispObject::symbol("err"), LispObject::nil())
+        )
+    );
+}
+#[test]
+fn test_handler_bind_mutes_inner_condition_case() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let res = interp
+        .eval(
+            read(
+                "(condition-case nil \
+                   (handler-bind ((error (lambda (_err) (signal 'wrong-type-argument nil)))) \
+                     (list 'result \
+                           (condition-case nil \
+                               (user-error \"hello\") \
+                             (wrong-type-argument 'inner-handler)))) \
+                   (wrong-type-argument 'wrong-type-argument))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(res, LispObject::symbol("wrong-type-argument"));
+}
+#[test]
+fn test_handler_bind_does_not_apply_to_handlers() {
+    let mut interp = Interpreter::new();
+    add_primitives(&mut interp);
+    let res = interp
+        .eval(
+            read(
+                "(condition-case nil \
+                   (handler-bind \
+                       ((error (lambda (_err) (signal 'wrong-type-argument nil))) \
+                        (wrong-type-argument (lambda (_err) (user-error \"wrong-type-argument\")))) \
+                     (user-error \"hello\")) \
+                   (wrong-type-argument 'wrong-type-argument) \
+                   (error 'plain-error))",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(res, LispObject::symbol("wrong-type-argument"));
+}
+#[test]
 fn test_unwind_protect_normal() {
     let mut interp = Interpreter::new();
     add_primitives(&mut interp);

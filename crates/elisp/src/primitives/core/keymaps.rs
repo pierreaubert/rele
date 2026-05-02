@@ -258,11 +258,22 @@ fn define_key_in_map(map: &LispObject, key: LispObject, def: LispObject) -> Elis
         return Ok(());
     }
 
+    // Single-event keys (like "a" / [?a] / 97) are stored as the bare
+    // event itself so the keymap matches Emacs's `(keymap (97 . foo))`
+    // shape. Multi-event sequences fall back to the original object
+    // for now (full nested-keymap support is not yet implemented).
+    let events = key_events(&key);
+    let stored_key = if events.len() == 1 {
+        events.into_iter().next().unwrap_or(key.clone())
+    } else {
+        key.clone()
+    };
+
     let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
     while let Some((entry, rest)) = cur.destructure_cons() {
         if let Some((entry_key, _)) = entry.destructure_cons()
             && entry_key != parent_marker()
-            && key_equal(&entry_key, &key)
+            && key_equal(&entry_key, &stored_key)
         {
             entry.set_cdr(def);
             return Ok(());
@@ -271,13 +282,20 @@ fn define_key_in_map(map: &LispObject, key: LispObject, def: LispObject) -> Elis
     }
 
     let old_tail = map.cdr().unwrap_or_else(LispObject::nil);
-    map.set_cdr(LispObject::cons(LispObject::cons(key, def), old_tail));
+    map.set_cdr(LispObject::cons(
+        LispObject::cons(stored_key, def),
+        old_tail,
+    ));
     Ok(())
 }
 
-fn lookup_raw_direct_in_map(map: &LispObject, key: &LispObject) -> LispObject {
+/// Look up KEY directly in MAP (not following the parent chain).
+/// Returns `Some(value)` when an entry is present (even if its value
+/// is nil — that distinguishes an explicit `(define-key map key nil)`
+/// shadow from a missing binding) and `None` when no entry exists.
+fn lookup_raw_direct_in_map(map: &LispObject, key: &LispObject) -> Option<LispObject> {
     if !is_keymap(map) {
-        return LispObject::nil();
+        return None;
     }
 
     let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
@@ -285,17 +303,17 @@ fn lookup_raw_direct_in_map(map: &LispObject, key: &LispObject) -> LispObject {
         if is_keymap(&entry) {
             let found = lookup_in_map(&entry, key);
             if !found.is_nil() {
-                return found;
+                return Some(found);
             }
         } else if let Some((entry_key, value)) = entry.destructure_cons()
             && entry_key != parent_marker()
             && key_equal(&entry_key, key)
         {
-            return value;
+            return Some(value);
         }
         cur = rest;
     }
-    LispObject::nil()
+    None
 }
 
 fn key_from_events(events: &[LispObject]) -> LispObject {
@@ -312,10 +330,9 @@ fn lookup_sequence_in_map(map: &LispObject, events: &[LispObject]) -> LispObject
 
     for len in (1..=events.len()).rev() {
         let prefix = key_from_events(&events[..len]);
-        let raw = lookup_raw_direct_in_map(map, &prefix);
-        if raw.is_nil() {
+        let Some(raw) = lookup_raw_direct_in_map(map, &prefix) else {
             continue;
-        }
+        };
         if len == events.len() {
             return binding_command(&raw);
         }
@@ -335,8 +352,10 @@ fn lookup_in_map(map: &LispObject, key: &LispObject) -> LispObject {
         return LispObject::nil();
     }
 
-    let raw = lookup_raw_direct_in_map(map, key);
-    if !raw.is_nil() {
+    // An explicit (key . nil) entry SHADOWS the parent — we return nil
+    // without falling through. Only a missing entry consults the
+    // parent.
+    if let Some(raw) = lookup_raw_direct_in_map(map, key) {
         return binding_command(&raw);
     }
 
@@ -375,7 +394,13 @@ pub(crate) fn lookup_in_keymaps(map_or_maps: &LispObject, key: &LispObject) -> L
 fn combine_key(prefix: Option<&LispObject>, key: &LispObject) -> LispObject {
     let key = key_output_object(key);
     let Some(prefix) = prefix else {
-        return key;
+        // No prefix: a stand-alone key sequence. Bare events (integers
+        // or symbols) get wrapped as a 1-element vector so callers like
+        // `where-is-internal` see Emacs's standard sequence shape.
+        return match key {
+            LispObject::String(_) | LispObject::Vector(_) => key,
+            _ => vector(vec![key]),
+        };
     };
 
     match (prefix, &key) {
@@ -523,8 +548,41 @@ pub fn prim_define_key(args: &LispObject) -> ElispResult<LispObject> {
     let map = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let key = canonical_key_object(&args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?);
     let def = args.nth(2).ok_or(ElispError::WrongNumberOfArguments)?;
-    define_key_in_map(&map, key, def.clone())?;
+    let remove = args.nth(3).is_some_and(|v| !v.is_nil());
+    if remove {
+        remove_key_in_map(&map, &key);
+    } else {
+        define_key_in_map(&map, key, def.clone())?;
+    }
     Ok(def)
+}
+
+fn remove_key_in_map(map: &LispObject, key: &LispObject) {
+    if !is_keymap(map) {
+        return;
+    }
+    let events = key_events(key);
+    let canonical = if events.len() == 1 {
+        events.into_iter().next().unwrap_or(key.clone())
+    } else {
+        key.clone()
+    };
+    let mut prev: Option<LispObject> = None;
+    let mut cur = map.cdr().unwrap_or_else(LispObject::nil);
+    while let Some((entry, rest)) = cur.destructure_cons() {
+        if let Some((entry_key, _)) = entry.destructure_cons()
+            && entry_key != parent_marker()
+            && key_equal(&entry_key, &canonical)
+        {
+            match &prev {
+                Some(p) => p.set_cdr(rest),
+                None => map.set_cdr(rest),
+            }
+            return;
+        }
+        prev = Some(cur.clone());
+        cur = rest;
+    }
 }
 
 pub fn prim_substitute_key_definition(args: &LispObject) -> ElispResult<LispObject> {

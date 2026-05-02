@@ -256,6 +256,75 @@ pub struct Reader {
     reject_circular_shared_refs: u32,
 }
 
+thread_local! {
+    static CURRENT_LOAD_FILE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+    static FORCE_DOC_STRINGS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Set the path that `#$` resolves to during reading. Returns the previous
+/// value so callers can restore it (loads can nest).
+pub fn set_current_load_file(path: Option<String>) -> Option<String> {
+    CURRENT_LOAD_FILE.with(|c| std::mem::replace(&mut *c.borrow_mut(), path))
+}
+
+/// Toggle eager resolution of `(file . offset)` docstrings. Returns the
+/// previous value.
+pub fn set_force_doc_strings(force: bool) -> bool {
+    FORCE_DOC_STRINGS.with(|c| c.replace(force))
+}
+
+fn current_load_file() -> Option<String> {
+    CURRENT_LOAD_FILE.with(|c| c.borrow().clone())
+}
+
+fn force_doc_strings_active() -> bool {
+    FORCE_DOC_STRINGS.with(std::cell::Cell::get)
+}
+
+/// Resolve a `(filename . offset)` cons to the actual docstring stored at
+/// that byte offset of `filename`, where the byte preceding `offset` is the
+/// space after `#@LEN`. Returns `None` if the cons is malformed or the file
+/// cannot be read.
+fn resolve_lazy_doc(obj: &LispObject) -> Option<LispObject> {
+    let (car, cdr) = obj.destructure_cons()?;
+    let path = car.as_string()?.clone();
+    let offset = cdr.as_integer()?;
+    if offset < 0 {
+        return None;
+    }
+    let bytes = std::fs::read(&path).ok()?;
+    let off = offset as usize;
+    // Doc string preceded by `#@LEN ` where LEN counts the doc body plus the
+    // trailing newline. Find the `#@` immediately before `off` and parse LEN.
+    if off < 3 {
+        return None;
+    }
+    let header_end = off - 1; // index of the space after the digits
+    let mut header_start = header_end;
+    while header_start >= 2 && &bytes[header_start - 2..header_start] != b"#@" {
+        header_start -= 1;
+    }
+    if header_start < 2 {
+        return None;
+    }
+    let len_bytes = &bytes[header_start..header_end];
+    let len: usize = std::str::from_utf8(len_bytes).ok()?.parse().ok()?;
+    if len == 0 || off + len > bytes.len() {
+        return None;
+    }
+    // `#@LEN` counts the body plus the `\037\n` two-byte terminator that
+    // ends a printed doc string in `.elc` files. Strip those two bytes when
+    // present.
+    let mut end = off + len;
+    if end >= 2 && bytes[end - 2] == 0x1f && bytes[end - 1] == b'\n' {
+        end -= 2;
+    }
+    let body = &bytes[off..end];
+    let s = std::str::from_utf8(body).ok()?;
+    Some(LispObject::string(s))
+}
+
 fn is_symbol_char(c: char) -> bool {
     c.is_alphanumeric()
         || !c.is_ascii() // Allow non-ASCII characters in symbols (e.g. Unicode ellipsis)
@@ -678,9 +747,13 @@ impl Reader {
                 self.read()
             }
             '$' => {
-                // #$ — current load file name (used in .elc for lazy docstrings)
+                // #$ — current load file name (used in .elc for lazy docstrings).
+                // Resolves to the path most recently passed to `eval_load`, or
+                // nil if reading outside a load context.
                 self.advance();
-                Ok(LispObject::nil()) // stub: no file context
+                Ok(current_load_file()
+                    .as_deref()
+                    .map_or_else(LispObject::nil, LispObject::string))
             }
             '<' => {
                 // #<...> — unreadable object notation. In real Emacs this
@@ -923,19 +996,24 @@ impl Reader {
         })? as usize;
 
         // 5. Optionally read docstring and interactive spec, then consume until ']'
-        let mut docstring: Option<String> = None;
+        let mut docstring: Option<Box<LispObject>> = None;
         let mut interactive: Option<Box<LispObject>> = None;
 
         self.skip_whitespace();
         if self.peek() != Some(']') {
             let doc_obj = self.read()?;
-            if let Some(s) = doc_obj.as_string() {
-                docstring = Some(s.clone());
-            } else if doc_obj.as_integer().is_some() {
-                // Integer docstring reference (file offset) — store as string
-                docstring = Some(doc_obj.prin1_to_string());
+            // Resolve a lazy docstring reference `(filename . offset)` to the
+            // actual string when `load-force-doc-strings` is set. Otherwise
+            // store the cons verbatim so `aref f 4` reflects what `.elc`
+            // files put there.
+            let resolved = if force_doc_strings_active() {
+                resolve_lazy_doc(&doc_obj).unwrap_or(doc_obj)
+            } else {
+                doc_obj
+            };
+            if !resolved.is_nil() {
+                docstring = Some(Box::new(resolved));
             }
-            // else: ignore non-string, non-integer doc slot
 
             self.skip_whitespace();
             if self.peek() != Some(']') {
@@ -1859,7 +1937,10 @@ mod tests {
         if let LispObject::BytecodeFn(bc) = result {
             assert_eq!(bc.argdesc, 257);
             assert_eq!(bc.maxdepth, 2);
-            assert_eq!(bc.docstring, Some("A docstring.".to_string()));
+            assert_eq!(
+                bc.docstring.as_deref(),
+                Some(&LispObject::string("A docstring."))
+            );
             assert!(bc.interactive.is_none());
         } else {
             panic!("expected BytecodeFn");
@@ -1870,7 +1951,7 @@ mod tests {
     fn test_read_bytecode_with_interactive() {
         let result = read("#[257 \"\\x54\" [] 2 \"doc\" (interactive \"p\")]").unwrap();
         if let LispObject::BytecodeFn(bc) = result {
-            assert_eq!(bc.docstring, Some("doc".to_string()));
+            assert_eq!(bc.docstring.as_deref(), Some(&LispObject::string("doc")));
             assert!(bc.interactive.is_some());
         } else {
             panic!("expected BytecodeFn");

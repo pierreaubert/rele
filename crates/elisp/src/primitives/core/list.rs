@@ -1,5 +1,12 @@
-use crate::error::{ElispError, ElispResult};
+use crate::error::{ElispError, ElispResult, SignalData};
 use crate::object::LispObject;
+
+fn signal_circular_list(list: LispObject) -> ElispError {
+    ElispError::Signal(Box::new(SignalData {
+        symbol: LispObject::symbol("circular-list"),
+        data: LispObject::cons(list, LispObject::nil()),
+    }))
+}
 
 pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
     match name {
@@ -64,7 +71,7 @@ pub const LIST_PRIMITIVE_NAMES: &[&str] = &[
     "make-list",
 ];
 
-const MAX_LIST_WALK: u64 = 1 << 24;
+const MAX_LIST_WALK: u64 = 1 << 20;
 
 pub fn prim_cons(args: &LispObject) -> ElispResult<LispObject> {
     let car = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
@@ -113,9 +120,7 @@ pub fn prim_length(args: &LispObject) -> ElispResult<LispObject> {
             while let Some((_, rest)) = current.destructure_cons() {
                 count += 1;
                 if count > MAX_LIST_WALK {
-                    return Err(ElispError::EvalError(
-                        "length: list too long or circular".to_string(),
-                    ));
+                    return Err(signal_circular_list(LispObject::nil()));
                 }
                 current = rest;
             }
@@ -153,9 +158,7 @@ pub fn prim_append(args: &LispObject) -> ElispResult<LispObject> {
         while let Some((car, cdr)) = cur.destructure_cons() {
             steps += 1;
             if steps > MAX_LIST_WALK {
-                return Err(ElispError::EvalError(
-                    "append: list too long or circular".to_string(),
-                ));
+                return Err(signal_circular_list(LispObject::nil()));
             }
             items.push(car);
             cur = cdr;
@@ -179,9 +182,7 @@ pub fn prim_reverse(args: &LispObject) -> ElispResult<LispObject> {
     while let Some((car, cdr)) = current.destructure_cons() {
         steps += 1;
         if steps > MAX_LIST_WALK {
-            return Err(ElispError::EvalError(
-                "reverse: list too long or circular".to_string(),
-            ));
+            return Err(signal_circular_list(LispObject::nil()));
         }
         result = LispObject::cons(car, result);
         current = cdr;
@@ -197,9 +198,7 @@ pub fn prim_member(args: &LispObject) -> ElispResult<LispObject> {
     while let Some((car, cdr)) = current.destructure_cons() {
         steps += 1;
         if steps > MAX_LIST_WALK {
-            return Err(ElispError::EvalError(
-                "member: list too long or circular".to_string(),
-            ));
+            return Err(signal_circular_list(LispObject::nil()));
         }
         if obj == car {
             return Ok(current);
@@ -217,9 +216,7 @@ pub fn prim_assoc(args: &LispObject) -> ElispResult<LispObject> {
     while let Some((entry, rest)) = current.destructure_cons() {
         steps += 1;
         if steps > MAX_LIST_WALK {
-            return Err(ElispError::EvalError(
-                "assoc: list too long or circular".to_string(),
-            ));
+            return Err(signal_circular_list(LispObject::nil()));
         }
         if let Some((k, _)) = entry.destructure_cons()
             && key == k
@@ -313,9 +310,7 @@ pub fn prim_delq(args: &LispObject) -> ElispResult<LispObject> {
     while let Some((car, cdr)) = current.destructure_cons() {
         steps += 1;
         if steps > MAX_LIST_WALK {
-            return Err(ElispError::EvalError(
-                "delq: list too long or circular".to_string(),
-            ));
+            return Err(signal_circular_list(LispObject::nil()));
         }
         if !eq_test(&elt, &car) {
             result = LispObject::cons(car, result);
@@ -333,9 +328,7 @@ pub fn prim_memq(args: &LispObject) -> ElispResult<LispObject> {
     while let Some((car, cdr)) = current.destructure_cons() {
         steps += 1;
         if steps > MAX_LIST_WALK {
-            return Err(ElispError::EvalError(
-                "memq: list too long or circular".to_string(),
-            ));
+            return Err(signal_circular_list(LispObject::nil()));
         }
         if eq_test(&elt, &car) {
             return Ok(current);
@@ -353,9 +346,7 @@ pub fn prim_assq(args: &LispObject) -> ElispResult<LispObject> {
     while let Some((entry, rest)) = current.destructure_cons() {
         steps += 1;
         if steps > MAX_LIST_WALK {
-            return Err(ElispError::EvalError(
-                "assq: list too long or circular".to_string(),
-            ));
+            return Err(signal_circular_list(LispObject::nil()));
         }
         if let Some((k, _)) = entry.destructure_cons()
             && eq_test(&key, &k)
@@ -378,9 +369,7 @@ pub fn prim_last(args: &LispObject) -> ElispResult<LispObject> {
     while let Some((_, cdr)) = current.destructure_cons() {
         len += 1;
         if len as u64 > MAX_LIST_WALK {
-            return Err(ElispError::EvalError(
-                "last: list too long or circular".to_string(),
-            ));
+            return Err(signal_circular_list(LispObject::nil()));
         }
         current = cdr;
     }
@@ -409,9 +398,7 @@ pub fn prim_copy_sequence(args: &LispObject) -> ElispResult<LispObject> {
                     LispObject::Cons(ref cell) => {
                         steps += 1;
                         if steps > MAX_LIST_WALK {
-                            return Err(ElispError::EvalError(
-                                "copy-sequence: list appears to be circular".to_string(),
-                            ));
+                            return Err(signal_circular_list(LispObject::nil()));
                         }
                         let (car, cdr) = cell.lock().clone();
                         items.push(car);

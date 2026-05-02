@@ -285,8 +285,12 @@ pub struct BytecodeFunction {
     pub constants: Vec<LispObject>,
     /// Maximum operand stack depth
     pub maxdepth: usize,
-    /// Optional docstring
-    pub docstring: Option<String>,
+    /// Optional docstring. Held as a `LispObject` so we can faithfully
+    /// represent the `(file . offset)` cons used by `.elc` files for lazy
+    /// docstring loading; `aref` on slot 4 returns this verbatim. Boxed to
+    /// avoid making `BytecodeFunction` (and therefore `LispObject`)
+    /// recursive in size.
+    pub docstring: Option<Box<LispObject>>,
     /// Optional interactive spec
     pub interactive: Option<Box<LispObject>>,
 }
@@ -565,15 +569,40 @@ impl LispObject {
                 format!("\"{}\"", escaped)
             }
             LispObject::Cons(_) => {
+                // Floyd's tortoise/hare so a circular list (which is
+                // legal Lisp data, not just a bug) doesn't make us spin
+                // here. We don't yet emit `#1=...#1#` shared-structure
+                // notation; instead we cap the printout with `...` once
+                // we observe a cycle. That matches the `print-length`
+                // fallback Emacs uses when shared-structure printing
+                // is disabled.
                 let mut parts = Vec::new();
-                let mut current = self.clone();
-                while let Some((car, cdr)) = current.destructure_cons() {
+                let mut slow = self.clone();
+                let mut fast = self.clone();
+                let mut step = 0usize;
+                let final_tail = loop {
+                    let Some((car, cdr)) = fast.destructure_cons() else {
+                        break fast;
+                    };
                     parts.push(car.prin1_to_string());
-                    current = cdr;
-                }
-                if !current.is_nil() {
+                    fast = cdr;
+                    step += 1;
+                    if step.is_multiple_of(2) {
+                        slow = slow
+                            .destructure_cons()
+                            .map(|(_, c)| c)
+                            .unwrap_or_else(LispObject::nil);
+                        if let (LispObject::Cons(a), LispObject::Cons(b)) = (&slow, &fast)
+                            && std::sync::Arc::ptr_eq(a, b)
+                        {
+                            parts.push("...".to_string());
+                            break LispObject::nil();
+                        }
+                    }
+                };
+                if !final_tail.is_nil() {
                     parts.push(".".to_string());
-                    parts.push(current.prin1_to_string());
+                    parts.push(final_tail.prin1_to_string());
                 }
                 format!("({})", parts.join(" "))
             }

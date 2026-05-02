@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 pub type FeatureList = Arc<RwLock<Vec<String>>>;
 
-pub(crate) const MAX_EVAL_DEPTH: usize = 1000;
+pub(crate) const MAX_EVAL_DEPTH: usize = 50_000;
 
 thread_local! {
     pub(crate) static EVAL_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

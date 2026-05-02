@@ -272,6 +272,13 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
   val)
 (defun abbrev-table-get (table prop)
   (gethash prop table))
+(unless (fboundp 'named-let)
+  (defmacro named-let (name bindings &rest body)
+    (let ((args (mapcar (lambda (b) (if (consp b) (car b) b)) bindings))
+          (vals (mapcar (lambda (b) (if (consp b) (cadr b))) bindings)))
+      (list 'let (list (list name nil))
+            (list 'setq name (cons 'lambda (cons args body)))
+            (cons 'funcall (cons name vals))))))
 ";
     if let Ok(forms) = crate::read_all(extras) {
         interp.set_eval_ops_limit(200_000);

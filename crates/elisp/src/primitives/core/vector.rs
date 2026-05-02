@@ -88,6 +88,33 @@ pub fn prim_aref(args: &LispObject) -> ElispResult<LispObject> {
             let ch = s.chars().nth(idx as usize).unwrap_or('?');
             Ok(LispObject::integer(ch as i64))
         }
+        LispObject::BytecodeFn(bc) => {
+            // Slot layout matches Emacs: 0 argdesc, 1 bytecode, 2 constants,
+            // 3 maxdepth, 4 docstring, 5 interactive.
+            let idx = if idx < 0 { 6 + idx } else { idx };
+            match idx {
+                0 => Ok(LispObject::integer(bc.argdesc)),
+                1 => Ok(LispObject::string(
+                    &bc.bytecode.iter().map(|&b| char::from(b)).collect::<String>(),
+                )),
+                2 => Ok(LispObject::Vector(std::sync::Arc::new(
+                    crate::eval::SyncRefCell::new(bc.constants.clone()),
+                ))),
+                3 => Ok(LispObject::integer(bc.maxdepth as i64)),
+                4 => Ok(bc
+                    .docstring
+                    .as_deref()
+                    .cloned()
+                    .unwrap_or_else(LispObject::nil)),
+                5 => Ok(bc
+                    .interactive
+                    .as_ref()
+                    .map_or_else(LispObject::nil, |b| (**b).clone())),
+                _ => Err(ElispError::EvalError(
+                    "aref: index out of range".to_string(),
+                )),
+            }
+        }
         _ => Err(ElispError::WrongTypeArgument("array".to_string())),
     }
 }
