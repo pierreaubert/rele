@@ -3,6 +3,52 @@
 Append-only — newest entries at top. Each session: what changed, what
 landed, what to look at next.
 
+## 2026-05-02 - floatfns bignum expt/mod cleanup
+
+**Movement:**
+
+- ERT total: `903 pass / 121 fail / 25 err / 116 skip` (77%) →
+  `905 / 121 / 23 / 116` (77%). The leading `WRONG_TYPE_INTEGER`
+  bucket disappeared.
+- `floatfns-tests.el`: `28 pass / 2 fail / 3 err` →
+  `30 pass / 2 fail / 1 err`. Fixed `bignum-expt` and `bignum-mod`;
+  remaining failures are `floatfns-tests-log`, `bignum-to-float`, and
+  `big-round`.
+- Source-derived stub inventory remains `414` records.
+
+**Code landed:**
+
+- `mod` now matches Emacs's mixed numeric behavior: exact integer args
+  keep exact modulo semantics and integer zero divisor still signals,
+  while float/mixed args return a float using `x - y * floor(x / y)`.
+  This fixes `(mod (1+ most-positive-fixnum) 2.0)`.
+- `expt` now routes all non-negative integer exponents through the exact
+  integer path, including bignum exponents. Huge exponent special bases
+  `0`, `1`, and `-1` are answered directly before any bounded `u32`
+  exponent conversion, so `(expt 0 most-positive-fixnum)`,
+  `(expt 1 most-positive-fixnum)`, and parity-sensitive `-1` cases no
+  longer signal.
+
+**Verification:**
+
+- `cargo test -p rele-elisp primitives::core::math::tests` passes.
+- Focused ERT worker run for `floatfns-tests.el`: `30 pass / 2 fail /
+  1 err`.
+- Full `./ert-progress/refresh.sh` completed with `905 / 121 / 23 /
+  116`.
+- Full `cargo test -p rele-elisp` currently fails in the unrelated,
+  deterministic `reader_edges::test_char_named_unicode_unknown_yields_null`
+  test (`invalid unicode name: SOME UNKNOWN CHARACTER NAME`).
+
+**Open follow-ups:**
+
+- Next leverage target is no longer floatfns; current top buckets are
+  casefiddle `WRONG_TYPE_STRING`, charset priority/equivalence asserts,
+  keymap menu/vector normalization, marker/window-buffer semantics, SQLite
+  BLOB multibyte handling, and textprop `WRONG_N_ARGS`.
+- Floatfns residuals: exact `log` comparison, `bignum-to-float`
+  floor/eql rounding, and `big-round` non-finite handling.
+
 ## 2026-05-01 - Tier 1+4: regression cleanup + crypto/xml/sqlite deps
 
 **Movement:**

@@ -448,17 +448,20 @@ pub fn prim_rem(args: &LispObject) -> ElispResult<LispObject> {
 pub fn prim_mod(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let b = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-    let (Some(na), Some(nb)) = (get_integer(&a), get_integer(&b)) else {
-        return Err(ElispError::WrongTypeArgument("integer".to_string()));
-    };
-    if nb.is_zero() {
-        return Err(ElispError::DivisionByZero);
+    if let (Some(na), Some(nb)) = (get_integer(&a), get_integer(&b)) {
+        if nb.is_zero() {
+            return Err(ElispError::DivisionByZero);
+        }
+        let mut r = na % nb.clone();
+        if !r.is_zero() && r.sign() != nb.sign() {
+            r += nb;
+        }
+        return Ok(normalize_integer(r));
     }
-    let mut r = na % nb.clone();
-    if !r.is_zero() && r.sign() != nb.sign() {
-        r += nb;
-    }
-    Ok(normalize_integer(r))
+
+    let na = number_as_f64(&a)?;
+    let nb = number_as_f64(&b)?;
+    Ok(LispObject::float(na - nb * (na / nb).floor()))
 }
 
 pub fn prim_abs(args: &LispObject) -> ElispResult<LispObject> {
@@ -938,20 +941,41 @@ fn prim_log(args: &LispObject) -> ElispResult<LispObject> {
 fn prim_expt(args: &LispObject) -> ElispResult<LispObject> {
     let a = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let b = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
-    match (&a, &b) {
-        (_, LispObject::Integer(exp)) if is_integer_or_marker(&a) && *exp >= 0 => {
-            let exp = u32::try_from(*exp)
-                .map_err(|_| ElispError::WrongTypeArgument("integer".to_string()))?;
-            Ok(normalize_integer(get_integer(&a).unwrap().pow(exp)))
-        }
-        _ => {
-            let base = get_number(&a)
-                .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?;
-            let exp = get_number(&b)
-                .ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?;
-            Ok(LispObject::float(base.powf(exp)))
-        }
+    if let (Some(base), Some(exp)) = (get_integer(&a), get_integer(&b))
+        && !exp.is_negative()
+    {
+        return integer_expt(base, &exp);
     }
+
+    let base = get_number(&a).ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?;
+    let exp = get_number(&b).ok_or_else(|| ElispError::WrongTypeArgument("number".to_string()))?;
+    Ok(LispObject::float(base.powf(exp)))
+}
+
+fn integer_expt(base: BigInt, exp: &BigInt) -> ElispResult<LispObject> {
+    if exp.is_zero() {
+        return Ok(LispObject::integer(1));
+    }
+    if base.is_zero() {
+        return Ok(LispObject::integer(0));
+    }
+    if base.is_one() {
+        return Ok(LispObject::integer(1));
+    }
+
+    let minus_one = -BigInt::one();
+    if base == minus_one {
+        return Ok(if (exp % BigInt::from(2)).is_zero() {
+            LispObject::integer(1)
+        } else {
+            LispObject::integer(-1)
+        });
+    }
+
+    let exp = exp
+        .to_u32()
+        .ok_or_else(|| ElispError::EvalError("exponent too large".into()))?;
+    Ok(normalize_integer(base.pow(exp)))
 }
 
 #[cfg(test)]
@@ -1083,6 +1107,46 @@ mod tests {
             .unwrap()
             .as_integer(),
             Some(0),
+        );
+    }
+
+    #[test]
+    fn mod_accepts_float_divisor() {
+        let bignum = LispObject::BigInt(BigInt::from(FIXNUM_MAX) + BigInt::one());
+        assert_eq!(
+            prim_mod(&list2(bignum, LispObject::float(2.0)))
+                .unwrap()
+                .as_float(),
+            Some(0.0),
+        );
+        assert_eq!(
+            prim_mod(&list2(LispObject::float(-7.5), LispObject::integer(2)))
+                .unwrap()
+                .as_float(),
+            Some(0.5),
+        );
+    }
+
+    #[test]
+    fn expt_handles_huge_exponents_for_special_integer_bases() {
+        let huge_fixnum = LispObject::integer(FIXNUM_MAX);
+        assert_eq!(
+            prim_expt(&list2(LispObject::integer(0), huge_fixnum.clone())).unwrap(),
+            LispObject::integer(0),
+        );
+        assert_eq!(
+            prim_expt(&list2(LispObject::integer(1), huge_fixnum.clone())).unwrap(),
+            LispObject::integer(1),
+        );
+        assert_eq!(
+            prim_expt(&list2(LispObject::integer(-1), huge_fixnum)).unwrap(),
+            LispObject::integer(-1),
+        );
+
+        let even_bignum = LispObject::BigInt(BigInt::from(FIXNUM_MAX) + BigInt::one());
+        assert_eq!(
+            prim_expt(&list2(LispObject::integer(-1), even_bignum)).unwrap(),
+            LispObject::integer(1),
         );
     }
 }

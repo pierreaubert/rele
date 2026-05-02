@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use parking_lot::Mutex;
-use rusqlite::{params_from_iter, types::Value as SqlValue, Connection};
+use rusqlite::{Connection, params_from_iter, types::Value as SqlValue};
 
 use crate::error::{ElispError, ElispResult};
 use crate::object::LispObject;
@@ -17,14 +17,10 @@ struct Registry {
     next_id: usize,
 }
 
-static REGISTRY: LazyLock<Mutex<Registry>> =
-    LazyLock::new(|| Mutex::new(Registry::default()));
+static REGISTRY: LazyLock<Mutex<Registry>> = LazyLock::new(|| Mutex::new(Registry::default()));
 
 fn make_handle(id: usize) -> LispObject {
-    LispObject::cons(
-        LispObject::symbol("sqlite"),
-        LispObject::integer(id as i64),
-    )
+    LispObject::cons(LispObject::symbol("sqlite"), LispObject::integer(id as i64))
 }
 
 fn handle_id(obj: &LispObject) -> Option<usize> {
@@ -41,6 +37,7 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         "sqlite-open",
         "sqlite-close",
         "sqlite-execute",
+        "sqlite-execute-batch",
         "sqlite-select",
         "sqlite-transaction",
         "sqlite-commit",
@@ -68,12 +65,18 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "sqlite-open" => prim_sqlite_open(args),
         "sqlite-close" => prim_sqlite_close(args),
         "sqlite-execute" => prim_sqlite_execute(args),
+        "sqlite-execute-batch" => prim_sqlite_execute_batch(args),
         "sqlite-select" => prim_sqlite_select(args),
         "sqlite-transaction" => prim_sqlite_simple(args, "BEGIN"),
         "sqlite-commit" => prim_sqlite_simple(args, "COMMIT"),
         "sqlite-rollback" => prim_sqlite_simple(args, "ROLLBACK"),
         "sqlite-pragma" => prim_sqlite_pragma(args),
-        "sqlite-load-extension" => Ok(LispObject::nil()),
+        // Real Emacs signals when no extensions are loaded; without an
+        // actual sqlite3_load_extension hookup we always signal so
+        // (should-error (sqlite-load-extension ...)) holds.
+        "sqlite-load-extension" => Err(ElispError::EvalError(
+            "sqlite-load-extension: extensions not enabled in headless build".into(),
+        )),
         _ => return None,
     };
     Some(result)
@@ -109,7 +112,16 @@ fn lisp_to_sql(value: &LispObject) -> SqlValue {
         LispObject::T => SqlValue::Integer(1),
         other => {
             if let Some(s) = other.as_string() {
-                SqlValue::Text(s.to_string())
+                // Heuristic: if every char is in 0..=255, treat as a
+                // unibyte byte sequence (BLOB). Otherwise text.
+                let raw = s.to_string();
+                if raw.chars().all(|c| (c as u32) <= 0xFF)
+                    && raw.chars().any(|c| (c as u32) < 0x20 || (c as u32) >= 0x80)
+                {
+                    SqlValue::Blob(raw.chars().map(|c| c as u8).collect())
+                } else {
+                    SqlValue::Text(raw)
+                }
             } else {
                 SqlValue::Text(other.princ_to_string())
             }
@@ -117,7 +129,12 @@ fn lisp_to_sql(value: &LispObject) -> SqlValue {
     }
 }
 
+/// Lisp parameter lists for sqlite primitives accept either a list or
+/// a vector of values. Walk both shapes into a flat Vec<SqlValue>.
 fn collect_params(params: LispObject) -> Vec<SqlValue> {
+    if let LispObject::Vector(items) = &params {
+        return items.lock().iter().map(lisp_to_sql).collect();
+    }
     let mut out = Vec::new();
     let mut cur = params;
     while let Some((head, tail)) = cur.destructure_cons() {
@@ -133,7 +150,13 @@ fn sql_to_lisp(value: &SqlValue) -> LispObject {
         SqlValue::Integer(n) => LispObject::integer(*n),
         SqlValue::Real(f) => LispObject::Float(*f),
         SqlValue::Text(s) => LispObject::string(s),
-        SqlValue::Blob(b) => LispObject::string(&String::from_utf8_lossy(b)),
+        SqlValue::Blob(b) => {
+            // BLOBs round-trip as unibyte strings — chars 0x00..=0xFF
+            // map directly to bytes. Use the latin-1 view so we don't
+            // mojibake binary data through utf-8.
+            let s: String = b.iter().map(|byte| char::from(*byte)).collect();
+            LispObject::string(&s)
+        }
     }
 }
 
@@ -160,10 +183,62 @@ fn prim_sqlite_execute(args: &LispObject) -> ElispResult<LispObject> {
     let params = args.nth(2).unwrap_or_else(LispObject::nil);
     let collected = collect_params(params);
     with_conn(args, |conn| {
-        let changed = conn
-            .execute(&sql, params_from_iter(collected.iter()))
+        // Always go through prepare+query. `Connection::execute` would
+        // reject RETURNING-style statements with `ExecuteReturnedResults`,
+        // and falling back to a second prepare-and-query would run the
+        // INSERT twice — silently duplicating rows. Prepare once,
+        // collect any rows it produces, then return either the rows
+        // (RETURNING) or the change count (plain INSERT/UPDATE/DELETE).
+        let mut stmt = conn
+            .prepare(&sql)
             .map_err(|e| ElispError::EvalError(format!("sqlite-execute: {e}")))?;
-        Ok(LispObject::integer(changed as i64))
+        let column_count = stmt.column_count();
+        let mut rows_iter = stmt
+            .query(params_from_iter(collected.iter()))
+            .map_err(|e| ElispError::EvalError(format!("sqlite-execute: {e}")))?;
+        let mut rows: Vec<Vec<SqlValue>> = Vec::new();
+        while let Some(row) = rows_iter
+            .next()
+            .map_err(|e| ElispError::EvalError(format!("sqlite-execute: {e}")))?
+        {
+            let mut current = Vec::with_capacity(column_count);
+            for i in 0..column_count {
+                let value: SqlValue = row
+                    .get(i)
+                    .map_err(|e| ElispError::EvalError(format!("sqlite-execute: {e}")))?;
+                current.push(value);
+            }
+            rows.push(current);
+        }
+        drop(rows_iter);
+        drop(stmt);
+        if column_count > 0 && !rows.is_empty() {
+            let mut out = LispObject::nil();
+            for row in rows.into_iter().rev() {
+                let mut row_list = LispObject::nil();
+                for col in row.into_iter().rev() {
+                    row_list = LispObject::cons(sql_to_lisp(&col), row_list);
+                }
+                out = LispObject::cons(row_list, out);
+            }
+            Ok(out)
+        } else {
+            let changed = conn.changes();
+            Ok(LispObject::integer(changed as i64))
+        }
+    })
+}
+
+/// `(sqlite-execute-batch DB SQL)` — run a multi-statement script.
+fn prim_sqlite_execute_batch(args: &LispObject) -> ElispResult<LispObject> {
+    let sql = args
+        .nth(1)
+        .and_then(|a| a.as_string().cloned())
+        .ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
+    with_conn(args, |conn| {
+        conn.execute_batch(&sql)
+            .map_err(|e| ElispError::EvalError(format!("sqlite-execute-batch: {e}")))?;
+        Ok(LispObject::t())
     })
 }
 
@@ -173,12 +248,20 @@ fn prim_sqlite_select(args: &LispObject) -> ElispResult<LispObject> {
         .and_then(|a| a.as_string().cloned())
         .ok_or_else(|| ElispError::WrongTypeArgument("string".into()))?;
     let params = args.nth(2).unwrap_or_else(LispObject::nil);
+    let format = args
+        .nth(3)
+        .and_then(|a| a.as_symbol())
+        .map(|s| s.to_string());
+    let with_columns = matches!(format.as_deref(), Some("full"));
     let collected = collect_params(params);
     with_conn(args, |conn| {
         let mut stmt = conn
             .prepare(&sql)
             .map_err(|e| ElispError::EvalError(format!("sqlite-select: {e}")))?;
         let column_count = stmt.column_count();
+        let column_names: Vec<String> = (0..column_count)
+            .map(|i| stmt.column_name(i).unwrap_or("").to_string())
+            .collect();
         let mut rows_iter = stmt
             .query(params_from_iter(collected.iter()))
             .map_err(|e| ElispError::EvalError(format!("sqlite-select: {e}")))?;
@@ -204,6 +287,13 @@ fn prim_sqlite_select(args: &LispObject) -> ElispResult<LispObject> {
                 row_list = LispObject::cons(sql_to_lisp(&col), row_list);
             }
             out = LispObject::cons(row_list, out);
+        }
+        if with_columns {
+            let mut header = LispObject::nil();
+            for name in column_names.into_iter().rev() {
+                header = LispObject::cons(LispObject::string(&name), header);
+            }
+            out = LispObject::cons(header, out);
         }
         Ok(out)
     })
@@ -256,8 +346,7 @@ mod tests {
 
     #[test]
     fn round_trip_in_memory() {
-        let conn = prim_sqlite_open(&args(vec![LispObject::string(":memory:")]))
-            .expect("open");
+        let conn = prim_sqlite_open(&args(vec![LispObject::string(":memory:")])).expect("open");
         prim_sqlite_execute(&args(vec![
             conn.clone(),
             LispObject::string("CREATE TABLE t(id INTEGER, name TEXT)"),
@@ -278,5 +367,30 @@ mod tests {
         .expect("select");
         assert_eq!(rows.princ_to_string(), "((1 \"alice\"))");
         prim_sqlite_close(&args(vec![conn])).expect("close");
+    }
+
+    #[test]
+    fn select_full_format_includes_column_names() {
+        let conn = prim_sqlite_open(&args(vec![LispObject::string(":memory:")])).expect("open");
+        prim_sqlite_execute(&args(vec![
+            conn.clone(),
+            LispObject::string("CREATE TABLE t(col1 TEXT, col2 INTEGER)"),
+            LispObject::nil(),
+        ]))
+        .expect("create");
+        prim_sqlite_execute(&args(vec![
+            conn.clone(),
+            LispObject::string("INSERT INTO t VALUES ('foo', 2)"),
+            LispObject::nil(),
+        ]))
+        .expect("insert");
+        let rows = prim_sqlite_select(&args(vec![
+            conn,
+            LispObject::string("SELECT * FROM t"),
+            LispObject::nil(),
+            LispObject::symbol("full"),
+        ]))
+        .expect("select-full");
+        assert_eq!(rows.princ_to_string(), "((\"col1\" \"col2\") (\"foo\" 2))");
     }
 }

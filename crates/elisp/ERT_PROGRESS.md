@@ -29,8 +29,8 @@ that a single fix will close.
 
 ## Per-file snapshot
 
-Last refreshed: **2026-05-01** (post Tier 1+4), target: `ert-progress/tractable.list`.
-Current total: **898 pass / 124 fail / 27 err / 116 skip** (`77%`).
+Last refreshed: **2026-05-02** (post bignum numeric edge cases), target: `ert-progress/tractable.list`.
+Current total: **905 pass / 121 fail / 23 err / 116 skip** (`77%`).
 
 | File                       | Pass | Fail | Err | Skip | Pct  | Notes |
 |----------------------------|-----:|-----:|----:|-----:|-----:|-------|
@@ -49,7 +49,7 @@ Current total: **898 pass / 124 fail / 27 err / 116 skip** (`77%`).
 | doc-tests.el               |    2 |    3 |   0 |    0 |  40% | documentation semantics need follow-up |
 | editfns-tests.el           |   37 |   17 |   3 |    0 |  65% | text-property pass landed |
 | eval-tests.el              |    ? |    ? |   ? |    ? |    ? | no results emitted in last sweep |
-| floatfns-tests.el          |   28 |    2 |   3 |    0 |  85% | bignum edge cases |
+| floatfns-tests.el          |   30 |    2 |   1 |    0 |  91% | bignum expt/mod fixed; float precision/huge-round remain |
 | font-tests.el              |    2 |    0 |   0 |    0 | 100% | headless font parsing complete |
 | image-tests.el             |    3 |    0 |   0 |    2 |  60% | |
 | indent-tests.el            |    0 |    3 |   0 |    0 |   0% | |
@@ -64,7 +64,7 @@ Current total: **898 pass / 124 fail / 27 err / 116 skip** (`77%`).
 | process-tests.el           |   12 |    0 |   0 |   27 |  31% | supportable headless cases pass |
 | profiler-tests.el          |    0 |    0 |   1 |    1 |   0% | |
 | search-tests.el            |    0 |    1 |   0 |    0 |   0% | |
-| sqlite-tests.el            |    3 |    6 |   3 |    0 |  25% | rusqlite (bundled) backend |
+| sqlite-tests.el            |    8 |    3 |   1 |    0 |  67% | rusqlite backend; BLOB/multibyte semantics remain |
 | syntax-tests.el            |   98 |    0 |   2 |    0 |  98% | char-syntax edge cases |
 | terminal-tests.el          |    1 |    0 |   0 |    0 | 100% | |
 | textprop-tests.el          |    1 |    1 |   1 |    0 |  33% | font-lock removes face hit WRONG_N_ARGS once real text-prop primitives ran |
@@ -75,7 +75,7 @@ Current total: **898 pass / 124 fail / 27 err / 116 skip** (`77%`).
 | xfaces-tests.el            |    2 |    1 |   0 |    0 |  67% | faces |
 | xml-tests.el               |    0 |    1 |   0 |    0 |   0% | needs libxml |
 
-## Top leverage targets (2026-05-01)
+## Top leverage targets (2026-05-02)
 
 These are the failure patterns ranked by impact. A single fix at any of
 these unblocks the listed count of tests at once. Verify the count is still
@@ -83,22 +83,23 @@ current by running `./ert-progress/refresh.sh` before tackling.
 
 | Tests | Pattern | Likely cause |
 |------:|---------|--------------|
-|  3 | `WRONG_TYPE_INTEGER` in floatfns-tests.el | bignum numeric edge cases |
 |  2 | `WRONG_TYPE_STRING` in casefiddle tests | string-vs-char validation |
 |  2 | `ASSERT: symbolp highest` in charset-tests.el | charset priority-list shape |
 |  2 | `ASSERT: iso-charset ascii` in charset-tests.el | charset equivalence/declaration model |
 |  2 | `ASSERT: keymap make-keymap` in keymap-tests.el | menu-vector table shape |
 |  2 | `ASSERT: keymap lookup mixed case` in keymap-tests.el | menu-vector and key normalization |
+|  2 | `ASSERT: keymap lookup mixed case multibyte` in keymap-tests.el | menu-vector and multibyte key normalization |
 |  2 | `ASSERT: keymap help describe-vector` in keymap-tests.el | shadow range description formatting |
 |  2 | `ASSERT: marker-buffer m` in marker-tests.el | marker buffer/window semantics |
 |  2 | `ASSERT: marker-set-window-start-from-other-buffer` | marker/window-buffer interplay |
+|  2 | `ASSERT: multibyte-string-p string` in sqlite-tests.el | SQLite BLOB/string encoding |
 |  2 | `WRONG_N_ARGS` in textprop-tests.el | font-lock-prepend / remove-face calling pattern (revealed once real text-prop primitives ran) |
 
-## Runtime stub hits (2026-05-01)
+## Runtime stub hits (2026-05-02)
 
 `refresh.sh` records stub/no-op primitive calls per ERT test and ranks them
 by failing/erroring tests affected. The source-derived inventory currently
-classifies `424` records (down from `778` before this session) — the
+classifies `414` records (down from `778` before this session) — the
 catch-all `other` bucket dropped from `632` to `~228`, and 14 dedicated
 modules under `crates/elisp/src/primitives/core/` now host
 markers / text-props / words / sexp / json / base64 / coding / abbrevs /
@@ -111,9 +112,8 @@ Top runtime stub hits from the latest full refresh:
 |----------:|-----:|--------|------|---------|
 | 1 | 6 | other | `text-char-description` | `keymap-tests.el::keymap-text-char-description` |
 | 1 | 2 | other | `lossage-size` | `keyboard-tests.el::keyboard-lossage-size` |
-| 1 | 1 | other | `libxml-parse-xml-region` | `xml-tests.el::libxml-tests` |
 | 1 | 1 | other | `get-load-suffixes` | `lread-tests.el::lread-tests--get-load-suffixes` |
-| 1 | 1 | unknown | `find-operation-coding-system` | `coding-tests.el::coding-tests--find-operation-coding-system` |
+| 1 | 1 | unknown | `find-operation-coding-system->ignore` | `coding-tests.el::coding-tests--find-operation-coding-system` |
 
 The `text-char-description` hit is interesting: the source-derived
 inventory thinks it's still a stub, but the primitive itself was

@@ -665,6 +665,17 @@ pub fn prim_type_of(args: &LispObject) -> ElispResult<LispObject> {
             return Ok(LispObject::symbol(&sym));
         }
     }
+    // Tagged cons cells used as opaque handles. Each tag is the type
+    // name `(sqlite . id)`, `(buffer . id)`, etc.
+    if let Some((car, _)) = arg.destructure_cons()
+        && let Some(tag) = car.as_symbol()
+        && matches!(
+            tag.as_str(),
+            "sqlite" | "sqlite-set" | "buffer" | "marker" | "abbrev-table"
+        )
+    {
+        return Ok(LispObject::symbol(&tag));
+    }
     let type_name = match &arg {
         LispObject::Nil => "symbol",
         LispObject::T => "symbol",
