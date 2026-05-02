@@ -890,7 +890,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("defvar-local", LispObject::primitive("ignore"));
     interp.define(
         "internal-make-var-non-special",
-        LispObject::primitive("ignore"),
+        LispObject::primitive("internal-make-var-non-special"),
     );
     interp.define("minibufferp", LispObject::primitive("ignore"));
     interp.define(
@@ -1393,7 +1393,7 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("find-function-space-re", LispObject::string(""));
     interp.define("ert-results-mode-map", LispObject::nil());
     interp.define("auto-save-timeout", LispObject::integer(30));
-    interp.define("commandp", LispObject::primitive("ignore"));
+    interp.define("commandp", LispObject::primitive("commandp"));
     let _ = interp
         .eval_source(
             "(defun cl--struct-new-class (name docstring parents type named slots index-table children-sym tag print) \

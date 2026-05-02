@@ -297,7 +297,6 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     let alias_to_ignore = [
         "file-name-case-insensitive-p",
         "variable-binding-locus",
-        "interactive-form",
         "native-comp-unit-file",
         "native-comp-unit-set-file",
         "subr-native-comp-unit",
@@ -317,6 +316,10 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
     for name in alias_to_ignore {
         interp.define(name, LispObject::primitive("ignore"));
     }
+    interp.define(
+        "interactive-form",
+        LispObject::primitive("interactive-form"),
+    );
     interp.define("unify-charset", LispObject::primitive("unify-charset"));
     interp.define(
         "find-file-name-handler",
@@ -411,6 +414,19 @@ pub fn add_primitives(interp: &mut crate::eval::Interpreter) {
         LispObject::primitive("def-edebug-elem-spec"),
     );
     interp.define("defvar-1", LispObject::primitive("defvar-1"));
+    interp.define("defconst-1", LispObject::primitive("defconst-1"));
+    interp.define(
+        "internal--define-uninitialized-variable",
+        LispObject::primitive("internal--define-uninitialized-variable"),
+    );
+    interp.define(
+        "internal-delete-indirect-variable",
+        LispObject::primitive("internal-delete-indirect-variable"),
+    );
+    interp.define(
+        "make-interpreted-closure",
+        LispObject::primitive("make-interpreted-closure"),
+    );
     interp.define(
         "cl-generic-generalizers",
         LispObject::primitive("cl-generic-generalizers"),

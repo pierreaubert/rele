@@ -2,7 +2,7 @@
 
 use super::SyncRefCell as RwLock;
 use crate::EditorCallbacks;
-use crate::error::{ElispError, ElispResult};
+use crate::error::{ElispError, ElispResult, SignalData};
 use crate::object::LispObject;
 use crate::value::{Value, obj_to_value, value_to_obj};
 use std::collections::HashSet;
@@ -14,6 +14,32 @@ use super::functions::{
 };
 use super::{Environment, InterpreterState, Macro, MacroTable, eval};
 
+/// Validate the argument list of a binding/clause-style special form
+/// (let, let*, cond): must be nil or a proper-ish cons list, and must
+/// not be circular. A non-list (integer, string, vector) signals
+/// wrong-type-argument; a self-referential cdr signals circular-list.
+/// Without this, a non-list silently no-ops and a circular list loops
+/// the binder forever in Rust, bypassing the eval-ops watchdog.
+fn ensure_acyclic_arg_list(list: &LispObject) -> ElispResult<()> {
+    if !list.is_nil() && !matches!(list, LispObject::Cons(_)) {
+        return Err(ElispError::WrongTypeArgument("listp".to_string()));
+    }
+    const LIMIT: u64 = 1 << 20;
+    let mut current = list.clone();
+    let mut count: u64 = 0;
+    while let Some((_, rest)) = current.destructure_cons() {
+        count += 1;
+        if count > LIMIT {
+            return Err(ElispError::Signal(Box::new(SignalData {
+                symbol: LispObject::symbol("circular-list"),
+                data: LispObject::cons(LispObject::string("circular list"), LispObject::nil()),
+            })));
+        }
+        current = rest;
+    }
+    Ok(())
+}
+
 pub(super) fn eval_if(
     args: Value,
     env: &Arc<RwLock<Environment>>,
@@ -22,6 +48,9 @@ pub(super) fn eval_if(
     state: &InterpreterState,
 ) -> ElispResult<Value> {
     let args_obj = value_to_obj(args);
+    if !args_obj.is_nil() && !matches!(args_obj, LispObject::Cons(_)) {
+        return Err(ElispError::WrongTypeArgument("listp".to_string()));
+    }
     let cond = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let then_branch = args_obj.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
 
@@ -559,6 +588,8 @@ pub(super) fn eval_let(
     let bindings = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let body = args_obj.rest().ok_or(ElispError::WrongNumberOfArguments)?;
 
+    ensure_acyclic_arg_list(&bindings)?;
+
     let parent_env = Arc::new(env.read().clone());
     let new_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));
 
@@ -772,6 +803,7 @@ pub(super) fn eval_cond(
     state: &InterpreterState,
 ) -> ElispResult<Value> {
     let clauses_obj = value_to_obj(clauses);
+    ensure_acyclic_arg_list(&clauses_obj)?;
     let mut current = Some(clauses_obj);
     while let Some(curr) = current {
         if let Some((clause, rest)) = curr.destructure_cons() {
@@ -838,6 +870,8 @@ pub(super) fn eval_let_star(
     let args_obj = value_to_obj(args);
     let bindings = args_obj.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let body = args_obj.rest().ok_or(ElispError::WrongNumberOfArguments)?;
+
+    ensure_acyclic_arg_list(&bindings)?;
 
     let parent_env = Arc::new(env.read().clone());
     let new_env = Arc::new(RwLock::new(Environment::with_parent(parent_env)));

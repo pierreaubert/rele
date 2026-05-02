@@ -13,10 +13,13 @@ use std::sync::Arc;
 use super::functions_2::{
     stateful_add_hook, stateful_add_to_list, stateful_advice_add, stateful_advice_remove,
     stateful_apply, stateful_cl_generic_define, stateful_cl_generic_define_method,
-    stateful_cl_generic_generalizers, stateful_def_edebug_elem_spec, stateful_defvar_1,
-    stateful_eval, stateful_featurep, stateful_funcall, stateful_function_get,
-    stateful_function_put, stateful_get, stateful_provide, stateful_put, stateful_remove_hook,
-    stateful_require, stateful_run_hook_with_args, stateful_run_hook_with_args_until_failure,
+    stateful_cl_generic_generalizers, stateful_def_edebug_elem_spec, stateful_defconst_1,
+    stateful_defvar_1, stateful_eval, stateful_featurep, stateful_funcall,
+    stateful_function_get, stateful_function_put, stateful_get,
+    stateful_internal_define_uninitialized_variable,
+    stateful_internal_delete_indirect_variable, stateful_internal_make_var_non_special,
+    stateful_make_interpreted_closure, stateful_provide, stateful_put, stateful_remove_hook, stateful_require,
+    stateful_run_hook_with_args, stateful_run_hook_with_args_until_failure,
     stateful_run_hook_with_args_until_success, stateful_run_hook_wrapped, stateful_run_hooks,
     stateful_setplist, symbol_id_including_constants, symbol_name_including_constants,
 };
@@ -67,6 +70,17 @@ pub(crate) fn call_stateful_primitive(
         "setplist" => Some(stateful_setplist(args, state)),
         "def-edebug-elem-spec" => Some(stateful_def_edebug_elem_spec(args, state)),
         "defvar-1" => Some(stateful_defvar_1(args, env, state)),
+        "defconst-1" => Some(stateful_defconst_1(args, env, state)),
+        "internal--define-uninitialized-variable" => {
+            Some(stateful_internal_define_uninitialized_variable(args, state))
+        }
+        "internal-make-var-non-special" => {
+            Some(stateful_internal_make_var_non_special(args, state))
+        }
+        "internal-delete-indirect-variable" => {
+            Some(stateful_internal_delete_indirect_variable(args, state))
+        }
+        "make-interpreted-closure" => Some(stateful_make_interpreted_closure(args)),
         "cl-generic-generalizers" => Some(stateful_cl_generic_generalizers(args, state)),
         "cl-generic-define" => Some(stateful_cl_generic_define(args)),
         "cl-generic-define-method" => Some(stateful_cl_generic_define_method(args, state)),

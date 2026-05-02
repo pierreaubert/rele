@@ -606,6 +606,20 @@ impl Reader {
                 self.advance(); // consume second '#'
                 Ok(LispObject::symbol(""))
             }
+            '_' => {
+                // `#_` alone — same interned empty-name symbol as `##`.
+                // (`#_NAME` is the uninterned-symbol syntax in Emacs; we
+                // intern in both cases since we don't track interned vs
+                // uninterned, and the test compares via `equal`.)
+                self.advance(); // consume '_'
+                if let Some(c) = self.peek()
+                    && !Self::is_delimiter(c)
+                {
+                    self.advance();
+                    return self.read_symbol(c);
+                }
+                Ok(LispObject::symbol(""))
+            }
             's' => {
                 self.advance();
                 // #s(TYPE ...) — record/struct literal.
@@ -781,14 +795,6 @@ impl Reader {
                         "unexpected end of input after #{n}"
                     ))),
                 }
-            }
-            '_' => {
-                // #_ — read and discard the next sexp (comment syntax).
-                self.advance(); // consume '_'
-                let _discarded = self.read()?;
-                // Return the NEXT form instead — the discarded one is gone.
-                self.skip_whitespace();
-                self.read()
             }
             _ => Err(ElispError::ReaderError(format!(
                 "unknown # dispatch: #{}",

@@ -5313,6 +5313,34 @@ pub(super) fn eval_inner(
                     let base_id = base
                         .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+                    let alias_key = crate::obarray::intern("variable-alias");
+                    {
+                        // Reject cycles: if following BASE's alias chain
+                        // ever reaches ALIAS, we'd create one. Bounded
+                        // walk in case the existing chain is already
+                        // malformed.
+                        let mut current = base_id;
+                        for _ in 0..64 {
+                            if current == alias_id {
+                                return Err(ElispError::Signal(Box::new(
+                                    crate::error::SignalData {
+                                        symbol: LispObject::symbol(
+                                            "cyclic-variable-indirection",
+                                        ),
+                                        data: LispObject::cons(
+                                            LispObject::Symbol(alias_id),
+                                            LispObject::nil(),
+                                        ),
+                                    },
+                                )));
+                            }
+                            let next = state.get_plist(current, alias_key);
+                            match next.as_symbol_id() {
+                                Some(n) if n != current => current = n,
+                                _ => break,
+                            }
+                        }
+                    }
                     deliver_variable_watchers(
                         alias_id,
                         &LispObject::Symbol(base_id),
@@ -5324,7 +5352,6 @@ pub(super) fn eval_inner(
                     )?;
                     let watcher_key = crate::obarray::intern("variable-watchers");
                     state.put_plist(alias_id, watcher_key, LispObject::nil());
-                    let alias_key = crate::obarray::intern("variable-alias");
                     state.put_plist(alias_id, alias_key, LispObject::Symbol(base_id));
                     Ok(obj_to_value(LispObject::Symbol(alias_id)))
                 }

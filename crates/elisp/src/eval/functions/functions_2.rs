@@ -296,6 +296,105 @@ pub(super) fn stateful_defvar_1(
     }
     Ok(LispObject::Symbol(sym))
 }
+
+pub(super) fn stateful_defconst_1(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let sym = args
+        .first()
+        .and_then(|a| a.as_symbol_id())
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let value = args.nth(1).unwrap_or_else(LispObject::nil);
+    state.special_vars.write().insert(sym);
+    env.write().define_id(sym, value.clone());
+    state.set_value_cell(sym, value);
+    if let Some(doc) = args.nth(2) {
+        let key = crate::obarray::intern("variable-documentation");
+        state.put_plist(sym, key, doc);
+    }
+    state.put_plist(
+        sym,
+        crate::obarray::intern("risky-local-variable"),
+        LispObject::t(),
+    );
+    Ok(LispObject::Symbol(sym))
+}
+
+pub(super) fn stateful_internal_define_uninitialized_variable(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let sym = args
+        .first()
+        .and_then(|a| a.as_symbol_id())
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    state.special_vars.write().insert(sym);
+    if let Some(doc) = args.nth(1) {
+        let key = crate::obarray::intern("variable-documentation");
+        state.put_plist(sym, key, doc);
+    }
+    Ok(LispObject::Symbol(sym))
+}
+
+pub(super) fn stateful_internal_make_var_non_special(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let sym = args
+        .first()
+        .and_then(|a| a.as_symbol_id())
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    state.special_vars.write().remove(&sym);
+    Ok(LispObject::nil())
+}
+
+/// `(internal-delete-indirect-variable SYM)` — undo a `defvaralias` on
+/// SYM. Removes the `variable-alias` plist entry and the
+/// `variable-documentation`. Signals if SYM is not currently aliased.
+pub(super) fn stateful_internal_delete_indirect_variable(
+    args: &LispObject,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let sym = args
+        .first()
+        .and_then(|a| a.as_symbol_id())
+        .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
+    let alias_key = crate::obarray::intern("variable-alias");
+    let current = state.get_plist(sym, alias_key);
+    if current.as_symbol_id().is_none() {
+        return Err(ElispError::WrongTypeArgument(
+            "indirect-variable".to_string(),
+        ));
+    }
+    state.put_plist(sym, alias_key, LispObject::nil());
+    let doc_key = crate::obarray::intern("variable-documentation");
+    state.put_plist(sym, doc_key, LispObject::nil());
+    Ok(LispObject::nil())
+}
+
+/// `(make-interpreted-closure ARGS BODY ENV &optional DOCSTRING IFORM)` —
+/// build the `(closure ENV ARGS . BODY)` representation. DOCSTRING and
+/// IFORM (an `(interactive ...)` form) are prepended to BODY in the
+/// conventional order that `documentation` and `interactive-form` look
+/// for them.
+pub(super) fn stateful_make_interpreted_closure(args: &LispObject) -> ElispResult<LispObject> {
+    let arglist = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    let body = args.nth(1).ok_or(ElispError::WrongNumberOfArguments)?;
+    let env = args.nth(2).unwrap_or_else(LispObject::nil);
+    let docstring = args.nth(3).unwrap_or_else(LispObject::nil);
+    let iform = args.nth(4).unwrap_or_else(LispObject::nil);
+
+    let mut full_body = body;
+    if !iform.is_nil() {
+        full_body = LispObject::cons(iform, full_body);
+    }
+    if !docstring.is_nil() {
+        full_body = LispObject::cons(docstring, full_body);
+    }
+    Ok(LispObject::closure_expr(env, arglist, full_body))
+}
 /// `(add-to-list SYMBOL ELEMENT &optional APPEND COMPARE-FN)`.
 ///
 /// This is stateful because SYMBOL names the variable to mutate. The

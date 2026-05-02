@@ -541,33 +541,23 @@ fn syntax_class(ch: char) -> char {
     }
 }
 
-fn syntax_class_to_char(class: i64) -> char {
-    match class {
-        0 => ' ',
-        1 => '.',
-        2 => 'w',
-        3 => '_',
-        4 => '(',
-        5 => ')',
-        6 => '\'',
-        7 => '"',
-        8 => '\\',
-        9 => '/',
-        10 => '<',
-        11 => '>',
-        12 => '@',
-        13 => '!',
-        14 => '|',
-        _ => u32::try_from(class)
-            .ok()
-            .and_then(char::from_u32)
-            .unwrap_or('.'),
+const SYNTAX_CLASS_CHARS: &str = " .w_()'\"$\\/<>@!|";
+
+fn syntax_class_to_char(class: i64) -> Option<char> {
+    if !(0..16).contains(&class) {
+        return None;
     }
+    SYNTAX_CLASS_CHARS.chars().nth(class as usize)
 }
 
 fn syntax_code_to_char(obj: &LispObject) -> Option<char> {
     if let Some(n) = obj.as_integer() {
-        return Some(syntax_class_to_char(n));
+        return syntax_class_to_char(n);
+    }
+    if let Some((car, _)) = obj.destructure_cons()
+        && let Some(n) = car.as_integer()
+    {
+        return syntax_class_to_char(n);
     }
     obj.as_string().and_then(|s| s.chars().next())
 }
@@ -609,7 +599,10 @@ fn prim_syntax_class_to_char(args: &LispObject) -> ElispResult<LispObject> {
         .first()
         .and_then(|obj| obj.as_integer())
         .ok_or_else(|| ElispError::WrongTypeArgument("integer".to_string()))?;
-    Ok(char_code(syntax_class_to_char(class)))
+    let ch = syntax_class_to_char(class).ok_or_else(|| {
+        ElispError::WrongTypeArgument("syntax-class in 0..=15".to_string())
+    })?;
+    Ok(char_code(ch))
 }
 
 fn prim_syntax_after(
@@ -634,10 +627,19 @@ fn string_to_syntax_value(obj: &LispObject) -> ElispResult<LispObject> {
     let s = obj
         .as_string()
         .ok_or_else(|| ElispError::WrongTypeArgument("string".to_string()))?;
-    Ok(s.chars()
-        .next()
-        .map(char_code)
-        .unwrap_or_else(LispObject::nil))
+    let Some(first) = s.chars().next() else {
+        return Ok(LispObject::nil());
+    };
+    let Some(class) = SYNTAX_CLASS_CHARS.chars().position(|c| c == first) else {
+        return Ok(LispObject::nil());
+    };
+    // Real Emacs returns (CLASS . FLAGS); we don't model flags, so just
+    // emit (CLASS . nil). The car still satisfies callers that read the
+    // syntax class out of the descriptor.
+    Ok(LispObject::cons(
+        LispObject::integer(class as i64),
+        LispObject::nil(),
+    ))
 }
 
 fn prim_string_to_syntax(args: &LispObject) -> ElispResult<LispObject> {

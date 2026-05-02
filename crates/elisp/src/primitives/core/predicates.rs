@@ -41,8 +41,46 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "closurep" => Some(prim_closurep(args)),
         "interpreted-function-p" => Some(prim_interpreted_function_p(args)),
         "hash-table-p" => Some(prim_hash_table_p(args)),
+        "commandp" => Some(prim_commandp(args)),
+        "interactive-form" => Some(prim_interactive_form(args)),
         _ => None,
     }
+}
+
+/// Extract the `(interactive ...)` form from a function-like object.
+/// Handles `(lambda ARGS . BODY)` and `(closure ENV ARGS . BODY)`.
+/// BODY may have an optional leading docstring before the interactive form.
+fn extract_interactive_form(obj: &LispObject) -> Option<LispObject> {
+    let (head, rest) = obj.destructure_cons()?;
+    let body = match head.as_symbol().as_deref() {
+        Some("lambda") => rest.rest()?,
+        Some("closure") => rest.rest()?.rest()?,
+        _ => return None,
+    };
+    let mut cur = body;
+    if let Some((first, after)) = cur.destructure_cons()
+        && matches!(first, LispObject::String(_))
+        && !after.is_nil()
+    {
+        cur = after;
+    }
+    let (first, _) = cur.destructure_cons()?;
+    let (h, _) = first.destructure_cons()?;
+    if h.as_symbol().as_deref() == Some("interactive") {
+        Some(first)
+    } else {
+        None
+    }
+}
+
+pub fn prim_commandp(args: &LispObject) -> ElispResult<LispObject> {
+    let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    Ok(LispObject::from(extract_interactive_form(&arg).is_some()))
+}
+
+pub fn prim_interactive_form(args: &LispObject) -> ElispResult<LispObject> {
+    let arg = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
+    Ok(extract_interactive_form(&arg).unwrap_or_else(LispObject::nil))
 }
 
 pub fn prim_eq(args: &LispObject) -> ElispResult<LispObject> {

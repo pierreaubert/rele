@@ -15,7 +15,7 @@ pub(super) fn eval_atom(
     }
 
     if let Some(raw) = expr.as_symbol_id() {
-        let sym_id = SymbolId(raw);
+        let sym_id = resolve_variable_alias(SymbolId(raw), state);
         let name = crate::obarray::symbol_name(sym_id);
         if name.starts_with(':') {
             return Some(Ok(expr));
@@ -90,4 +90,23 @@ fn current_buffer_local(name: &str) -> Option<LispObject> {
             .get(registry.current_id())
             .and_then(|buffer| buffer.locals.get(name).cloned())
     })
+}
+
+/// Walk the `variable-alias` plist chain. Aliases are stored as
+/// `(put SYM 'variable-alias TARGET)` by `defvaralias`; lookups
+/// transparently resolve to the chain's terminal symbol so the alias
+/// reads share the target's value. Bounded to guard against
+/// pathological cycles (defvaralias is supposed to refuse to create
+/// them, but we don't want to spin forever if one slips through).
+fn resolve_variable_alias(sym_id: SymbolId, state: &InterpreterState) -> SymbolId {
+    let alias_key = crate::obarray::intern("variable-alias");
+    let mut current = sym_id;
+    for _ in 0..32 {
+        let target = state.get_plist(current, alias_key);
+        match target.as_symbol_id() {
+            Some(next) if next != current => current = next,
+            _ => return current,
+        }
+    }
+    current
 }

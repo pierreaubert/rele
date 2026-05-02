@@ -1194,7 +1194,36 @@ pub fn register(interp: &mut Interpreter) {
 (with-eval-after-load 'buff-menu
   (rele--buff-menu-install-compat))
 (defun bug-reference--build-forge-setup-entry (&rest _args) nil)
-(defun byte-compile (&rest _args) nil)
+(defun byte-compile (form &rest _args) form)
+(defun byte-compile-check-lambda-list (&rest _args) nil)
+(defun debugger-trap () nil)
+(defun backtrace--frames-from-thread (&rest _args) nil)
+(defun backtrace--locals (&rest _args) nil)
+(defun profiler-memory-stop (&rest _args) nil)
+(defun translate-region-internal (from to table)
+  "Replace each char in the region [FROM, TO) with TABLE[char] when set."
+  (save-excursion
+    (goto-char from)
+    (let ((end (copy-marker to)))
+      (while (< (point) (marker-position end))
+        (let* ((ch (char-after))
+               (new (and ch (char-table-range table ch))))
+          (if (and new (numberp new))
+              (progn (delete-char 1) (insert new))
+            (forward-char 1))))
+      (set-marker end nil))
+    nil))
+(defun funcall-with-delayed-message (_min-time _message function)
+  ;; Headless: ignore the timeout/message machinery; just run FUNCTION.
+  (funcall function))
+(defmacro named-let (name bindings &rest body)
+  "Local recursion: NAME is bound to a function that takes the BINDINGS
+variables, with BODY as its body.  Calling (NAME ...) re-runs the loop."
+  (let ((fargs (mapcar (lambda (b) (if (consp b) (car b) b)) bindings))
+        (aargs (mapcar (lambda (b) (if (consp b) (cadr b) nil)) bindings)))
+    (list 'cl-labels
+          (list (cons name (cons fargs body)))
+          (cons name aargs))))
 (defun byte-compile-file (&rest _args) nil)
 (defun byte-compiler-base-file-name (&rest _args) nil)
 (defun cedet-directory-name-to-file-name (&rest _args) nil)

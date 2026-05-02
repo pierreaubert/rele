@@ -58,8 +58,14 @@ pub(super) fn is_cus_start_properties_let(args: &LispObject) -> bool {
 }
 
 fn let_binds_symbol(bindings: &LispObject, target: &str) -> bool {
+    const SHORTCUT_SCAN_LIMIT: u32 = 4096;
     let mut cur = bindings.clone();
+    let mut steps: u32 = 0;
     while let Some((binding, rest)) = cur.destructure_cons() {
+        steps += 1;
+        if steps > SHORTCUT_SCAN_LIMIT {
+            return false;
+        }
         let name = binding
             .first()
             .and_then(|obj| obj.as_symbol())
@@ -73,9 +79,13 @@ fn let_binds_symbol(bindings: &LispObject, target: &str) -> bool {
 }
 
 fn is_translation_table_map_binding(bindings: LispObject) -> bool {
+    const SHORTCUT_SCAN_LIMIT: u32 = 4096;
     let mut head = bindings;
-    let mut count = 0;
+    let mut count = 0u32;
     while !head.is_nil() {
+        if count > SHORTCUT_SCAN_LIMIT {
+            return false;
+        }
         let (binding, rest) = match head.destructure_cons() {
             Some(v) => v,
             None => return false,
