@@ -140,17 +140,27 @@ fn parse_xml_text(text: &str) -> ElispResult<LispObject> {
                     top_level.push(LispObject::string(&raw));
                 }
             }
+            Event::Comment(c) => {
+                let raw = String::from_utf8(c.as_ref().to_vec()).unwrap_or_default();
+                let node = make_node("comment", &[], vec![LispObject::string(&raw)]);
+                if let Some((_, _, parent)) = stack.last_mut() {
+                    parent.push(node);
+                } else {
+                    top_level.push(node);
+                }
+            }
             _ => {}
         }
     }
     if top_level.len() == 1 {
         Ok(top_level.into_iter().next().unwrap_or_else(LispObject::nil))
+    } else if top_level.is_empty() {
+        Ok(LispObject::nil())
     } else {
-        let mut out = LispObject::nil();
-        for item in top_level.into_iter().rev() {
-            out = LispObject::cons(item, out);
-        }
-        Ok(out)
+        // Multiple top-level nodes (e.g. an element followed by
+        // sibling comments) — Emacs wraps them in a synthetic `top`
+        // element so the return value is still a single tree.
+        Ok(make_node("top", &[], top_level))
     }
 }
 

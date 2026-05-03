@@ -101,7 +101,10 @@ pub fn call(name: &str, args: &LispObject) -> Option<ElispResult<LispObject>> {
         "font-face-attributes" => Ok(LispObject::nil()),
         "color-defined-p" => Ok(color_defined_p(args)),
         "color-name-to-rgb" => Ok(color_name_to_rgb(args)),
-        "color-values" | "color-values-from-color-spec" => Ok(color_values(args)),
+        "color-values" => Ok(color_values(args)),
+        "color-values-from-color-spec" => {
+            return Some(crate::primitives::window::prim_color_values_from_color_spec(args));
+        }
         "tty-color-alist" => Ok(tty_color_alist()),
         "tty-color-approximate" | "tty-color-by-index" => {
             Ok(args.first().unwrap_or_else(LispObject::nil))

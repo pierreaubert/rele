@@ -1095,30 +1095,101 @@ pub fn prim_accessible_keymaps(args: &LispObject) -> ElispResult<LispObject> {
 }
 
 pub fn prim_color_values_from_color_spec(args: &LispObject) -> ElispResult<LispObject> {
-    let spec = args.first().unwrap_or(LispObject::nil());
-    match spec {
-        LispObject::String(s) => {
-            if !s.starts_with('#') || s.len() != 7 {
-                return Ok(LispObject::nil());
-            }
-            match u32::from_str_radix(&s[1..], 16) {
-                Ok(rgb) => {
-                    let r = (((rgb >> 16) & 0xFF) as i64) * 257;
-                    let g = (((rgb >> 8) & 0xFF) as i64) * 257;
-                    let b = ((rgb & 0xFF) as i64) * 257;
-                    Ok(LispObject::cons(
-                        LispObject::integer(r),
-                        LispObject::cons(
-                            LispObject::integer(g),
-                            LispObject::cons(LispObject::integer(b), LispObject::nil()),
-                        ),
-                    ))
-                }
-                Err(_) => Ok(LispObject::nil()),
-            }
+    let Some(spec) = args.first().and_then(|a| a.as_string().cloned()) else {
+        return Ok(LispObject::nil());
+    };
+    let triple = parse_color_spec(&spec).map(|(r, g, b)| {
+        LispObject::cons(
+            LispObject::integer(r),
+            LispObject::cons(
+                LispObject::integer(g),
+                LispObject::cons(LispObject::integer(b), LispObject::nil()),
+            ),
+        )
+    });
+    Ok(triple.unwrap_or_else(LispObject::nil))
+}
+
+/// Parse a color spec string into 16-bit RGB components.
+/// Supports `#RGB`, `#RRGGBB`, `#RRRGGGBBB`, `#RRRRGGGGBBBB`,
+/// X11 `rgb:R/G/B` (1-4 hex per channel), and `rgbi:R/G/B`
+/// (floats in [0.0, 1.0]).
+fn parse_color_spec(s: &str) -> Option<(i64, i64, i64)> {
+    if let Some(hex) = s.strip_prefix('#') {
+        if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return None;
         }
-        _ => Ok(LispObject::nil()),
+        if hex.len() % 3 != 0 || hex.len() == 0 {
+            return None;
+        }
+        let bits = hex.len() / 3;
+        if !(1..=4).contains(&bits) {
+            return None;
+        }
+        let parse = |seg: &str| {
+            let v = u32::from_str_radix(seg, 16).ok()? as i64;
+            Some(scale_to_16bit(v, (bits * 4) as u32))
+        };
+        let r = parse(&hex[..bits])?;
+        let g = parse(&hex[bits..2 * bits])?;
+        let b = parse(&hex[2 * bits..])?;
+        return Some((r, g, b));
     }
+    if let Some(rest) = s.strip_prefix("rgb:") {
+        let parts: Vec<&str> = rest.split('/').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        let parse = |seg: &str| -> Option<i64> {
+            if seg.is_empty() || seg.len() > 4 || !seg.chars().all(|c| c.is_ascii_hexdigit()) {
+                return None;
+            }
+            let v = u32::from_str_radix(seg, 16).ok()? as i64;
+            Some(scale_to_16bit(v, (seg.len() * 4) as u32))
+        };
+        return Some((parse(parts[0])?, parse(parts[1])?, parse(parts[2])?));
+    }
+    if let Some(rest) = s.strip_prefix("rgbi:") {
+        let parts: Vec<&str> = rest.split('/').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        let parse = |seg: &str| -> Option<i64> {
+            // Reject leading/trailing whitespace, '+', and hex-style markers
+            // ("0x" etc.) — Emacs's `rgbi:` parser is strict about decimal
+            // floats only.
+            if seg.is_empty()
+                || seg.starts_with(' ')
+                || seg.ends_with(' ')
+                || seg.starts_with('+')
+                || seg.contains(' ')
+                || seg.contains("0x")
+                || seg.contains("0X")
+            {
+                return None;
+            }
+            let f: f64 = seg.parse().ok()?;
+            if !(0.0..=1.0).contains(&f) {
+                return None;
+            }
+            Some((f * 65535.0).round() as i64)
+        };
+        return Some((parse(parts[0])?, parse(parts[1])?, parse(parts[2])?));
+    }
+    None
+}
+
+/// Scale an N-bit hex value into the 16-bit range Emacs uses for color
+/// components, using the standard `value * 65535 / max` mapping so the
+/// full source range maps onto the full 16-bit range.
+fn scale_to_16bit(value: i64, bits: u32) -> i64 {
+    let max = (1u64 << bits).saturating_sub(1) as i64;
+    if max == 0 {
+        return 0;
+    }
+    // Emacs truncates here rather than rounding; reproduce that
+    // exactly so e.g. `0xb0a` widens to `0xb0aa` and not `0xb0ab`.
+    value * 0xFFFF / max
 }
 
 pub fn prim_color_blend(args: &LispObject) -> ElispResult<LispObject> {

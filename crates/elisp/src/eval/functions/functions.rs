@@ -2254,6 +2254,11 @@ fn stateful_set_default(
 fn stateful_default_value(args: &LispObject, state: &InterpreterState) -> ElispResult<LispObject> {
     let sym = args.first().ok_or(ElispError::WrongNumberOfArguments)?;
     let sym_id = resolve_variable_alias(symbol_id_including_constants(&sym)?, state);
+    if state.special_vars.read().contains(&sym_id)
+        && let Some(v) = state.global_env.read().get_id(sym_id)
+    {
+        return Ok(v);
+    }
     Ok(state.get_value_cell(sym_id).unwrap_or_else(LispObject::nil))
 }
 

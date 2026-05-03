@@ -5351,6 +5351,43 @@ pub(super) fn eval_inner(
                             }
                         }
                     }
+                    // If the alias already had a default value that
+                    // differs from the base's, that value is about to
+                    // be shadowed. Real Emacs emits a `display-warning`
+                    // with type `(defvaralias losing-value ALIAS)` so
+                    // user code can detect the silent rebinding (Bug#5950).
+                    let alias_value = state.get_value_cell(alias_id);
+                    let base_value = state.get_value_cell(base_id);
+                    let alias_bound = alias_value
+                        .as_ref()
+                        .is_some_and(|v| !v.is_unbound_marker());
+                    let base_bound = base_value
+                        .as_ref()
+                        .is_some_and(|v| !v.is_unbound_marker());
+                    if alias_bound && base_bound && alias_value != base_value {
+                        let warning_type = LispObject::cons(
+                            LispObject::symbol("defvaralias"),
+                            LispObject::cons(
+                                LispObject::symbol("losing-value"),
+                                LispObject::cons(LispObject::Symbol(alias_id), LispObject::nil()),
+                            ),
+                        );
+                        let display_warning_fn = env.read().get_function("display-warning");
+                        if let Some(f) = display_warning_fn {
+                            let call_args = LispObject::cons(
+                                warning_type,
+                                LispObject::cons(LispObject::nil(), LispObject::nil()),
+                            );
+                            let _ = functions::call_function(
+                                obj_to_value(f),
+                                obj_to_value(call_args),
+                                env,
+                                editor,
+                                macros,
+                                state,
+                            )?;
+                        }
+                    }
                     deliver_variable_watchers(
                         alias_id,
                         &LispObject::Symbol(base_id),
@@ -5439,6 +5476,11 @@ pub(super) fn eval_inner(
                         .as_symbol_id()
                         .ok_or_else(|| ElispError::WrongTypeArgument("symbol".to_string()))?;
                     let id = resolve_variable_alias(id, state);
+                    if state.special_vars.read().contains(&id)
+                        && let Some(v) = state.global_env.read().get_id(id)
+                    {
+                        return Ok(obj_to_value(v));
+                    }
                     Ok(obj_to_value(
                         state.get_value_cell(id).unwrap_or_else(LispObject::nil),
                     ))
