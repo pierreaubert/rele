@@ -843,6 +843,99 @@ pub(super) fn stateful_advice_remove(args: &LispObject) -> ElispResult<LispObjec
     Ok(LispObject::nil())
 }
 
+/// `(kill-buffer &optional BUFFER)` with the modified-buffer prompt
+/// and the unlock-error path Emacs implements in `kill-buffer`. We
+/// reproduce just enough to support the filelock test corpus:
+///
+/// - If the target buffer is modified and visits a file, ask
+///   `yes-or-no-p` first; bail out (return nil) on a "no" answer.
+/// - On confirmation, attempt the unlock. If unlock raises
+///   `file-error` (the spoiled-lock case), call
+///   `userlock--handle-unlock-error` so user code can intervene
+///   (bug#46397).
+/// - Then perform the actual buffer removal.
+pub(super) fn stateful_kill_buffer(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let target_arg = args.first().unwrap_or(LispObject::nil());
+    let target_id = if matches!(target_arg, LispObject::Nil) {
+        Some(crate::buffer::with_registry(|r| r.current_id()))
+    } else {
+        crate::primitives::buffer::resolve_buffer(&target_arg)
+    };
+    let Some(buffer_id) = target_id else {
+        return Ok(LispObject::nil());
+    };
+    let (modified, file) = crate::buffer::with_registry(|r| {
+        r.get(buffer_id)
+            .map(|b| (b.modified, b.file_name.clone()))
+            .unwrap_or((false, None))
+    });
+
+    if modified && file.is_some() {
+        let prompt = LispObject::string(&format!(
+            "Buffer {:?} modified; kill anyway? ",
+            file.as_deref().unwrap_or("")
+        ));
+        let prompt_args = LispObject::cons(prompt, LispObject::nil());
+        let yes_or_no_p = env
+            .read()
+            .get_function("yes-or-no-p")
+            .unwrap_or_else(|| LispObject::primitive("yes-or-no-p"));
+        let answer = super::functions_3::call_function(
+            obj_to_value(yes_or_no_p),
+            obj_to_value(prompt_args),
+            env,
+            editor,
+            macros,
+            state,
+        )?;
+        if value_to_obj(answer).is_nil() {
+            return Ok(LispObject::nil());
+        }
+        // Try to unlock. On file-error route through
+        // `userlock--handle-unlock-error` so the test (and user
+        // configurations) can intercept.
+        let prev_id = crate::buffer::with_registry(|r| r.current_id());
+        let _ = crate::buffer::with_registry_mut(|r| r.set_current(buffer_id));
+        let unlock_result = crate::primitives_buffer::prim_unlock_buffer(&LispObject::nil());
+        let _ = crate::buffer::with_registry_mut(|r| r.set_current(prev_id));
+        if let Err(err) = unlock_result {
+            if let ElispError::Signal(sig) = &err
+                && sig.symbol.as_symbol().as_deref() == Some("file-error")
+            {
+                let handler_args = LispObject::cons(
+                    sig.symbol.clone(),
+                    LispObject::cons(sig.data.clone(), LispObject::nil()),
+                );
+                let handler = env
+                    .read()
+                    .get_function("userlock--handle-unlock-error")
+                    .unwrap_or_else(LispObject::nil);
+                if !handler.is_nil() {
+                    super::functions_3::call_function(
+                        obj_to_value(handler),
+                        obj_to_value(handler_args),
+                        env,
+                        editor,
+                        macros,
+                        state,
+                    )?;
+                }
+            } else {
+                return Err(err);
+            }
+        }
+    }
+
+    let killed = crate::buffer::with_registry_mut(|r| r.kill(buffer_id));
+    Ok(LispObject::from(killed))
+}
+
 pub(crate) fn eval_funcall_form(
     args: Value,
     env: &Arc<RwLock<Environment>>,

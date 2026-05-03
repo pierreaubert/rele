@@ -148,6 +148,12 @@ pub(super) fn eval_insert(
         }
     } else {
         drop(e);
+        // Mirror Emacs's `prepare_to_modify_buffer`: about to dirty
+        // the buffer, so take the file lock first when locking is
+        // enabled and the buffer wasn't already modified. The auto
+        // lock only triggers on the *transition* into the modified
+        // state — same shape as `set-buffer-modified-p t`.
+        let was_modified = crate::buffer::with_current(|b| b.modified);
         for (text, raw_string) in chunks {
             let start = crate::buffer::with_current(|buffer| buffer.point);
             let inherited = if inherit {
@@ -171,6 +177,10 @@ pub(super) fn eval_insert(
             if let Some(raw) = raw_string {
                 crate::primitives_buffer::copy_string_properties_to_current_buffer(&raw, start);
             }
+        }
+        crate::buffer::with_current_mut(|b| b.modified = true);
+        if !was_modified && crate::primitives::buffer::create_lockfiles_enabled_pub() {
+            let _ = crate::primitives_buffer::prim_lock_buffer(&LispObject::nil());
         }
     }
     Ok(Value::nil())

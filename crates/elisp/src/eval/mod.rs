@@ -3005,6 +3005,126 @@ pub(super) fn eval_inner(
                             let _ = std::fs::remove_file(path);
                         }
                     }
+                    // Modified-buffer prompt + unlock. The buffer is
+                    // currently the killed buffer (we pushed it onto
+                    // the stack above) so unlock-buffer / file-locked-p
+                    // see the right `buffer-file-name`.
+                    let (modified, has_file) = crate::buffer::with_registry(|r| {
+                        r.get(target_id)
+                            .map(|b| (b.modified, b.file_name.is_some()))
+                            .unwrap_or((false, false))
+                    });
+                    if modified && has_file {
+                        // Real Emacs's modified-buffer prompt uses
+                        // `read-multiple-choice` on modern releases and
+                        // `yes-or-no-p` on older ones. Detect which the
+                        // user's code/test has actually mocked and call
+                        // the matching one — that way buffer-tests'
+                        // `read-multiple-choice` cl-letf and
+                        // filelock-tests' `yes-or-no-p` cl-letf both
+                        // intercept the prompt they expected to see.
+                        let buffer_name = crate::buffer::with_registry(|r| {
+                            r.get(target_id).map(|b| b.name.clone()).unwrap_or_default()
+                        });
+                        let prompt =
+                            format!("Buffer {buffer_name} modified; kill anyway? ");
+                        let read_mc_fn = env.read().get_function("read-multiple-choice");
+                        let confirm = if let Some(f) =
+                            read_mc_fn.filter(|f| !f.is_nil())
+                        {
+                            // Build the standard yes/no/save choice list.
+                            let choices = LispObject::cons(
+                                LispObject::cons(
+                                    LispObject::integer('y' as i64),
+                                    LispObject::cons(
+                                        LispObject::string("yes"),
+                                        LispObject::cons(
+                                            LispObject::string("kill"),
+                                            LispObject::nil(),
+                                        ),
+                                    ),
+                                ),
+                                LispObject::cons(
+                                    LispObject::cons(
+                                        LispObject::integer('n' as i64),
+                                        LispObject::cons(
+                                            LispObject::string("no"),
+                                            LispObject::cons(
+                                                LispObject::string("don't kill"),
+                                                LispObject::nil(),
+                                            ),
+                                        ),
+                                    ),
+                                    LispObject::nil(),
+                                ),
+                            );
+                            let call_args = LispObject::cons(
+                                LispObject::string(&prompt),
+                                LispObject::cons(choices, LispObject::nil()),
+                            );
+                            let result = functions::call_function(
+                                obj_to_value(f),
+                                obj_to_value(call_args),
+                                env,
+                                editor,
+                                macros,
+                                state,
+                            )?;
+                            // result is one of the choice cons cells; its
+                            // car is the chosen character. ?n means "no".
+                            let chosen = value_to_obj(result)
+                                .first()
+                                .and_then(|c| c.as_integer());
+                            LispObject::from(chosen != Some('n' as i64))
+                        } else {
+                            let confirm_args = LispObject::cons(
+                                LispObject::string(&prompt),
+                                LispObject::nil(),
+                            );
+                            value_to_obj(eval(
+                                obj_to_value(LispObject::cons(
+                                    LispObject::symbol("yes-or-no-p"),
+                                    confirm_args,
+                                )),
+                                env,
+                                editor,
+                                macros,
+                                state,
+                            )?)
+                        };
+                        if confirm.is_nil() {
+                            if pushed_target {
+                                crate::buffer::with_registry_mut(|registry| registry.pop_stack());
+                            }
+                            return Ok(Value::nil());
+                        }
+                        let unlock_result = crate::primitives_buffer::prim_unlock_buffer(
+                            &LispObject::nil(),
+                        );
+                        if let Err(err) = unlock_result
+                            && let ElispError::Signal(sig) = &err
+                            && sig.symbol.as_symbol().as_deref() == Some("file-error")
+                        {
+                            let handler = env
+                                .read()
+                                .get_function("userlock--handle-unlock-error")
+                                .unwrap_or_else(LispObject::nil);
+                            if !handler.is_nil() {
+                                let handler_args = LispObject::cons(
+                                    sig.symbol.clone(),
+                                    LispObject::cons(sig.data.clone(), LispObject::nil()),
+                                );
+                                functions::call_function(
+                                    obj_to_value(handler),
+                                    obj_to_value(handler_args),
+                                    env,
+                                    editor,
+                                    macros,
+                                    state,
+                                )?;
+                            }
+                        }
+                    }
                     if pushed_target {
                         crate::buffer::with_registry_mut(|registry| registry.pop_stack());
                     }
@@ -4082,7 +4202,28 @@ pub(super) fn eval_inner(
                 "format" | "format-message" => {
                     eval_format(obj_to_value(cdr), env, editor, macros, state)
                 }
-                "message" => eval_format(obj_to_value(cdr), env, editor, macros, state),
+                "message" => {
+                    // Funcall path so the buffer-write side effect in
+                    // `stateful_message` runs (this lets things like
+                    // `(let ((messages-buffer-name ...)) (message ...))`
+                    // route the output to the requested buffer).
+                    let mut evaluated = Vec::new();
+                    let mut cur = cdr.clone();
+                    while let Some((arg, rest)) = cur.destructure_cons() {
+                        let v = value_to_obj(eval(obj_to_value(arg), env, editor, macros, state)?);
+                        evaluated.push(v);
+                        cur = rest;
+                    }
+                    let mut args = LispObject::nil();
+                    for v in evaluated.into_iter().rev() {
+                        args = LispObject::cons(v, args);
+                    }
+                    let result = functions::functions::call_stateful_primitive(
+                        "message", &args, env, editor, macros, state,
+                    )
+                    .ok_or_else(|| ElispError::VoidFunction("message".to_string()))??;
+                    Ok(obj_to_value(result))
+                }
                 "1+" => {
                     let arg = cdr.first().ok_or(ElispError::WrongNumberOfArguments)?;
                     let val = eval(obj_to_value(arg), env, editor, macros, state)?;

@@ -679,9 +679,9 @@ pub fn make_stdlib_interp() -> Interpreter {
     interp.define("find-buffer-visiting", LispObject::primitive("ignore"));
     interp.define("backup-buffer", LispObject::primitive("ignore"));
     interp.define("ask-user-about-lock", LispObject::primitive("ignore"));
-    interp.define("lock-buffer", LispObject::primitive("ignore"));
-    interp.define("unlock-buffer", LispObject::primitive("ignore"));
-    interp.define("file-locked-p", LispObject::primitive("ignore"));
+    interp.define("lock-buffer", LispObject::primitive("lock-buffer"));
+    interp.define("unlock-buffer", LispObject::primitive("unlock-buffer"));
+    interp.define("file-locked-p", LispObject::primitive("file-locked-p"));
     interp.define("yes-or-no-p", LispObject::primitive("yes-or-no-p"));
     interp.define("y-or-n-p", LispObject::primitive("y-or-n-p"));
     interp.define("read-file-name", LispObject::primitive("ignore"));

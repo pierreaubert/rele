@@ -421,16 +421,47 @@ pub fn prim_buffer_modified_p(args: &LispObject) -> ElispResult<LispObject> {
 
 pub fn prim_set_buffer_modified_p(args: &LispObject) -> ElispResult<LispObject> {
     let value = args.first().unwrap_or(LispObject::nil());
-    let status = if matches!(value, LispObject::Nil) {
-        None
-    } else {
+    let new_modified = !matches!(value, LispObject::Nil);
+    let status = if new_modified {
         Some(value.clone())
+    } else {
+        None
     };
+    let was_modified = buffer::with_current(|b| b.modified);
     buffer::with_current_mut(|b| {
-        b.modified = status.is_some();
+        b.modified = new_modified;
         b.modified_status = status;
     });
+    // Mirror Emacs: setting the modified flag transitions also flip
+    // the file lock for the buffer's visited file (subject to the
+    // global `create-lockfiles`).
+    if new_modified && !was_modified && create_lockfiles_enabled() {
+        let _ = prim_lock_buffer(&LispObject::nil());
+    } else if !new_modified && was_modified {
+        let _ = prim_unlock_buffer(&LispObject::nil())?;
+    }
     Ok(value)
+}
+
+thread_local! {
+    /// Cached `create-lockfiles` value, mirrored from elisp via
+    /// [`set_create_lockfiles_cache`]. Defaults to true so a fresh
+    /// interpreter behaves like a freshly started Emacs.
+    static CREATE_LOCKFILES: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+pub fn set_create_lockfiles_cache(value: bool) {
+    CREATE_LOCKFILES.with(|c| c.set(value));
+}
+
+fn create_lockfiles_enabled() -> bool {
+    CREATE_LOCKFILES.with(std::cell::Cell::get)
+}
+
+/// Public alias for use from outside the buffer module (the editor's
+/// insert path needs to gate auto-locking on this flag).
+pub fn create_lockfiles_enabled_pub() -> bool {
+    create_lockfiles_enabled()
 }
 
 pub fn prim_buffer_modified_tick(_args: &LispObject) -> ElispResult<LispObject> {
@@ -672,14 +703,122 @@ pub fn prim_buffer_line_statistics(_args: &LispObject) -> ElispResult<LispObject
     ))
 }
 
-/// `(lock-buffer &optional FILE)` and `(unlock-buffer)` — file
-/// locking is out of scope; both are no-ops that succeed.
-pub fn prim_lock_buffer(_args: &LispObject) -> ElispResult<LispObject> {
+/// Return the lock-file path for FILE: `<dir>/.#<basename>`. Matches
+/// the convention Emacs uses on POSIX systems.
+fn lock_file_path(file: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(file);
+    let parent = p.parent().unwrap_or(std::path::Path::new("."));
+    let name = p
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    parent.join(format!(".#{name}"))
+}
+
+fn signal_file_error(op: &str, file: &str) -> ElispError {
+    ElispError::Signal(Box::new(crate::error::SignalData {
+        symbol: LispObject::symbol("file-error"),
+        data: LispObject::cons(
+            LispObject::string(op),
+            LispObject::cons(LispObject::string(file), LispObject::nil()),
+        ),
+    }))
+}
+
+fn current_buffer_filename() -> Option<String> {
+    buffer::with_current(|b| {
+        b.file_name.clone().or_else(|| {
+            b.locals
+                .get("buffer-file-truename")
+                .and_then(|v| v.as_string().map(ToString::to_string))
+                .or_else(|| {
+                    b.locals
+                        .get("buffer-file-name")
+                        .and_then(|v| v.as_string().map(ToString::to_string))
+                })
+        })
+    })
+}
+
+/// `(lock-buffer &optional FILE)` — create a `.#FILE` lock file so
+/// other Emacs instances see the file as locked. Errors are silently
+/// swallowed (Emacs has the same behaviour — see the FIXME in
+/// `filelock-tests-lock-spoiled`).
+pub fn prim_lock_buffer(args: &LispObject) -> ElispResult<LispObject> {
+    let Some(file) = args
+        .first()
+        .and_then(|a| a.as_string().cloned())
+        .or_else(current_buffer_filename)
+    else {
+        return Ok(LispObject::nil());
+    };
+    if file.is_empty() {
+        return Ok(LispObject::nil());
+    }
+    let lock_path = lock_file_path(&file);
+    let contents = format!("{}@host.{}", whoami_or_unknown(), std::process::id());
+    let _ = std::fs::write(&lock_path, contents);
     Ok(LispObject::nil())
 }
 
+/// `(unlock-buffer)` — remove the lock file for the current buffer's
+/// file. Signals `file-error` with "Unlocking file" if the lock path
+/// exists but can't be removed (e.g. it's a directory — the test
+/// corpus uses that to spoil the lock).
 pub fn prim_unlock_buffer(_args: &LispObject) -> ElispResult<LispObject> {
-    Ok(LispObject::nil())
+    let Some(file) = current_buffer_filename() else {
+        return Ok(LispObject::nil());
+    };
+    if file.is_empty() {
+        return Ok(LispObject::nil());
+    }
+    let lock_path = lock_file_path(&file);
+    if !lock_path.exists() {
+        return Ok(LispObject::nil());
+    }
+    match std::fs::remove_file(&lock_path) {
+        Ok(()) => Ok(LispObject::nil()),
+        Err(_) => Err(signal_file_error("Unlocking file", &file)),
+    }
+}
+
+/// `(file-locked-p FILENAME)` — t when locked by another process,
+/// nil when unlocked, the user-id string when locked by us.
+/// Signals `file-error` with "Testing file lock" if the lock path
+/// exists but is unreadable as a lock file (e.g. a directory).
+pub fn prim_file_locked_p(args: &LispObject) -> ElispResult<LispObject> {
+    let Some(file) = args.first().and_then(|a| a.as_string().cloned()) else {
+        return Ok(LispObject::nil());
+    };
+    if file.is_empty() {
+        return Ok(LispObject::nil());
+    }
+    let lock_path = lock_file_path(&file);
+    let meta = match std::fs::symlink_metadata(&lock_path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(LispObject::nil()),
+        Err(_) => return Err(signal_file_error("Testing file lock", &file)),
+    };
+    if meta.is_dir() {
+        return Err(signal_file_error("Testing file lock", &file));
+    }
+    match std::fs::read_to_string(&lock_path) {
+        Ok(contents) => {
+            let mine = format!("{}@host.{}", whoami_or_unknown(), std::process::id());
+            if contents == mine {
+                Ok(LispObject::string(&whoami_or_unknown()))
+            } else {
+                Ok(LispObject::t())
+            }
+        }
+        Err(_) => Err(signal_file_error("Testing file lock", &file)),
+    }
+}
+
+fn whoami_or_unknown() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "rele".to_string())
 }
 
 pub fn prim_buffer_string(_args: &LispObject) -> ElispResult<LispObject> {
@@ -5013,6 +5152,7 @@ pub fn call_buffer_primitive(name: &str, args: &LispObject) -> Option<ElispResul
         "buffer-line-statistics" => prim_buffer_line_statistics(args),
         "lock-buffer" => prim_lock_buffer(args),
         "unlock-buffer" => prim_unlock_buffer(args),
+        "file-locked-p" => prim_file_locked_p(args),
         "point" => prim_point(args),
         "point-min" => prim_point_min(args),
         "point-max" => prim_point_max(args),
@@ -5214,6 +5354,7 @@ pub const BUFFER_PRIMITIVE_NAMES: &[&str] = &[
     "buffer-line-statistics",
     "lock-buffer",
     "unlock-buffer",
+    "file-locked-p",
     "point",
     "point-min",
     "point-max",

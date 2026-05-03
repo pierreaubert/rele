@@ -1197,6 +1197,13 @@ pub fn register(interp: &mut Interpreter) {
 (defun byte-compile (form &rest _args) form)
 (defun byte-compile-check-lambda-list (&rest _args) nil)
 (defun debugger-trap () nil)
+(defun read-multiple-choice (_prompt choices &rest _ignored)
+  ;; Headless override: real `read-multiple-choice` blocks waiting for
+  ;; keyboard input, which never arrives in our worker. Returning the
+  ;; first choice unblocks `kill-buffer`'s modified-prompt path so
+  ;; tests that don't mock the prompt can still progress (and
+  ;; cl-letf-based mocks override this defun anyway).
+  (car choices))
 (defun backtrace--frames-from-thread (&rest _args) nil)
 (defun backtrace--locals (&rest _args) nil)
 (defvar rele--profiler-memory-running nil)

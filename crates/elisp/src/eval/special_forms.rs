@@ -14,6 +14,26 @@ use super::functions::{
 };
 use super::{Environment, InterpreterState, Macro, MacroTable, eval};
 
+/// Mirror selected dynamically-bound globals into stateless caches
+/// that primitives can query without threading `state` through every
+/// call site. Only `create-lockfiles` needs this today, but the seam
+/// is here for any future case where a stateless primitive must
+/// observe a let-bound special var.
+pub(super) fn sync_special_var_cache(name: &str, value: &LispObject) {
+    if name == "create-lockfiles" {
+        crate::primitives::buffer::set_create_lockfiles_cache(!value.is_nil());
+    }
+}
+
+/// Restore selected let-bound caches to their default when a lexical
+/// let unwinds. Mirrors the dynamic-binding path's specpdl restore,
+/// but for caches that would otherwise outlive the let.
+fn sync_special_var_cache_for_let_unwind(name: &str) {
+    if name == "create-lockfiles" {
+        crate::primitives::buffer::set_create_lockfiles_cache(true);
+    }
+}
+
 /// Validate the argument list of a binding/clause-style special form
 /// (let, let*, cond): must be nil or a proper-ish cons list, and must
 /// not be circular. A non-list (integer, string, vector) signals
@@ -658,6 +678,7 @@ pub(super) fn eval_let(
             state.specpdl.write().push((id, old));
             new_env.write().define_id(id, value.clone());
             global.write().set_id(id, value.clone());
+            sync_special_var_cache(&name, &value);
             deliver_variable_watchers(
                 id,
                 &value,
@@ -680,6 +701,11 @@ pub(super) fn eval_let(
                     state,
                 )?;
             }
+            // Lexical-let on a name that nonetheless drives a stateless
+            // primitive (e.g. `create-lockfiles`) still needs to update
+            // the shared cache so the dynamic extent of the let is
+            // observable downstream.
+            sync_special_var_cache(&name, &value);
             new_env.write().define_id(id, value);
         }
 
@@ -689,9 +715,16 @@ pub(super) fn eval_let(
     let result = eval_progn_no_tco(obj_to_value(body), &new_env, editor, macros, state);
     propagate_lexical_mutations(&new_env, env, &let_bound_ids);
 
+    // Release any cache mirrors that the lexical branch installed —
+    // restoring to the default keeps the post-let state consistent.
+    for &id in &let_bound_ids {
+        sync_special_var_cache_for_let_unwind(&crate::obarray::symbol_name(id));
+    }
+
     unwind_specpdl(state, specpdl_depth);
     for (id, old) in dynamic_saves.into_iter().rev() {
         let restored = old.unwrap_or_else(LispObject::nil);
+        sync_special_var_cache(&crate::obarray::symbol_name(id), &restored);
         deliver_variable_watchers(
             id,
             &restored,

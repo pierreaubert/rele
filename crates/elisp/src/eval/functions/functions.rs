@@ -18,7 +18,7 @@ use super::functions_2::{
     stateful_function_get, stateful_function_put, stateful_get,
     stateful_internal_define_uninitialized_variable,
     stateful_internal_delete_indirect_variable, stateful_internal_make_var_non_special,
-    stateful_make_interpreted_closure, stateful_provide, stateful_put, stateful_remove_hook, stateful_require,
+    stateful_kill_buffer, stateful_make_interpreted_closure, stateful_provide, stateful_put, stateful_remove_hook, stateful_require,
     stateful_run_hook_with_args, stateful_run_hook_with_args_until_failure,
     stateful_run_hook_with_args_until_success, stateful_run_hook_wrapped, stateful_run_hooks,
     stateful_setplist, symbol_id_including_constants, symbol_name_including_constants,
@@ -81,6 +81,7 @@ pub(crate) fn call_stateful_primitive(
             Some(stateful_internal_delete_indirect_variable(args, state))
         }
         "make-interpreted-closure" => Some(stateful_make_interpreted_closure(args)),
+        "kill-buffer" => Some(stateful_kill_buffer(args, env, editor, macros, state)),
         "cl-generic-generalizers" => Some(stateful_cl_generic_generalizers(args, state)),
         "cl-generic-define" => Some(stateful_cl_generic_define(args)),
         "cl-generic-define-method" => Some(stateful_cl_generic_define_method(args, state)),
@@ -130,9 +131,10 @@ pub(crate) fn call_stateful_primitive(
         "make-hash-table" => Some(stateful_make_hash_table(args, state)),
         "make-closure" => Some(stateful_make_closure(args)),
         "vector" => Some(stateful_vector(args, state)),
-        "format" | "format-message" | "message" => {
+        "format" | "format-message" => {
             Some(stateful_format(args, env, editor, macros, state))
         }
+        "message" => Some(stateful_message(args, env, editor, macros, state)),
         "read-char"
         | "read-char-exclusive"
         | "read-event"
@@ -1398,6 +1400,49 @@ fn stateful_vector(args: &LispObject, state: &InterpreterState) -> ElispResult<L
     let v = state.heap_vector_from_objects(&items);
     Ok(value_to_obj(v))
 }
+/// `(message FMT &rest ARGS)` — formats the message AND appends it
+/// (with a trailing newline) to the buffer named by
+/// `messages-buffer-name` (default `*Messages*`), creating the
+/// buffer on first use. The buffer write is what the test corpus
+/// relies on (e.g. `xdisp-tests::test-messages-buffer-name`).
+fn stateful_message(
+    args: &LispObject,
+    env: &Arc<RwLock<Environment>>,
+    editor: &Arc<RwLock<Option<Box<dyn EditorCallbacks>>>>,
+    macros: &MacroTable,
+    state: &InterpreterState,
+) -> ElispResult<LispObject> {
+    let formatted = stateful_format(args, env, editor, macros, state)?;
+    let text = formatted.princ_to_string();
+    if !text.is_empty() {
+        // Resolve `messages-buffer-name` from the dynamic env (or
+        // global fallback) so that a `let`-bound override redirects
+        // the message destination.
+        let id = crate::obarray::intern("messages-buffer-name");
+        let buffer_name = env
+            .read()
+            .get_id(id)
+            .or_else(|| state.get_value_cell(id))
+            .and_then(|v| v.as_string().map(ToString::to_string))
+            .unwrap_or_else(|| "*Messages*".to_string());
+        let buffer_id = crate::buffer::with_registry_mut(|r| r.create(&buffer_name));
+        let prev = crate::buffer::with_registry(|r| r.current_id());
+        crate::buffer::with_registry_mut(|r| r.set_current(buffer_id));
+        crate::buffer::with_current_mut(|b| {
+            let end = b.point_max();
+            b.goto_char(end);
+            b.insert(&text);
+            b.insert("\n");
+        });
+        crate::buffer::with_registry_mut(|r| {
+            if r.get(prev).is_some() {
+                r.set_current(prev);
+            }
+        });
+    }
+    Ok(formatted)
+}
+
 /// `(format FMT &rest ARGS)` via funcall path. Args are pre-evaluated;
 /// we rewrap each as `(quote ARG)` so the existing source-level
 /// `eval_format` can treat them as forms to eval — `quote` just
@@ -1646,6 +1691,19 @@ pub(crate) fn assign_symbol_value(
     validate_symbol_value_assignment(sym_id, &name, &value)?;
     if name == "display-hourglass" {
         value = LispObject::from(!value.is_nil());
+    }
+    // Mirror buffer-file-name / buffer-file-truename writes to the
+    // current buffer's `file_name` field so accessors like
+    // `buffer-file-name` and our internal lock machinery see the
+    // updated path. Setq alone can't write the field — only this
+    // hook can.
+    if name == "buffer-file-name" || name == "buffer-file-truename" {
+        let s = value.as_string().map(ToString::to_string);
+        crate::buffer::with_current_mut(|b| {
+            if name == "buffer-file-name" {
+                b.file_name = s.clone();
+            }
+        });
     }
 
     match operation {

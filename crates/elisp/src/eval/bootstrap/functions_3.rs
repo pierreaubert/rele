@@ -279,6 +279,14 @@ pub fn load_full_bootstrap(interp: &Interpreter) {
       (list 'let (list (list name nil))
             (list 'setq name (cons 'lambda (cons args body)))
             (cons 'funcall (cons name vals))))))
+;; Override the stdlib `read-multiple-choice' (rmc.el) with a
+;; non-blocking variant. The real one waits for keyboard input which
+;; never arrives in our headless worker; returning the first choice
+;; lets `kill-buffer'-style modified-buffer prompts proceed and keeps
+;; cl-letf-based test mocks (which reinstall the symbol-function)
+;; fully intact.
+(defun read-multiple-choice (_prompt choices &rest _ignored)
+  (car choices))
 ";
     if let Ok(forms) = crate::read_all(extras) {
         interp.set_eval_ops_limit(200_000);
